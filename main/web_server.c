@@ -31,12 +31,19 @@
 #include <esp_ota_ops.h>
 #include <esp_wifi_ap_get_sta_list.h>
 #include <stream_stats.h>
-#include <esp32/rom/crc.h>
 #include <lwip/sockets.h>
 #include <esp_timer.h>
 #include "web_server.h"
 #include "errno.h"
 #include "esp_task_wdt.h"
+
+#if CONFIG_IDF_TARGET_ESP32
+#include <esp32/rom/crc.h>
+#define crc32_port crc32_le
+#else
+#include <esp_rom_crc.h>
+#define crc32_port esp_rom_crc32_le
+#endif
 
 // Max length a file path can have on storage
 #define FILE_PATH_MAX (ESP_VFS_PATH_MAX + CONFIG_SPIFFS_OBJ_NAME_LEN)
@@ -322,13 +329,14 @@ static esp_err_t file_check_etag_hash(httpd_req_t *req, char *file_hash_path, ch
         httpd_req_get_hdr_value_str(req, "If-None-Match", if_none_match, if_none_match_length);
 
         bool header_match = strcmp(etag, if_none_match) == 0;
-        free(if_none_match);
 
         // Matching ETag, return not modified
         if (header_match) {
+            free(if_none_match);
             return ESP_OK;
         } else {
             ESP_LOGW(TAG, "ETag for file %s sent by client does not match (%s != %s)", file_hash_path, etag, if_none_match);
+            free(if_none_match);
             return ESP_ERR_INVALID_CRC;
         }
     }
@@ -404,7 +412,7 @@ static esp_err_t file_get_handler(httpd_req_t *req) {
             return ESP_FAIL;
         }
 
-        crc = crc32_le(crc, (const uint8_t *)buffer, length);
+        crc = crc32_port(crc, (const uint8_t *)buffer, length);
 
     } while (length != 0);
 

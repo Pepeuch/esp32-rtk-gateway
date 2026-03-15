@@ -14,7 +14,6 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
-
 #include <driver/ledc.h>
 #include <tasks.h>
 #include "freertos/FreeRTOS.h"
@@ -26,22 +25,23 @@
 #include "status_led.h"
 #include <sys/queue.h>
 
+#if CONFIG_IDF_TARGET_ESP32
+
 #define LEDC_SPEED_MODE LEDC_HIGH_SPEED_MODE
 
-#define STATUS_LED_RED_GPIO GPIO_NUM_21
-#define STATUS_LED_GREEN_GPIO GPIO_NUM_22
-#define STATUS_LED_BLUE_GPIO GPIO_NUM_23
-#define STATUS_LED_RED_CHANNEL LEDC_CHANNEL_0
+#define STATUS_LED_RED_GPIO      GPIO_NUM_21
+#define STATUS_LED_GREEN_GPIO    GPIO_NUM_22
+#define STATUS_LED_BLUE_GPIO     GPIO_NUM_23
+#define STATUS_LED_RED_CHANNEL   LEDC_CHANNEL_0
 #define STATUS_LED_GREEN_CHANNEL LEDC_CHANNEL_1
-#define STATUS_LED_BLUE_CHANNEL LEDC_CHANNEL_2
+#define STATUS_LED_BLUE_CHANNEL  LEDC_CHANNEL_2
 
-#define STATUS_LED_RSSI_GPIO GPIO_NUM_18
-#define STATUS_LED_SLEEP_GPIO GPIO_NUM_27
-#define STATUS_LED_ASSOC_GPIO GPIO_NUM_25
-#define STATUS_LED_RSSI_CHANNEL LEDC_CHANNEL_3
+#define STATUS_LED_RSSI_GPIO     GPIO_NUM_18
+#define STATUS_LED_SLEEP_GPIO    GPIO_NUM_27
+#define STATUS_LED_ASSOC_GPIO    GPIO_NUM_25
+#define STATUS_LED_RSSI_CHANNEL  LEDC_CHANNEL_3
 #define STATUS_LED_SLEEP_CHANNEL LEDC_CHANNEL_4
 #define STATUS_LED_ASSOC_CHANNEL LEDC_CHANNEL_5
-
 #define STATUS_LED_FREQ 1000
 
 static SLIST_HEAD(status_led_color_list_t, status_led_color_t) status_led_colors_list;
@@ -231,3 +231,31 @@ void sleep_led_set(uint8_t value) {
 void sleep_led_fade(uint8_t value, int max_fade_time_ms) {
     status_led_channel_fade(STATUS_LED_SLEEP_CHANNEL, 0xFF - value, max_fade_time_ms);
 }
+
+#elif CONFIG_IDF_TARGET_ESP32S3
+
+void status_led_clear(void) {}
+
+void status_led_init(void) {}
+
+status_led_handle_t status_led_add(uint32_t rgba, status_led_flashing_mode_t flashing_mode,
+                                   uint32_t interval, uint32_t duration, uint8_t expire)
+{
+    return NULL;
+}
+
+void status_led_remove(status_led_handle_t color) {}
+
+void rssi_led_set(uint8_t value) {}
+
+void rssi_led_fade(uint8_t value, int max_fade_time_ms) {}
+
+void assoc_led_set(uint8_t value) {}
+
+void assoc_led_fade(uint8_t value, int max_fade_time_ms) {}
+
+void sleep_led_set(uint8_t value) {}
+
+void sleep_led_fade(uint8_t value, int max_fade_time_ms) {}
+
+#endif

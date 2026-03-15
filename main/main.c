@@ -7,9 +7,8 @@
  * the Free Software Foundation, version 3.
  *
  * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * General Public License for more details.
+ * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+ * or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
@@ -22,13 +21,19 @@
 #include <core_dump.h>
 #include <esp_ota_ops.h>
 #include <stream_stats.h>
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+
 #include "esp_system.h"
 #include "esp_log.h"
+#include "esp_event.h"
+#include "esp_netif.h"
+
 #include "driver/uart.h"
 #include "driver/ledc.h"
+
 #include "config.h"
 #include "wifi.h"
 #include "uart.h"
@@ -42,26 +47,41 @@ static const char *TAG = "MAIN";
 
 static char *reset_reason_name(esp_reset_reason_t reason);
 
+static void got_ip_event_handler(void *arg, esp_event_base_t event_base,
+                                 int32_t event_id, void *event_data)
+{
+    ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
+    ESP_LOGI("ETH", "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
+    ESP_LOGI("ETH", "Netmask: " IPSTR, IP2STR(&event->ip_info.netmask));
+    ESP_LOGI("ETH", "Gateway: " IPSTR, IP2STR(&event->ip_info.gw));
+}
 
-
-static void sntp_time_set_handler(struct timeval *tv) {
+static void sntp_time_set_handler(struct timeval *tv)
+{
     ESP_LOGI(TAG, "Synced time from SNTP");
 }
 
-void app_main()
+void app_main(void)
 {
     status_led_init();
     status_led_handle_t status_led = status_led_add(0xFFFFFF33, STATUS_LED_FADE, 250, 2500, 0);
 
     log_init();
-    esp_log_set_vprintf(log_vprintf);
+    // esp_log_set_vprintf(log_vprintf);
+
     esp_log_level_set("gpio", ESP_LOG_WARN);
     esp_log_level_set("system_api", ESP_LOG_WARN);
     esp_log_level_set("wifi", ESP_LOG_WARN);
     esp_log_level_set("esp_netif_handlers", ESP_LOG_WARN);
 
-    core_dump_check();
+    esp_log_level_set("esp_eth", ESP_LOG_DEBUG);
+    esp_log_level_set("esp_netif_lwip", ESP_LOG_DEBUG);
+    esp_log_level_set("dhcpc", ESP_LOG_DEBUG);
+#if CONFIG_IDF_TARGET_ESP32S3
+    esp_log_level_set("w5500.mac", ESP_LOG_DEBUG);
+#endif
 
+    core_dump_check();
     stream_stats_init();
 
     config_init();
@@ -89,32 +109,44 @@ void app_main()
     ESP_LOGI(TAG, "║ Source: https://github.com/nebkat/esp32-xbee ║");
     ESP_LOGI(TAG, "╚══════════════════════════════════════════════╝");
 
-    esp_event_loop_create_default();
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, &got_ip_event_handler, NULL));
 
     vTaskDelay(pdMS_TO_TICKS(2500));
-    status_led->interval = 100;
-    status_led->duration = 1000;
-    status_led->flashing_mode = STATUS_LED_BLINK;
 
-    if (reset_reason != ESP_RST_POWERON && reset_reason != ESP_RST_SW && reset_reason != ESP_RST_WDT) {
-        status_led->active = false;
+    if (status_led != NULL) {
+        status_led->interval = 100;
+        status_led->duration = 1000;
+        status_led->flashing_mode = STATUS_LED_BLINK;
+    }
+
+    if (reset_reason != ESP_RST_POWERON &&
+        reset_reason != ESP_RST_SW &&
+        reset_reason != ESP_RST_WDT) {
+        if (status_led != NULL) {
+            status_led->active = false;
+        }
+
         status_led_handle_t error_led = status_led_add(0xFF000033, STATUS_LED_BLINK, 50, 10000, 0);
 
         vTaskDelay(pdMS_TO_TICKS(10000));
 
-        status_led_remove(error_led);
-        status_led->active = true;
+        if (error_led != NULL) {
+            status_led_remove(error_led);
+        }
+
+        if (status_led != NULL) {
+            status_led->active = true;
+        }
     }
 
-    esp_netif_init();
-
-
-   esp_netif_t *netif = network_init();
-    if (netif == NULL){
+    esp_netif_t *netif = network_init();
+    if (netif == NULL) {
         ESP_LOGI(TAG, "Ethernet failed, initialize WiFi instead.");
         wifi_init();
     }
-  
+
     wait_for_network();
 
     web_server_init();
@@ -142,14 +174,20 @@ void app_main()
         multi_heap_info_t info;
         heap_caps_get_info(&info, MALLOC_CAP_DEFAULT);
 
-        uart_nmea("$PESP,HEAP,FREE,%d/%d,%d%%", info.total_free_bytes,
-                info.total_allocated_bytes + info.total_free_bytes,
-                100 * info.total_free_bytes / (info.total_allocated_bytes + info.total_free_bytes));
+        uart_nmea("$PESP,HEAP,FREE,%d/%d,%d%%",
+                  info.total_free_bytes,
+                  info.total_allocated_bytes + info.total_free_bytes,
+                  100 * info.total_free_bytes / (info.total_allocated_bytes + info.total_free_bytes));
+    }
+#else
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 #endif
 }
 
-static char *reset_reason_name(esp_reset_reason_t reason) {
+static char *reset_reason_name(esp_reset_reason_t reason)
+{
     switch (reason) {
         default:
         case ESP_RST_UNKNOWN:

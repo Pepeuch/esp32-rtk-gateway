@@ -2,7 +2,7 @@
 #define ESP32_XBEE_NETWORK_H
 
 #include <esp_netif.h>
-#include <esp_netif_types.h>
+//#include <esp_netif_types.h>
 #include <stdbool.h>
 
 

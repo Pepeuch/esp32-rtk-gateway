@@ -10,15 +10,18 @@
         input::-webkit-inner-spin-button {
             /* display: none; <- Crashes Chrome on hover */
             -webkit-appearance: none;
+            appearance: none;
             margin: 0; /* <-- Apparently some margin are still there even though it's hidden */
         }
-
+    
         input[type=number] {
             -moz-appearance:textfield; /* Firefox */
+            appearance: textfield;
         }
-
+    
         input[type=color] {
             -webkit-appearance: none;
+            appearance: none;
             border: none;
             width: 20px;
             border-radius: 5px;
