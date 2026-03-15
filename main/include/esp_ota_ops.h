@@ -51,7 +51,7 @@ typedef uint32_t esp_ota_handle_t;
  * Return description for running app.
  * @return Pointer to esp_app_desc structure.
  */
-const esp_app_desc_t *esp_ota_get_app_description(void) __attribute__((deprecated("Please use esp_app_get_description instead")));
+const esp_app_desc_t *esp_app_get_description(void) __attribute__((deprecated("Please use esp_app_get_description instead")));
 
 /**
  * @brief   Fill the provided buffer with SHA256 of the ELF file, formatted as hexadecimal, null-terminated.

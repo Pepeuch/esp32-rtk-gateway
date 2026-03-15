@@ -21,8 +21,10 @@ esp_netif_t *network_init() {
     eth_esp32_emac_config_t esp32_emac_config = ETH_ESP32_EMAC_DEFAULT_CONFIG();
     esp32_emac_config.clock_config.rmii.clock_mode = EMAC_CLK_EXT_IN;
     esp32_emac_config.clock_config.rmii.clock_gpio = EMAC_CLK_IN_GPIO;
-    esp32_emac_config.smi_mdc_gpio_num = 23;
-    esp32_emac_config.smi_mdio_gpio_num = 18;
+    esp32_emac_config.smi_gpio = (emac_esp_smi_gpio_config_t){
+    .mdc_num = 23,
+    .mdio_num = 18
+        };
 
 
     eth_mac_config_t mac_config = ETH_MAC_DEFAULT_CONFIG();

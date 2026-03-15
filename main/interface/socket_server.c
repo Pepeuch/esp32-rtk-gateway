@@ -148,7 +148,7 @@ static esp_err_t socket_tcp_init() {
 
 static esp_err_t socket_tcp_accept() {
     struct sockaddr_in6 source_addr;
-    int addr_len = sizeof(source_addr);
+    socklen_t addr_len = sizeof(source_addr);
     int sock = accept(sock_tcp, (struct sockaddr *)&source_addr, &addr_len);
     ERROR_ACTION(TAG, sock < 0, return ESP_FAIL, "Could not accept new TCP connection: %d %s", errno, strerror(errno))
 
