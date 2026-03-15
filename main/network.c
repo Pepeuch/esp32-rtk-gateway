@@ -5,6 +5,7 @@
 #include "esp_mac.h"
 #include "esp_eth_mac.h"
 #include "esp_event.h"
+#include "esp_timer.h"
 #include "config.h" // Include if you need any config values in this file
 #if CONFIG_IDF_TARGET_ESP32S3
 #include "driver/spi_master.h"
@@ -15,31 +16,45 @@
 static const char *TAG = "NETWORK";
 
 static esp_netif_t *global_netif = NULL;
-static bool ethernet_active = false;
+static bool ethernet_driver_started = false;
 static bool ethernet_link_up = false;
+static bool ethernet_has_ip = false;
+
+static void eth_got_ip_event_handler(void *arg, esp_event_base_t event_base,
+                                     int32_t event_id, void *event_data)
+{
+    ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
+    ethernet_has_ip = true;
+
+    ESP_LOGI(TAG, "Ethernet got IP: " IPSTR, IP2STR(&event->ip_info.ip));
+    ESP_LOGI(TAG, "Ethernet netmask: " IPSTR, IP2STR(&event->ip_info.netmask));
+    ESP_LOGI(TAG, "Ethernet gateway: " IPSTR, IP2STR(&event->ip_info.gw));
+}
+
 static void eth_event_handler(void *arg, esp_event_base_t event_base,
                               int32_t event_id, void *event_data)
 {
     switch (event_id) {
         case ETHERNET_EVENT_CONNECTED:
             ethernet_link_up = true;
-            ethernet_active = true;
             ESP_LOGI(TAG, "Ethernet link up");
             break;
 
         case ETHERNET_EVENT_DISCONNECTED:
             ethernet_link_up = false;
-            ethernet_active = false;
+            ethernet_has_ip = false;
             ESP_LOGW(TAG, "Ethernet link down");
             break;
 
         case ETHERNET_EVENT_START:
+            ethernet_driver_started = true;
             ESP_LOGI(TAG, "Ethernet started");
             break;
 
         case ETHERNET_EVENT_STOP:
+            ethernet_driver_started = false;
             ethernet_link_up = false;
-            ethernet_active = false;
+            ethernet_has_ip = false;
             ESP_LOGW(TAG, "Ethernet stopped");
             break;
 
@@ -100,7 +115,8 @@ esp_netif_t *network_init() {
     esp_netif_config_t netif_config = ESP_NETIF_DEFAULT_ETH();
     global_netif = esp_netif_new(&netif_config);
     esp_netif_attach(global_netif, esp_eth_new_netif_glue(eth_handle));
-
+    ESP_ERROR_CHECK(esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID, &eth_event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, &eth_got_ip_event_handler, NULL));
     esp_err_t start_result = esp_eth_start(eth_handle);
 
 
@@ -231,6 +247,7 @@ esp_netif_t *network_init() {
         return NULL;
     }
     ESP_ERROR_CHECK(esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID, &eth_event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, &eth_got_ip_event_handler, NULL));
     ret = esp_eth_start(eth_handle);
 //    esp_eth_ioctl(eth_handle, ETH_CMD_S_FLOW_CTRL, (void*)true);
     if (ret != ESP_OK) {
@@ -240,7 +257,6 @@ esp_netif_t *network_init() {
     }
 
     ESP_LOGI(TAG, "W5500 Ethernet driver started successfully.");
-    ethernet_active = true;
     return global_netif;
 
     #else
@@ -250,7 +266,30 @@ esp_netif_t *network_init() {
 
     #endif
     }
+bool network_is_ethernet_link_up(void)
+{
+    return ethernet_link_up;
+}
 
-bool network_is_ethernet(){
-    return ethernet_active;
+bool network_is_ethernet_ready(void)
+{
+    return ethernet_driver_started && ethernet_link_up && ethernet_has_ip;
+}
+
+bool network_wait_for_ethernet_ready(uint32_t timeout_ms)
+{
+    int64_t start = esp_timer_get_time();
+
+    while ((esp_timer_get_time() - start) < ((int64_t)timeout_ms * 1000)) {
+        if (network_is_ethernet_ready()) {
+            return true;
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+    return false;
+}
+
+bool network_is_ethernet(void){
+    return network_is_ethernet_ready();
 }

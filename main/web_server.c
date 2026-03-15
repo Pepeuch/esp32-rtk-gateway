@@ -36,6 +36,7 @@
 #include "web_server.h"
 #include "errno.h"
 #include "esp_task_wdt.h"
+#include "captive_portal.h"
 
 #if CONFIG_IDF_TARGET_ESP32
 #include <esp32/rom/crc.h>
@@ -45,6 +46,13 @@
 #define crc32_port esp_rom_crc32_le
 #endif
 
+static esp_err_t captive_404_handler(httpd_req_t *req, httpd_err_code_t err)
+{
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/");
+    httpd_resp_send(req, NULL, 0);
+    return ESP_OK;
+}
 // Max length a file path can have on storage
 #define FILE_PATH_MAX (ESP_VFS_PATH_MAX + CONFIG_SPIFFS_OBJ_NAME_LEN)
 #define FILE_HASH_SUFFIX ".crc"
@@ -405,9 +413,7 @@ static esp_err_t file_get_handler(httpd_req_t *req) {
         }
 
         if (httpd_resp_send_chunk(req, buffer, length) != ESP_OK) {
-            ESP_LOGE(TAG, "Failed sending file %s", file_name);
-            httpd_resp_sendstr_chunk(req, NULL);
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to send file");
+            ESP_LOGW(TAG, "Client disconnected while sending %s", file_name);
             fclose(fd);
             return ESP_FAIL;
         }
@@ -713,7 +719,7 @@ static esp_err_t status_get_handler(httpd_req_t *req) {
     }
 
     cJSON *sta = cJSON_AddObjectToObject(wifi, "sta");
-    cJSON_AddBoolToObject(sta, "active", ap_status.active);
+    cJSON_AddBoolToObject(sta, "active", sta_status.active);
     if (sta_status.active) {
         cJSON_AddBoolToObject(sta, "connected", sta_status.connected);
         if (sta_status.connected) {
@@ -777,6 +783,7 @@ static httpd_handle_t web_server_start(void)
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.uri_match_fn = httpd_uri_match_wildcard;
+    config.max_uri_handlers = 20;
 
     // Start the httpd server
     ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);
@@ -789,9 +796,10 @@ static httpd_handle_t web_server_start(void)
         register_uri_handler(server, "/core_dump", HTTP_GET, core_dump_get_handler);
         register_uri_handler(server, "/heap_info", HTTP_GET, heap_info_get_handler);
 
-        register_uri_handler(server, "/wifi/scan", HTTP_GET, wifi_scan_get_handler);
-
-        register_uri_handler(server, "/*", HTTP_GET, file_get_handler);
+        ESP_ERROR_CHECK(register_uri_handler(server, "/wifi/scan", HTTP_GET, wifi_scan_get_handler));
+        captive_portal_register_http_handlers(server);
+        ESP_ERROR_CHECK(register_uri_handler(server, "/*", HTTP_GET, file_get_handler));
+        ESP_ERROR_CHECK(httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, captive_404_handler));
     }
 
     if (server == NULL) {

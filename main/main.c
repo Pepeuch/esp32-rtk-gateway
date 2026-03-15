@@ -141,13 +141,36 @@ void app_main(void)
         }
     }
 
-    esp_netif_t *netif = network_init();
-    if (netif == NULL) {
-        ESP_LOGI(TAG, "Ethernet failed, initialize WiFi instead.");
-        wifi_init();
+    esp_netif_t *netif = NULL;
+    bool eth_ready = false;
+    bool wifi_ready = false;
+
+    netif = network_init();
+
+    if (netif != NULL) {
+        ESP_LOGI(TAG, "Waiting up to 3000 ms for Ethernet...");
+        eth_ready = network_wait_for_ethernet_ready(3000);
     }
 
-    wait_for_network();
+    if (!eth_ready) {
+        ESP_LOGW(TAG, "Ethernet not ready, trying WiFi STA/AP...");
+        wifi_init();
+
+        if (wifi_has_saved_config()) {
+            wifi_ready = wifi_wait_for_sta_ip(5000);
+
+            if (!wifi_ready) {
+                ESP_LOGW(TAG, "WiFi STA failed, forcing AP fallback");
+                wifi_start_ap_fallback();
+            }
+        } else {
+            ESP_LOGI(TAG, "No saved WiFi config, AP already started by wifi_init()");
+        }
+    }
+
+
+    
+wait_for_network();
 
     web_server_init();
 
@@ -213,4 +236,6 @@ static char *reset_reason_name(esp_reset_reason_t reason)
         case ESP_RST_SDIO:
             return "SDIO";
     }
+
+wait_for_network();
 }

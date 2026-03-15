@@ -8,34 +8,31 @@
 #include "freertos/event_groups.h"
 #include "esp_netif.h"
 #include "esp_netif_types.h"
+#include "lwip/ip4_addr.h"
+#include "lwip/inet.h"
 #include "wifi.h"
+#include "captive_portal.h"
 #include "config.h"  // Added to include config parameters
 #include "network.h" // Include network.h to check the status of the network interface
 
 static const char *TAG = "WIFI";
 
-#define WIFI_CONNECTED_BIT BIT0
+#define WIFI_STA_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT      BIT1
 #define WIFI_GOT_IP_BIT    BIT2
 #define WIFI_DISCONNECTED_BIT BIT3
-
+#define WIFI_AP_ACTIVE_BIT     BIT4
 
 #define NVS_NAMESPACE "wifi_config"
 #define NVS_KEY_SSID "ssid"
 #define NVS_KEY_PASSWORD "password"
 
 static EventGroupHandle_t s_wifi_event_group = NULL;
-
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
-
 static void wifi_disconnect_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
-
 static void ip_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
-
 static bool load_wifi_config(char *ssid, char *password);
-
 static void save_wifi_config(const char *ssid, const char *password);
-
 
 void wifi_init() {
     // Initialize the event group
@@ -45,10 +42,24 @@ void wifi_init() {
 
     esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL);
     esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &ip_event_handler, NULL);
-      esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &wifi_disconnect_handler, NULL);
+    esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &wifi_disconnect_handler, NULL);
 
     wifi_init_config_t wifi_init_config = WIFI_INIT_CONFIG_DEFAULT();
-    esp_wifi_init(&wifi_init_config);
+    esp_netif_t *ap_netif = NULL;
+    esp_netif_t *sta_netif = NULL;
+
+    /* Crée les netifs par défaut une seule fois */
+    ap_netif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+    sta_netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+
+    if (ap_netif == NULL) {
+        esp_netif_create_default_wifi_ap();
+    }
+
+    if (sta_netif == NULL) {
+        esp_netif_create_default_wifi_sta();
+    }
+    ESP_ERROR_CHECK(esp_wifi_init(&wifi_init_config));
 
     char ssid[33] = "";
     char password[65] = "";
@@ -64,36 +75,65 @@ void wifi_init() {
        wifi_config.sta.pmf_cfg.capable = true;
        wifi_config.sta.pmf_cfg.required = false;
 
-        esp_wifi_set_mode(WIFI_MODE_STA);
-        esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
-        esp_wifi_start();
-        esp_wifi_connect();
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+        ESP_ERROR_CHECK(esp_wifi_start());
+        ESP_ERROR_CHECK(esp_wifi_connect());
 
 
     } else {
         // Start in hotspot mode if no saved config
         ESP_LOGI(TAG, "Starting in Access Point mode");
+
         strcpy((char*)wifi_config.ap.ssid, "ESP32-NTRIP-AP");
-        strcpy((char*)wifi_config.ap.password, "password123");
-        wifi_config.ap.authmode = WIFI_AUTH_WPA2_PSK;
+        wifi_config.ap.password[0] = '\0';
+        wifi_config.ap.authmode = WIFI_AUTH_OPEN;
         wifi_config.ap.max_connection = 4;
 
-        esp_wifi_set_mode(WIFI_MODE_AP);
-        esp_wifi_set_config(WIFI_IF_AP, &wifi_config);
-        esp_wifi_start();
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config));
+        ESP_ERROR_CHECK(esp_wifi_start());
+
+        esp_netif_t *ap_netif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+        if (ap_netif != NULL) {
+            esp_netif_ip_info_t ip_info;
+            IP4_ADDR(&ip_info.ip, 192, 168, 4, 1);
+            IP4_ADDR(&ip_info.gw, 192, 168, 4, 1);
+            IP4_ADDR(&ip_info.netmask, 255, 255, 255, 0);
+
+            esp_netif_dhcps_stop(ap_netif);
+            esp_netif_set_ip_info(ap_netif, &ip_info);
+            esp_netif_dhcps_start(ap_netif);
+
+            ESP_LOGI(TAG, "AP IP: " IPSTR, IP2STR(&ip_info.ip));
+            captive_portal_start();
+        } else {
+            ESP_LOGE(TAG, "Failed to get WIFI_AP_DEF netif");
         }
+    }
 
 
     ESP_LOGI(TAG, "WiFi initialization complete");
 }
 
 void wifi_set_ap_config(const char *ssid, const char *password){
-  wifi_config_t wifi_config;
-  esp_wifi_get_config(WIFI_IF_AP, &wifi_config);
-  strncpy((char*)wifi_config.ap.ssid, ssid, sizeof(wifi_config.ap.ssid) - 1);
-  strncpy((char*)wifi_config.ap.password, password, sizeof(wifi_config.ap.password) -1);
-  wifi_config.ap.authmode = WIFI_AUTH_WPA2_PSK;
-  esp_wifi_set_config(WIFI_IF_AP, &wifi_config);
+    wifi_config_t wifi_config = {0};
+    esp_wifi_get_config(WIFI_IF_AP, &wifi_config);
+
+    strncpy((char*)wifi_config.ap.ssid, ssid, sizeof(wifi_config.ap.ssid) - 1);
+    wifi_config.ap.ssid[sizeof(wifi_config.ap.ssid) - 1] = '\0';
+
+    if (password != NULL && password[0] != '\0') {
+        strncpy((char*)wifi_config.ap.password, password, sizeof(wifi_config.ap.password) - 1);
+        wifi_config.ap.password[sizeof(wifi_config.ap.password) - 1] = '\0';
+        wifi_config.ap.authmode = WIFI_AUTH_WPA2_PSK;
+    } else {
+        wifi_config.ap.password[0] = '\0';
+        wifi_config.ap.authmode = WIFI_AUTH_OPEN;
+    }
+
+    wifi_config.ap.max_connection = 4;
+    esp_wifi_set_config(WIFI_IF_AP, &wifi_config);
 }
 
 void wifi_set_sta_config(const char *ssid, const char *password)
@@ -108,15 +148,12 @@ void wifi_set_sta_config(const char *ssid, const char *password)
     wifi_config.sta.pmf_cfg.capable = true;
     wifi_config.sta.pmf_cfg.required = false;
 
-     esp_wifi_set_mode(WIFI_MODE_STA);
-      esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
-
+    esp_wifi_set_mode(WIFI_MODE_STA);
+    esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
     esp_wifi_connect();
-
     save_wifi_config(ssid, password);
 
 }
-
 
 wifi_ap_record_t * wifi_scan(uint16_t *number) {
     ESP_LOGI(TAG, "Starting WiFi scan");
@@ -132,7 +169,6 @@ wifi_ap_record_t * wifi_scan(uint16_t *number) {
         };
 
     ESP_ERROR_CHECK(esp_wifi_scan_start(&scan_config, true));
-
     uint16_t ap_count;
     ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&ap_count));
 
@@ -193,8 +229,6 @@ void wifi_ap_status(wifi_ap_status_t *status) {
          status->devices = sta_list->num;
           free(sta_list);
     }
-
-
 
     esp_netif_t *ap_netif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
     if (ap_netif != NULL) {
@@ -282,41 +316,72 @@ void wait_for_ip() {
 }
 
 
-void wait_for_network() {
-    if(network_is_ethernet()) {
-        ESP_LOGI(TAG, "Waiting for Ethernet connection...");
-        esp_netif_t *eth_netif = esp_netif_get_handle_from_ifkey("ETH_DEF");
-         if (eth_netif == NULL){
-          ESP_LOGE(TAG, "No Ethernet interface found.");
-         return;
-        }
-          esp_netif_ip_info_t ip_info;
-         while(ip_info.ip.addr == 0){
-             esp_netif_get_ip_info(eth_netif, &ip_info);
-              vTaskDelay(1000 / portTICK_PERIOD_MS);
-        }
-          ESP_LOGI(TAG, "Ethernet got IP");
-
-    } else {
-         ESP_LOGI(TAG, "Waiting for WiFi connection...");
-          if (s_wifi_event_group == NULL){
-                 ESP_LOGE(TAG, "Event group not initialized.");
-                  return;
-           }
-            EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
-              WIFI_CONNECTED_BIT,
-              pdFALSE,
-              pdFALSE,
-              portMAX_DELAY);
-
-            if (!(bits & WIFI_CONNECTED_BIT)) {
-                ESP_LOGE(TAG, "Failed to connect to WiFi.");
-             }else{
-               ESP_LOGI(TAG, "WiFi connected.");
-            }
+void wait_for_network(void)
+{
+    if (network_is_ethernet_ready()) {
+        ESP_LOGI(TAG, "Ethernet ready");
+        return;
     }
+
+    wifi_mode_t mode = WIFI_MODE_NULL;
+    esp_wifi_get_mode(&mode);
+
+    if (mode == WIFI_MODE_AP) {
+        ESP_LOGI(TAG, "WiFi AP mode active");
+        return;
+    }
+
+    if (mode == WIFI_MODE_STA) {
+        if (s_wifi_event_group == NULL) {
+            ESP_LOGE(TAG, "Event group not initialized");
+            return;
+        }
+
+        ESP_LOGI(TAG, "Waiting for WiFi STA IP...");
+        EventBits_t bits = xEventGroupWaitBits(
+            s_wifi_event_group,
+            WIFI_GOT_IP_BIT,
+            pdFALSE,
+            pdFALSE,
+            portMAX_DELAY
+        );
+
+        if (bits & WIFI_GOT_IP_BIT) {
+            ESP_LOGI(TAG, "WiFi STA got IP");
+        } else {
+            ESP_LOGE(TAG, "WiFi STA failed to get IP");
+        }
+        return;
+    }
+
+    ESP_LOGW(TAG, "No active network mode");
 }
 
+void wifi_start_ap_fallback(void)
+{
+    wifi_config_t wifi_config = {0};
+
+    ESP_LOGW(TAG, "Starting fallback Access Point mode");
+
+    esp_wifi_stop();
+
+    strcpy((char *)wifi_config.ap.ssid, "ESP32-NTRIP-AP");
+    wifi_config.ap.password[0] = '\0';
+    wifi_config.ap.authmode = WIFI_AUTH_OPEN;
+    wifi_config.ap.max_connection = 4;
+
+    esp_wifi_set_mode(WIFI_MODE_AP);
+    esp_wifi_set_config(WIFI_IF_AP, &wifi_config);
+    esp_wifi_start();
+
+    if (s_wifi_event_group) {
+        xEventGroupClearBits(s_wifi_event_group,
+                             WIFI_STA_CONNECTED_BIT | WIFI_GOT_IP_BIT | WIFI_DISCONNECTED_BIT);
+        xEventGroupSetBits(s_wifi_event_group, WIFI_AP_ACTIVE_BIT);
+    }
+
+    ESP_LOGI(TAG, "Fallback AP started: SSID=ESP32-NTRIP-AP");
+}
 
 const char *esp_netif_name(esp_netif_t *esp_netif) {
     if(esp_netif == NULL){
@@ -354,24 +419,27 @@ const char * wifi_auth_mode_name(wifi_auth_mode_t auth_mode) {
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
 {
     if (event_id == WIFI_EVENT_STA_START) {
-        xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
-         ESP_LOGI(TAG, "WiFi Station started");
+        ESP_LOGI(TAG, "WiFi station started");
     } else if (event_id == WIFI_EVENT_STA_CONNECTED) {
-         ESP_LOGI(TAG, "WiFi connected to the AP");
+        ESP_LOGI(TAG, "WiFi connected to AP");
+        xEventGroupSetBits(s_wifi_event_group, WIFI_STA_CONNECTED_BIT);
+        xEventGroupClearBits(s_wifi_event_group, WIFI_DISCONNECTED_BIT);
     } else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        ESP_LOGE(TAG, "WiFi Station disconnected from AP");
-        esp_wifi_connect();
-        xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
-       xEventGroupClearBits(s_wifi_event_group, WIFI_GOT_IP_BIT);
+        ESP_LOGW(TAG, "WiFi station disconnected from AP");
+        xEventGroupClearBits(s_wifi_event_group, WIFI_STA_CONNECTED_BIT | WIFI_GOT_IP_BIT);
+        xEventGroupSetBits(s_wifi_event_group, WIFI_DISCONNECTED_BIT);
+    } else if (event_id == WIFI_EVENT_AP_START) {
+        ESP_LOGI(TAG, "WiFi AP started");
+        xEventGroupSetBits(s_wifi_event_group, WIFI_AP_ACTIVE_BIT);
     }
 }
 
 
-static void wifi_disconnect_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data){
-     if(event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        ESP_LOGW(TAG, "WiFi disconnected. Try to reconnect.");
-       xEventGroupClearBits(s_wifi_event_group, WIFI_GOT_IP_BIT);
-     }
+static void wifi_disconnect_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
+{
+    if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        ESP_LOGW(TAG, "WiFi disconnected");
+    }
 }
 
 
@@ -440,4 +508,29 @@ static void save_wifi_config(const char *ssid, const char *password) {
 
     nvs_close(nvs_handle);
       ESP_LOGI(TAG, "WiFi config saved.");
+}
+
+bool wifi_wait_for_sta_ip(uint32_t timeout_ms)
+{
+    if (s_wifi_event_group == NULL) {
+        ESP_LOGE(TAG, "Event group not initialized");
+        return false;
+    }
+
+    EventBits_t bits = xEventGroupWaitBits(
+        s_wifi_event_group,
+        WIFI_GOT_IP_BIT,
+        pdFALSE,
+        pdFALSE,
+        pdMS_TO_TICKS(timeout_ms)
+    );
+
+    return (bits & WIFI_GOT_IP_BIT) != 0;
+}
+
+bool wifi_has_saved_config(void)
+{
+    char ssid[33] = "";
+    char password[65] = "";
+    return load_wifi_config(ssid, password);
 }
