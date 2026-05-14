@@ -1,4 +1,4 @@
-# ESP32 NTRIP DUO / RTK Gateway
+# ESP32 RTK Gateway / RTK Gateway
 
 ESP32-based multi-network RTK/NTRIP gateway firmware supporting Ethernet, Wi-Fi, GNSS diagnostics, receiver management and future multi-radio extensions.
 
@@ -333,7 +333,7 @@ This project is still evolving rapidly and APIs/configuration formats may change
 Testing and feedback are welcome.
 
 
-# ESP32 NTRIP Duo WT32-ETH01 
+# ESP32 RTK Gateway WT32-ETH01 
 
 This version had been updated from ESP-IDF 4.1 to v5.2.3 and adapted to the WT32-ETH01 ESP32 Module.
 
