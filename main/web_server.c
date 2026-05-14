@@ -181,6 +181,43 @@ static esp_err_t json_response(httpd_req_t *req, cJSON *root) {
     return ESP_OK;
 }
 
+static esp_err_t request_body_alloc(httpd_req_t *req, char **out_body)
+{
+    if (out_body == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    *out_body = NULL;
+
+    if (req->content_len <= 0 || req->content_len > 16384) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid request size");
+        return ESP_FAIL;
+    }
+
+    char *body = calloc(1, req->content_len + 1);
+    if (body == NULL) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+        return ESP_ERR_NO_MEM;
+    }
+
+    int received = 0;
+    while (received < req->content_len) {
+        int ret = httpd_req_recv(req, body + received, req->content_len - received);
+        if (ret <= 0) {
+            free(body);
+            if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
+                httpd_resp_send_408(req);
+            }
+            return ESP_FAIL;
+        }
+        received += ret;
+    }
+
+    body[req->content_len] = '\0';
+    *out_body = body;
+    return ESP_OK;
+}
+
 static void capabilities_json_fill(cJSON *cap)
 {
     platform_capabilities_t capabilities;
@@ -226,7 +263,10 @@ static void ntrip_slots_json_fill(cJSON *ntrip)
         cJSON_AddNumberToObject(slot, "port", slot_status.port);
         cJSON_AddStringToObject(slot, "mountpoint", slot_status.mountpoint);
         cJSON_AddStringToObject(slot, "username", slot_status.username);
+        cJSON_AddStringToObject(slot, "password", slot_status.password_masked);
+        cJSON_AddBoolToObject(slot, "has_password", slot_status.has_password);
         cJSON_AddStringToObject(slot, "ntrip_version", slot_status.ntrip_version);
+        cJSON_AddBoolToObject(slot, "use_tls", slot_status.use_tls);
         cJSON_AddStringToObject(slot, "status", slot_status.status);
         cJSON_AddNumberToObject(slot, "bytes_sent", slot_status.bytes_sent);
         cJSON_AddNumberToObject(slot, "reconnect_count", slot_status.reconnect_count);
@@ -577,18 +617,13 @@ static esp_err_t config_get_handler(httpd_req_t *req) {
 static esp_err_t config_post_handler(httpd_req_t *req) {
     if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
 
-    int ret = httpd_req_recv(req, buffer, BUFFER_SIZE - 1);
-    if (ret <= 0) {
-        if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
-            httpd_resp_send_408(req);
-        }
-
+    char *request_body = NULL;
+    if (request_body_alloc(req, &request_body) != ESP_OK) {
         return ESP_FAIL;
     }
 
-    buffer[ret] = '\0';
-
-    cJSON *root = cJSON_Parse(buffer);
+    cJSON *root = cJSON_Parse(request_body);
+    free(request_body);
     if (root == NULL) {
     ESP_LOGE(TAG, "Failed to parse JSON");
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
@@ -689,6 +724,11 @@ static esp_err_t config_post_handler(httpd_req_t *req) {
     }
 
     cJSON_Delete(root);
+
+    if (ntrip_slots_sync_from_legacy() != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Could not sync legacy NTRIP config");
+        return ESP_FAIL;
+    }
 
     config_commit();
     config_restart();
@@ -813,8 +853,118 @@ static esp_err_t ntrip_get_handler(httpd_req_t *req)
     if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
 
     cJSON *root = cJSON_CreateObject();
+    capabilities_json_fill(cJSON_AddObjectToObject(root, "capabilities"));
     ntrip_slots_json_fill(root);
     return json_response(req, root);
+}
+
+static bool json_string_copy(cJSON *entry, char *out, size_t out_size)
+{
+    if (entry == NULL || !cJSON_IsString(entry) || out == NULL || out_size == 0) {
+        return false;
+    }
+
+    snprintf(out, out_size, "%s", entry->valuestring == NULL ? "" : entry->valuestring);
+    return true;
+}
+
+static bool json_bool_value(cJSON *entry, bool default_value)
+{
+    if (entry == NULL) {
+        return default_value;
+    }
+    if (cJSON_IsBool(entry)) {
+        return cJSON_IsTrue(entry);
+    }
+    if (cJSON_IsNumber(entry)) {
+        return entry->valuedouble != 0;
+    }
+    if (cJSON_IsString(entry)) {
+        return strcmp(entry->valuestring, "1") == 0 || strcasecmp(entry->valuestring, "true") == 0;
+    }
+    return default_value;
+}
+
+static esp_err_t ntrip_post_handler(httpd_req_t *req)
+{
+    if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
+
+    char *request_body = NULL;
+    if (request_body_alloc(req, &request_body) != ESP_OK) {
+        return ESP_FAIL;
+    }
+
+    cJSON *root = cJSON_Parse(request_body);
+    free(request_body);
+    if (root == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+
+    cJSON *slots = cJSON_GetObjectItem(root, "slots");
+    if (!cJSON_IsArray(slots) || cJSON_GetArraySize(slots) != NTRIP_SLOT_COUNT) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Expected 5 NTRIP slots");
+        return ESP_FAIL;
+    }
+
+    ntrip_slot_config_t configs[NTRIP_SLOT_COUNT];
+    for (size_t i = 0; i < NTRIP_SLOT_COUNT; i++) {
+        if (ntrip_slots_get_config(i, &configs[i]) != ESP_OK) {
+            cJSON_Delete(root);
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Could not load current slot config");
+            return ESP_FAIL;
+        }
+    }
+
+    for (int i = 0; i < cJSON_GetArraySize(slots); i++) {
+        cJSON *slot = cJSON_GetArrayItem(slots, i);
+        cJSON *index = cJSON_GetObjectItem(slot, "index");
+        if (!cJSON_IsObject(slot) || !cJSON_IsNumber(index) || index->valueint < 0 || index->valueint >= NTRIP_SLOT_COUNT) {
+            cJSON_Delete(root);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid slot index");
+            return ESP_FAIL;
+        }
+
+        size_t slot_index = (size_t)index->valueint;
+        ntrip_slot_config_t *config = &configs[slot_index];
+
+        config->enabled = json_bool_value(cJSON_GetObjectItem(slot, "enabled"), config->enabled);
+        config->use_tls = json_bool_value(cJSON_GetObjectItem(slot, "use_tls"), config->use_tls);
+
+        json_string_copy(cJSON_GetObjectItem(slot, "name"), config->name, sizeof(config->name));
+        json_string_copy(cJSON_GetObjectItem(slot, "host"), config->host, sizeof(config->host));
+        json_string_copy(cJSON_GetObjectItem(slot, "mountpoint"), config->mountpoint, sizeof(config->mountpoint));
+        json_string_copy(cJSON_GetObjectItem(slot, "username"), config->username, sizeof(config->username));
+        json_string_copy(cJSON_GetObjectItem(slot, "ntrip_version"), config->ntrip_version, sizeof(config->ntrip_version));
+
+        cJSON *port = cJSON_GetObjectItem(slot, "port");
+        if (cJSON_IsNumber(port) && port->valueint >= 0 && port->valueint <= 65535) {
+            config->port = (uint16_t)port->valueint;
+        }
+
+        cJSON *password = cJSON_GetObjectItem(slot, "password");
+        if (cJSON_IsString(password)) {
+            if (strcmp(password->valuestring, CONFIG_VALUE_UNCHANGED) != 0 &&
+                strcmp(password->valuestring, "********") != 0) {
+                snprintf(config->password, sizeof(config->password), "%s", password->valuestring);
+            }
+        }
+    }
+
+    cJSON_Delete(root);
+
+    if (ntrip_slots_set_all(configs, NTRIP_SLOT_COUNT) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Could not save NTRIP slots");
+        return ESP_FAIL;
+    }
+
+    config_restart();
+
+    cJSON *response = cJSON_CreateObject();
+    cJSON_AddBoolToObject(response, "success", true);
+    cJSON_AddBoolToObject(response, "restart", true);
+    return json_response(req, response);
 }
 
 static esp_err_t wifi_scan_get_handler(httpd_req_t *req) {
@@ -875,6 +1025,7 @@ static httpd_handle_t web_server_start(void)
         register_uri_handler(server, "/api/status", HTTP_GET, status_get_handler);
         register_uri_handler(server, "/api/capabilities", HTTP_GET, capabilities_get_handler);
         register_uri_handler(server, "/api/ntrip", HTTP_GET, ntrip_get_handler);
+        register_uri_handler(server, "/api/ntrip", HTTP_POST, ntrip_post_handler);
 
         register_uri_handler(server, "/log", HTTP_GET, log_get_handler);
         register_uri_handler(server, "/core_dump", HTTP_GET, core_dump_get_handler);

@@ -54,6 +54,35 @@
             background: #eef3f7;
             font-size: 0.875rem;
         }
+
+        .slot-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .slot-badge.ok {
+            background: #dff3e4;
+            color: #19692c;
+        }
+
+        .slot-badge.warn {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .slot-badge.muted {
+            background: #eceff3;
+            color: #51606f;
+        }
+
+        .ntrip-slot-meta {
+            font-size: 0.85rem;
+            color: #6c757d;
+        }
     </style>
     <script>
         const releases_api_url = 'https://github.com/incarvr6/esp32-ntrip/releases/tag/0.0.1';
@@ -276,6 +305,8 @@
             var wifiStaStatusText = form.find('.wifi-sta-status');
             var capabilitiesSummary = $('.capabilities-summary');
             var ntripSlotsSummary = $('.ntrip-slots-summary');
+            var ntripSlotsEditor = $('#ntrip-slot-editor');
+            var ntripSlotsSaveButton = $('#save-ntrip-slots');
 
             var streamStatsTexts = form.find('.stream-stats');
 
@@ -303,6 +334,133 @@
                     ++u;
                 } while(Math.abs(bytes) >= thresh && u < units.length - 1);
                 return bytes.toFixed(1) + units[u];
+            };
+
+            var slotBadgeClass = function(status) {
+                if (status === 'configured') return 'ok';
+                if (status === 'hardware_limited' || status === 'stored_only') return 'warn';
+                return 'muted';
+            };
+
+            var updateNtripSlotRuntime = function(slots) {
+                if (!Array.isArray(slots)) return;
+
+                slots.forEach(function(slot) {
+                    const card = ntripSlotsEditor.find('.ntrip-slot-card[data-slot-index="' + slot.index + '"]');
+                    if (!card.length) return;
+
+                    card.find('.slot-name').text(slot.name);
+                    card.find('.slot-status')
+                        .removeClass('ok warn muted')
+                        .addClass(slotBadgeClass(slot.status))
+                        .text(slot.status);
+                    card.find('.slot-reason').text(slot.disabled_reason || '');
+                    card.find('.slot-bytes').text(humanDataSize(slot.bytes_sent));
+                    card.find('.slot-reconnects').text(slot.reconnect_count);
+                    card.find('.slot-error').text(slot.last_error || 'None');
+                    card.attr('data-has-password', slot.has_password ? '1' : '0');
+                });
+            };
+
+            var renderNtripSlots = function(payload) {
+                if (!payload || !Array.isArray(payload.slots)) return;
+
+                ntripSlotsEditor.empty();
+
+                payload.slots.forEach(function(slot) {
+                    const card = $('<div>', {
+                        class: 'card mb-3 ntrip-slot-card',
+                        'data-slot-index': slot.index,
+                        'data-has-password': slot.has_password ? '1' : '0'
+                    });
+
+                    const header = $('<div>', {class: 'card-header d-flex justify-content-between align-items-center'});
+                    const left = $('<div>');
+                    left.append($('<strong>', {class: 'slot-name', text: slot.name}));
+                    left.append(' ');
+                    left.append($('<span>', {
+                        class: 'slot-badge slot-status ' + slotBadgeClass(slot.status),
+                        text: slot.status
+                    }));
+
+                    const right = $('<label>', {class: 'mb-0 small'});
+                    right.append($('<input>', {
+                        type: 'checkbox',
+                        class: 'mr-2 slot-enabled',
+                        checked: slot.enabled
+                    }));
+                    right.append(document.createTextNode('Enabled'));
+
+                    header.append(left).append(right);
+                    card.append(header);
+
+                    const body = $('<div>', {class: 'card-body'});
+
+                    body.append($('<div>', {class: 'small text-muted slot-reason mb-3', text: slot.disabled_reason || ''}));
+
+                    const row1 = $('<div>', {class: 'form-row mb-3'});
+                    row1.append($('<div>', {class: 'col-md-4'}).append(
+                        $('<label>', {text: 'Name'}),
+                        $('<input>', {type: 'text', class: 'form-control slot-name-input', value: slot.name, maxlength: 31})
+                    ));
+                    row1.append($('<div>', {class: 'col-md-5'}).append(
+                        $('<label>', {text: 'Host'}),
+                        $('<input>', {type: 'text', class: 'form-control slot-host', value: slot.host, maxlength: 95})
+                    ));
+                    row1.append($('<div>', {class: 'col-md-3'}).append(
+                        $('<label>', {text: 'Port'}),
+                        $('<input>', {type: 'number', class: 'form-control slot-port', value: slot.port, min: 0, max: 65535})
+                    ));
+
+                    const row2 = $('<div>', {class: 'form-row mb-3'});
+                    row2.append($('<div>', {class: 'col-md-4'}).append(
+                        $('<label>', {text: 'Mountpoint'}),
+                        $('<input>', {type: 'text', class: 'form-control slot-mountpoint', value: slot.mountpoint, maxlength: 63})
+                    ));
+                    row2.append($('<div>', {class: 'col-md-4'}).append(
+                        $('<label>', {text: 'Username'}),
+                        $('<input>', {type: 'text', class: 'form-control slot-username', value: slot.username, maxlength: 63})
+                    ));
+                    row2.append($('<div>', {class: 'col-md-4'}).append(
+                        $('<label>', {text: 'Password'}),
+                        $('<input>', {
+                            type: 'password',
+                            class: 'form-control slot-password',
+                            placeholder: slot.has_password ? 'Leave empty to keep stored password' : ''
+                        })
+                    ));
+
+                    const row3 = $('<div>', {class: 'form-row mb-3'});
+                    row3.append($('<div>', {class: 'col-md-4'}).append(
+                        $('<label>', {text: 'NTRIP Version'}),
+                        $('<input>', {type: 'text', class: 'form-control slot-version', value: slot.ntrip_version, maxlength: 15})
+                    ));
+                    row3.append($('<div>', {class: 'col-md-4 d-flex align-items-end'}).append(
+                        $('<label>', {class: 'mb-2'}).append(
+                            $('<input>', {
+                                type: 'checkbox',
+                                class: 'mr-2 slot-use-tls',
+                                checked: !!slot.use_tls
+                            }),
+                            document.createTextNode('Use TLS (future)')
+                        )
+                    ));
+
+                    const meta = $('<div>', {class: 'ntrip-slot-meta'});
+                    meta.append($('<div>', {html: 'Bytes sent: <strong class="slot-bytes">' + humanDataSize(slot.bytes_sent) + '</strong>'}));
+                    meta.append($('<div>', {html: 'Reconnect count: <strong class="slot-reconnects">' + slot.reconnect_count + '</strong>'}));
+                    meta.append($('<div>', {html: 'Last error: <strong class="slot-error">' + (slot.last_error || 'None') + '</strong>'}));
+
+                    body.append(row1, row2, row3, meta);
+                    card.append(body);
+                    ntripSlotsEditor.append(card);
+                });
+            };
+
+            var loadNtripSlots = function() {
+                $.getJSON('api/ntrip').done(function(data) {
+                    renderNtripSlots(data);
+                });
             };
 
             var statusUpdate = function() {
@@ -401,12 +559,56 @@
                                 text: text
                             }));
                         });
+
+                        updateNtripSlotRuntime(data.ntrip.slots);
                     }
                 }).always(function() {
                     setTimeout(statusUpdate, 2500);
                 });
             };
             statusUpdate();
+            loadNtripSlots();
+
+            ntripSlotsSaveButton.on('click', function() {
+                const slots = [];
+
+                ntripSlotsEditor.find('.ntrip-slot-card').each(function() {
+                    const card = $(this);
+                    const hasPassword = card.attr('data-has-password') === '1';
+                    let password = card.find('.slot-password').val();
+                    if (!password && hasPassword) {
+                        password = '\x1a\x1a\x1a\x1a\x1a\x1a\x1a\x1a';
+                    }
+
+                    slots.push({
+                        index: parseInt(card.attr('data-slot-index'), 10),
+                        enabled: card.find('.slot-enabled').is(':checked'),
+                        name: card.find('.slot-name-input').val(),
+                        host: card.find('.slot-host').val(),
+                        port: parseInt(card.find('.slot-port').val() || '0', 10),
+                        mountpoint: card.find('.slot-mountpoint').val(),
+                        username: card.find('.slot-username').val(),
+                        password: password || '',
+                        ntrip_version: card.find('.slot-version').val(),
+                        use_tls: card.find('.slot-use-tls').is(':checked')
+                    });
+                });
+
+                ntripSlotsSaveButton.prop('disabled', true);
+                $.ajax({
+                    url: 'api/ntrip',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({slots: slots})
+                }).done(function() {
+                    $('#restarting-modal').modal('show');
+                    setTimeout(function() {
+                        reloadOnStatus = true;
+                    }, 2500);
+                }).always(function() {
+                    ntripSlotsSaveButton.prop('disabled', false);
+                });
+            });
 
             // WiFi Station networks list
             var wifiNetworksScanButton = form.find('.wifi-networks-scan');
@@ -534,6 +736,16 @@
             <div class="card-body py-3">
                 <div class="capabilities-summary small text-muted">Loading platform profile...</div>
                 <div class="ntrip-slots-summary mt-2"></div>
+            </div>
+        </div>
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>Persistent NTRIP Slots</span>
+                <button type="button" class="btn btn-sm btn-primary" id="save-ntrip-slots">Save / Restart</button>
+            </div>
+            <div class="card-body">
+                <p class="small text-muted mb-3">This is the new 5-slot persistent NTRIP model. Legacy server A/B settings still remain below for backward compatibility and are synchronized to slots 0 and 1.</p>
+                <div id="ntrip-slot-editor"></div>
             </div>
         </div>
         <form class="needs-validation" id="form" novalidate>

@@ -86,6 +86,7 @@ void app_main(void)
     stream_stats_init();
 
     config_init();
+    ntrip_slots_init();
     uart_init();
 
     esp_reset_reason_t reset_reason = esp_reset_reason();
