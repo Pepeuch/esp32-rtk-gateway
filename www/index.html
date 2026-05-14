@@ -309,6 +309,9 @@
             var wifiApStatusText = form.find('.wifi-ap-status');
             var wifiStaStatusText = form.find('.wifi-sta-status');
             var gnssSummary = $('.gnss-summary');
+            var gnssDiagnosticsSummary = $('.gnss-diagnostics-summary');
+            var gnssSatelliteTable = $('.gnss-satellite-table tbody');
+            var gnssSatelliteStatus = $('.gnss-satellite-status');
             var capabilitiesSummary = $('.capabilities-summary');
             var ntripSlotsSummary = $('.ntrip-slots-summary');
             var ntripRuntimeSummary = $('.ntrip-runtime-summary');
@@ -385,7 +388,90 @@
                     .append($('<span>', {class: 'capability-pill', text: gnss.fix_type || 'unknown fix'}))
                     .append($('<span>', {class: 'capability-pill', text: (gnss.satellites_used || 0) + ' used / ' + (gnss.satellites_visible || 0) + ' visible'}))
                     .append($('<span>', {class: 'capability-pill', text: 'RTK ' + (gnss.rtk_status || 'unknown')}))
-                    .append($('<span>', {class: 'capability-pill', text: 'CN0 ' + (gnss.cn0_mean || 0) + '/' + (gnss.cn0_max || 0)}));
+                    .append($('<span>', {class: 'capability-pill', text: 'CN0 ' + (gnss.cn0_mean || 0) + '/' + (gnss.cn0_max || 0)}))
+                    .append($('<span>', {class: 'capability-pill', text: 'HDOP ' + (((gnss.hdop_centi || 0) / 100).toFixed(2))}))
+                    .append($('<span>', {class: 'capability-pill', text: gnss.rtcm_alive && !gnss.rtcm_stale ? 'RTCM alive' : (gnss.rtcm_stale ? 'RTCM stale' : 'RTCM idle')}));
+            };
+
+            var renderGnssDiagnostics = function(diagnostics) {
+                if (!gnssDiagnosticsSummary.length || !diagnostics) return;
+                gnssDiagnosticsSummary.empty();
+
+                if (!diagnostics.detected) {
+                    gnssDiagnosticsSummary.append($('<div>', {class: 'small text-muted', text: 'Waiting for GNSS data'}));
+                    return;
+                }
+
+                gnssDiagnosticsSummary
+                    .append($('<span>', {class: 'capability-pill', text: 'Diff age ' + (diagnostics.diff_age || 0)}))
+                    .append($('<span>', {class: 'capability-pill', text: 'Base ' + (diagnostics.base_id || '-')}))
+                    .append($('<span>', {class: 'capability-pill', text: 'Antenna ' + (diagnostics.antenna_status || 'unknown')}))
+                    .append($('<span>', {class: 'capability-pill', text: 'Jamming ' + (diagnostics.jamming_status || 'unknown')}))
+                    .append($('<span>', {class: 'capability-pill', text: 'HW ' + (diagnostics.hardware_status || 'unknown')}))
+                    .append($('<span>', {class: 'capability-pill', text: 'Parser ' + (diagnostics.parser_errors || 0)}))
+                    .append($('<span>', {class: 'capability-pill', text: 'Last ' + (diagnostics.last_message_ms || 0) + 'ms'}));
+
+                if (typeof diagnostics.agc_main === 'number' && diagnostics.agc_main >= 0) {
+                    gnssDiagnosticsSummary.append($('<span>', {class: 'capability-pill', text: 'AGC main ' + diagnostics.agc_main}));
+                }
+                if (typeof diagnostics.agc_aux === 'number' && diagnostics.agc_aux >= 0) {
+                    gnssDiagnosticsSummary.append($('<span>', {class: 'capability-pill', text: 'AGC aux ' + diagnostics.agc_aux}));
+                }
+
+                if (Array.isArray(diagnostics.constellations)) {
+                    diagnostics.constellations.forEach(function(entry) {
+                        if (!entry || !entry.visible) return;
+                        gnssDiagnosticsSummary.append($('<span>', {
+                            class: 'capability-pill',
+                            text: entry.name + ' ' + entry.visible + ' / CN0 ' + (entry.cn0_mean || 0) + '/' + (entry.cn0_max || 0)
+                        }));
+                    });
+                }
+            };
+
+            var renderGnssSatellites = function(payload) {
+                if (!gnssSatelliteTable.length || !gnssSatelliteStatus.length) return;
+                gnssSatelliteTable.empty();
+                gnssSatelliteStatus.empty();
+
+                if (!payload || !payload.detected) {
+                    gnssSatelliteStatus.text('No satellites available');
+                    return;
+                }
+
+                const satellites = Array.isArray(payload.satellites) ? payload.satellites.slice() : [];
+                if (!satellites.length) {
+                    gnssSatelliteStatus.text('Receiver connected, waiting for satellite details');
+                    return;
+                }
+
+                satellites.sort(function(a, b) {
+                    if (!!b.used !== !!a.used) return (b.used ? 1 : 0) - (a.used ? 1 : 0);
+                    return (b.cn0 || 0) - (a.cn0 || 0);
+                });
+
+                satellites.forEach(function(sat) {
+                    gnssSatelliteTable.append($('<tr>')
+                        .append($('<td>', {text: sat.constellation || 'unknown'}))
+                        .append($('<td>', {text: sat.svid || 0}))
+                        .append($('<td>', {text: sat.elevation || 0}))
+                        .append($('<td>', {text: sat.azimuth || 0}))
+                        .append($('<td>', {text: sat.cn0 || 0}))
+                        .append($('<td>', {text: sat.signal_id || '-'}))
+                        .append($('<td>', {text: sat.used ? 'yes' : 'no'}))
+                    );
+                });
+
+                gnssSatelliteStatus.text(satellites.length + ' satellite(s) in cache');
+            };
+
+            var refreshGnssViews = function() {
+                $.getJSON('api/gnss/diagnostics').done(function(data) {
+                    renderGnssDiagnostics(data);
+                });
+                $.getJSON('api/gnss/satellites').done(function(data) {
+                    renderGnssSatellites(data);
+                });
             };
 
             var updateNtripSlotRuntime = function(slots) {
@@ -627,6 +713,7 @@
                     if (data.gnss) {
                         renderGnssSummary(data.gnss);
                     }
+                    refreshGnssViews();
 
                     if (data.ntrip && Array.isArray(data.ntrip.slots)) {
                         ntripSlotsSummary.empty();
@@ -742,6 +829,7 @@
                 }).done(function(data) {
                     if (data) {
                         renderGnssSummary(data);
+                        refreshGnssViews();
                     }
                 }).always(function() {
                     button.prop('disabled', false);
@@ -900,6 +988,24 @@
             </div>
             <div class="card-body py-3">
                 <div class="gnss-summary small text-muted">Loading GNSS status...</div>
+                <div class="gnss-diagnostics-summary small text-muted mt-3"></div>
+                <div class="table-responsive mt-3">
+                    <table class="table table-sm table-striped mb-0 gnss-satellite-table">
+                        <thead>
+                            <tr>
+                                <th>Constellation</th>
+                                <th>PRN</th>
+                                <th>El</th>
+                                <th>Az</th>
+                                <th>CN0</th>
+                                <th>Sig</th>
+                                <th>Used</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div class="gnss-satellite-status small text-muted mt-2">Waiting for GNSS data...</div>
             </div>
         </div>
         <div class="card mb-4">

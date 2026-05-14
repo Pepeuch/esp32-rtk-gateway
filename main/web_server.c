@@ -418,13 +418,21 @@ static void gnss_status_json_fill(cJSON *root)
     cJSON_AddStringToObject(root, "mode", status.mode);
     cJSON_AddStringToObject(root, "fix_type", status.fix_type);
     cJSON_AddStringToObject(root, "rtk_status", status.rtk_status);
+    cJSON_AddNumberToObject(root, "fix_quality", status.fix_quality);
     cJSON_AddNumberToObject(root, "satellites_visible", status.satellites_visible);
     cJSON_AddNumberToObject(root, "satellites_used", status.satellites_used);
     cJSON_AddNumberToObject(root, "cn0_mean", status.cn0_mean);
     cJSON_AddNumberToObject(root, "cn0_max", status.cn0_max);
+    cJSON_AddNumberToObject(root, "hdop_centi", status.hdop_centi);
     cJSON_AddNumberToObject(root, "diff_age", status.diff_age);
     cJSON_AddStringToObject(root, "base_id", status.base_id);
     cJSON_AddBoolToObject(root, "rtcm_alive", status.rtcm_alive);
+    cJSON_AddBoolToObject(root, "rtcm_stale", status.rtcm_stale);
+    cJSON_AddNumberToObject(root, "agc_main", status.agc_main);
+    cJSON_AddNumberToObject(root, "agc_aux", status.agc_aux);
+    cJSON_AddStringToObject(root, "antenna_status", status.antenna_status);
+    cJSON_AddStringToObject(root, "jamming_status", status.jamming_status);
+    cJSON_AddStringToObject(root, "hardware_status", status.hardware_status);
     cJSON_AddNumberToObject(root, "last_message_ms", status.last_message_ms == UINT32_MAX ? 0 : status.last_message_ms);
     cJSON_AddNumberToObject(root, "parser_errors", status.parser_errors);
 }
@@ -440,6 +448,96 @@ static void gnss_capabilities_json_fill(cJSON *root)
     cJSON_AddItemToArray(types, cJSON_CreateString(receiver_type_name(RECEIVER_TYPE_UNICORE_N4)));
     cJSON_AddItemToArray(types, cJSON_CreateString(receiver_type_name(RECEIVER_TYPE_UBLOX)));
     cJSON_AddItemToArray(types, cJSON_CreateString(receiver_type_name(RECEIVER_TYPE_UNKNOWN)));
+}
+
+static void gnss_constellations_json_fill(cJSON *array, const receiver_diagnostics_t *diagnostics)
+{
+    if (array == NULL || diagnostics == NULL) {
+        return;
+    }
+
+    for (size_t i = 0; i < RECEIVER_CONSTELLATION_COUNT; i++) {
+        cJSON *entry = cJSON_CreateObject();
+        if (entry == NULL) {
+            ESP_LOGE(TAG, "Could not allocate constellation diagnostics JSON object");
+            return;
+        }
+
+        cJSON_AddItemToArray(array, entry);
+        cJSON_AddStringToObject(entry, "name", receiver_constellation_name((receiver_constellation_t)i));
+        cJSON_AddNumberToObject(entry, "visible", diagnostics->constellation_visible[i]);
+        cJSON_AddNumberToObject(entry, "cn0_mean", diagnostics->constellation_cn0_mean[i]);
+        cJSON_AddNumberToObject(entry, "cn0_max", diagnostics->constellation_cn0_max[i]);
+    }
+}
+
+static void gnss_diagnostics_json_fill(cJSON *root)
+{
+    receiver_status_t status;
+    receiver_diagnostics_t diagnostics;
+
+    if (receiver_get_status(&status) != ESP_OK || receiver_get_diagnostics(&diagnostics) != ESP_OK) {
+        cJSON_AddBoolToObject(root, "success", false);
+        cJSON_AddStringToObject(root, "state", "error");
+        cJSON_AddStringToObject(root, "error", "gnss_diagnostics_unavailable");
+        return;
+    }
+
+    gnss_status_json_fill(root);
+    cJSON_AddStringToObject(root, "state", diagnostics.detected ? "connected" : "idle");
+
+    cJSON *constellations = cJSON_AddArrayToObject(root, "constellations");
+    gnss_constellations_json_fill(constellations, &diagnostics);
+}
+
+static void gnss_satellites_json_fill(cJSON *root)
+{
+    receiver_status_t status;
+    receiver_satellite_t *satellites = NULL;
+    size_t count = 0;
+
+    if (receiver_get_status(&status) != ESP_OK) {
+        cJSON_AddBoolToObject(root, "success", false);
+        cJSON_AddStringToObject(root, "state", "error");
+        cJSON_AddStringToObject(root, "error", "gnss_status_unavailable");
+        return;
+    }
+
+    satellites = calloc(RECEIVER_MAX_SATELLITES, sizeof(*satellites));
+    if (satellites == NULL) {
+        cJSON_AddBoolToObject(root, "success", false);
+        cJSON_AddStringToObject(root, "state", "error");
+        cJSON_AddStringToObject(root, "error", "out_of_memory");
+        return;
+    }
+
+    count = receiver_get_satellites(satellites, RECEIVER_MAX_SATELLITES);
+
+    cJSON_AddBoolToObject(root, "success", true);
+    cJSON_AddStringToObject(root, "state", status.detected ? "connected" : "idle");
+    cJSON_AddBoolToObject(root, "detected", status.detected);
+    cJSON_AddNumberToObject(root, "count", count);
+
+    cJSON *items = cJSON_AddArrayToObject(root, "satellites");
+    for (size_t i = 0; i < count; i++) {
+        cJSON *entry = cJSON_CreateObject();
+        if (entry == NULL) {
+            ESP_LOGE(TAG, "Could not allocate satellite JSON object");
+            break;
+        }
+
+        cJSON_AddItemToArray(items, entry);
+        cJSON_AddStringToObject(entry, "constellation", receiver_constellation_name(satellites[i].constellation));
+        cJSON_AddNumberToObject(entry, "svid", satellites[i].svid);
+        cJSON_AddNumberToObject(entry, "elevation", satellites[i].elevation);
+        cJSON_AddNumberToObject(entry, "azimuth", satellites[i].azimuth);
+        cJSON_AddNumberToObject(entry, "cn0", satellites[i].cn0);
+        cJSON_AddNumberToObject(entry, "signal_id", satellites[i].signal_id);
+        cJSON_AddBoolToObject(entry, "used", satellites[i].used);
+        cJSON_AddNumberToObject(entry, "last_seen_ms", satellites[i].last_seen_ms);
+    }
+
+    free(satellites);
 }
 
 static esp_err_t basic_auth(httpd_req_t *req) {
@@ -1065,6 +1163,24 @@ static esp_err_t gnss_detect_post_handler(httpd_req_t *req)
     return json_response(req, root);
 }
 
+static esp_err_t gnss_satellites_get_handler(httpd_req_t *req)
+{
+    if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
+
+    cJSON *root = cJSON_CreateObject();
+    gnss_satellites_json_fill(root);
+    return json_response_chunked(req, root);
+}
+
+static esp_err_t gnss_diagnostics_get_handler(httpd_req_t *req)
+{
+    if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
+
+    cJSON *root = cJSON_CreateObject();
+    gnss_diagnostics_json_fill(root);
+    return json_response(req, root);
+}
+
 static bool json_string_copy(cJSON *entry, char *out, size_t out_size)
 {
     if (entry == NULL || !cJSON_IsString(entry) || out == NULL || out_size == 0) {
@@ -1489,6 +1605,8 @@ static httpd_handle_t web_server_start(void)
         register_uri_handler(server, "/api/status", HTTP_GET, status_get_handler);
         register_uri_handler(server, "/api/capabilities", HTTP_GET, capabilities_get_handler);
         register_uri_handler(server, "/api/gnss/status", HTTP_GET, gnss_status_get_handler);
+        register_uri_handler(server, "/api/gnss/satellites", HTTP_GET, gnss_satellites_get_handler);
+        register_uri_handler(server, "/api/gnss/diagnostics", HTTP_GET, gnss_diagnostics_get_handler);
         register_uri_handler(server, "/api/gnss/capabilities", HTTP_GET, gnss_capabilities_get_handler);
         register_uri_handler(server, "/api/gnss/detect", HTTP_POST, gnss_detect_post_handler);
         register_uri_handler(server, "/api/ntrip", HTTP_GET, ntrip_get_handler);

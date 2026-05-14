@@ -19,6 +19,18 @@ typedef enum receiver_mode {
     RECEIVER_MODE_FIXED,
 } receiver_mode_t;
 
+typedef enum receiver_constellation {
+    RECEIVER_CONSTELLATION_GPS = 0,
+    RECEIVER_CONSTELLATION_GLO,
+    RECEIVER_CONSTELLATION_GAL,
+    RECEIVER_CONSTELLATION_BDS,
+    RECEIVER_CONSTELLATION_QZSS,
+    RECEIVER_CONSTELLATION_UNKNOWN,
+    RECEIVER_CONSTELLATION_COUNT
+} receiver_constellation_t;
+
+#define RECEIVER_MAX_SATELLITES 64
+
 typedef struct receiver_status {
     bool detected;
     receiver_type_t receiver_type;
@@ -31,14 +43,55 @@ typedef struct receiver_status {
     uint32_t satellites_used;
     uint32_t cn0_mean;
     uint32_t cn0_max;
+    uint32_t fix_quality;
+    uint32_t hdop_centi;
     uint32_t diff_age;
     char base_id[16];
     bool rtcm_alive;
+    bool rtcm_stale;
+    int32_t agc_main;
+    int32_t agc_aux;
+    char antenna_status[24];
+    char jamming_status[32];
+    char hardware_status[32];
     uint32_t last_message_ms;
     uint32_t parser_errors;
 } receiver_status_t;
 
+typedef struct receiver_satellite {
+    receiver_constellation_t constellation;
+    uint16_t svid;
+    uint16_t elevation;
+    uint16_t azimuth;
+    uint16_t cn0;
+    uint8_t signal_id;
+    bool used;
+    uint32_t last_seen_ms;
+} receiver_satellite_t;
+
+typedef struct receiver_diagnostics {
+    bool detected;
+    receiver_type_t receiver_type;
+    bool rtcm_alive;
+    bool rtcm_stale;
+    int32_t agc_main;
+    int32_t agc_aux;
+    char antenna_status[24];
+    char jamming_status[32];
+    char hardware_status[32];
+    uint32_t last_message_ms;
+    uint32_t parser_errors;
+    uint32_t satellites_visible;
+    uint32_t satellites_used;
+    uint32_t cn0_mean;
+    uint32_t cn0_max;
+    uint32_t constellation_visible[RECEIVER_CONSTELLATION_COUNT];
+    uint32_t constellation_cn0_mean[RECEIVER_CONSTELLATION_COUNT];
+    uint32_t constellation_cn0_max[RECEIVER_CONSTELLATION_COUNT];
+} receiver_diagnostics_t;
+
 const char *receiver_type_name(receiver_type_t type);
 const char *receiver_mode_name(receiver_mode_t mode);
+const char *receiver_constellation_name(receiver_constellation_t constellation);
 
 #endif // ESP32_XBEE_RECEIVER_TYPES_H
