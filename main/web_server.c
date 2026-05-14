@@ -64,8 +64,8 @@ static esp_err_t captive_404_handler(httpd_req_t *req, httpd_err_code_t err)
 #define WWW_PARTITION_PATH "/www"
 #define WWW_PARTITION_LABEL "www"
 #define BUFFER_SIZE 2048
-#define WEB_SERVER_MAX_URI_HANDLERS 96
-#define WEB_SERVER_MAX_OPEN_SOCKETS 16
+#define WEB_SERVER_MAX_URI_HANDLERS 64
+#define WEB_SERVER_MAX_OPEN_SOCKETS 6
 
 static const char *TAG = "WEB";
 
