@@ -1,0 +1,2146 @@
+<html>
+<head>
+    <title>ESP32 RTK Gateway Config</title>
+    <script src="jquery-3.4.1.min.js"></script>
+    <script src="bs-4.3.1.bundle.min.js"></script>
+    <link rel="stylesheet" href="bs-4.3.1.min.css">
+    <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
+    <style>
+        input::-webkit-outer-spin-button,
+        input::-webkit-inner-spin-button {
+            /* display: none; <- Crashes Chrome on hover */
+            -webkit-appearance: none;
+            appearance: none;
+            margin: 0; /* <-- Apparently some margin are still there even though it's hidden */
+        }
+    
+        input[type=number] {
+            -moz-appearance:textfield; /* Firefox */
+            appearance: textfield;
+        }
+    
+        input[type=color] {
+            -webkit-appearance: none;
+            appearance: none;
+            border: none;
+            width: 20px;
+            border-radius: 5px;
+        }
+
+        .card .card-body {
+            transition: all ease-in-out 0.25s;
+        }
+
+        .card .card-body.disabled {
+            opacity: 0.75;
+            filter: blur(5px);
+            pointer-events: none;
+        }
+
+        footer {
+            padding: 20px 0;
+        }
+
+        .tooltip-inner {
+            max-width: 95vw;
+            width: 300px;
+        }
+
+        .capability-pill {
+            display: inline-block;
+            margin: 0 8px 8px 0;
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: #eef3f7;
+            font-size: 0.875rem;
+        }
+
+        .slot-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .slot-badge.ok {
+            background: #dff3e4;
+            color: #19692c;
+        }
+
+        .slot-badge.warn {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .slot-badge.error {
+            background: #f8d7da;
+            color: #842029;
+        }
+
+        .slot-badge.muted {
+            background: #eceff3;
+            color: #51606f;
+        }
+
+        .ntrip-slot-meta {
+            font-size: 0.85rem;
+            color: #6c757d;
+        }
+    </style>
+    <script>
+        const releases_api_url = 'https://github.com/incarvr6/esp32-ntrip/releases/tag/0.0.1';
+        const releases_html_url = 'https://github.com/incarvr6/esp32-ntrip/releases/tag/0.0.1';
+
+        $.fn.serializeObject = function() {
+            var o = {};
+            var a = this.serializeArray();
+            $.each(a, function() {
+                if (o[this.name]) {
+                    if (!o[this.name].push) {
+                        o[this.name] = [o[this.name]];
+                    }
+                    o[this.name].push(this.value || '');
+                } else {
+                    o[this.name] = this.value || '';
+                }
+            });
+            return o;
+        };
+
+        $.fn.appendText = function(text) {
+            $(this).append(document.createTextNode(text));
+            return this;
+        };
+
+        function print_escape(str) {
+            return str.replace(/\\/g, '\\\\')
+                .replace(/\n/g, '\\n')
+                .replace(/\r/g, '\\r')
+                .replace(/\t/g, '\\t');
+        }
+
+        function print_unescape(str) {
+            return str.replace(/\\\\/g, '\\')
+                .replace(/\\n/g, '\n')
+                .replace(/\\r/g, '\r')
+                .replace(/\\t/g, '\t');
+        }
+
+        $(function() {
+            $('[data-toggle="tooltip"]').tooltip({
+                animation: false,
+                container: 'body',
+                html: true
+            });
+
+            var form = $("#form");
+
+            form.on('submit', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+
+                if (form[0].checkValidity() !== false) {
+                    var submit = form.find(':submit').prop('disabled', true);
+                    var data = JSON.stringify($(this).serializeObject());
+                    $.post('config', data).done(function() {
+                        $('#restarting-modal').modal('show');
+
+                        // Allow some time to reload
+                        setTimeout(function() {
+                            reloadOnStatus = true;
+                        }, 2500);
+                    }).always(function() {
+                        submit.prop('disabled', false);
+                    });
+                }
+
+                form.addClass('was-validated');
+            });
+
+            form.find("input[type='checkbox']").each(function() {
+                var self = $(this);
+                var hidden = $("<input>")
+                    .attr('name', self.attr('name'))
+                    .attr('type', 'hidden')
+                    .data('checkbox', true)
+                    .attr('value', '0')
+                    .prop('disabled', self.prop('checked'))
+                    .insertAfter(self);
+                $(this).on('change', function() {
+                    hidden.prop('disabled', self.prop('checked'));
+                });
+            });
+
+            var checkDisableIfs = function() {
+                form.find("[data-disable-if]").each(function() {
+                    var condition = $(this).data('disable-if-condition');
+                    if (typeof condition === 'undefined') condition = ':not(:checked)';
+
+                    var disabled = form.find($(this).data('disable-if')).filter(condition).length > 0;
+                    var current = $(this).hasClass('disabled');
+                    if (disabled === current) return;
+
+                    $(this).prop('disabled', disabled);
+                    $(this).toggleClass('disabled', disabled);
+
+                    if ($(this).is('div')) {
+                        $(this).find(':input').each(function() {
+                            if (disabled) {
+                                $(this).data('prop-disabled-previous', $(this).prop('disabled') === true)
+                                    .data('class-disabled-previous', $(this).hasClass('disabled'))
+                                    .prop('disabled', true)
+                                    .addClass('disabled');
+                            } else {
+                                $(this).prop('disabled', $(this).data('prop-disabled-previous') === true)
+                                    .toggleClass('disabled', $(this).data('class-disabled-previous') === true);
+                            }
+                        })
+                    }
+                });
+            };
+
+            checkDisableIfs();
+
+            form.find(":input").on('change', checkDisableIfs);
+
+            $('#switch-uart').on('click', function() {
+                if (confirm("WARNING\n\nThese settings are mainly for development purposes and do not normally have to be changed. With a standard ESP32 XBee device the only setting you may want to change is the UART baud rate. DO NOT PROCEED unless you know what you are doing.")) {
+                    $(this).hide();
+                    checkDisableIfs();
+                }
+            });
+
+            const projectVersionText = $('#project-version');
+
+            $.getJSON('config').done(function(data) {
+                projectVersionText.text(data.version);
+
+                if (data.version.includes('-')) data.version = data.version.substring(0, data.version.indexOf('-'));
+                let current_version = parseFloat("0." + data.version.replace(/[^\d]/g, ""));
+                $.getJSON(releases_api_url, function(data) {
+                    if (!(data instanceof Array)) return;
+
+                    let latest_version = 0;
+                    let release_url = null;
+                    let latest_version_prerelease = 0;
+                    let prerelease_url = null;
+                    for (const release of data) {
+                        let version = parseFloat("0." + release.tag_name.replace(/[^\d]/g, ""));
+                        if (release.prerelease && latest_version_prerelease === 0) {
+                            latest_version_prerelease = version;
+                            prerelease_url = release.html_url;
+                            continue;
+                        }
+                        latest_version = version;
+                        release_url = release.html_url;
+                        break;
+                    }
+
+                    projectVersionText.attr('href', release_url)
+                        .removeClass('text-muted');
+
+                    if (latest_version === current_version) {
+                        projectVersionText.addClass('text-success')
+                            .appendText(' (latest)');
+                    } else if (latest_version > current_version) {
+                        projectVersionText.addClass('text-warning')
+                            .appendText(" (old)");
+                    } else if (latest_version < current_version) {
+                        projectVersionText.attr('href', releases_html_url)
+                            .addClass('text-primary')
+                            .appendText(' (dev)');
+                    }
+
+                    if (latest_version_prerelease > Math.max(latest_version, current_version)) {
+                        $('#prerelease-available').attr('href', prerelease_url).show();
+                    }
+                });
+
+                form.find(':input').each(function() {
+                    if (!this.name || typeof data[this.name] === 'undefined') return;
+
+                    let value = data[this.name];
+                    const $this = $(this);
+
+                    if (Array.isArray(value)) {
+                        const index = form.find(':input[name="' + this.name + '"]').index(this);
+
+                        if (value.length > index) {
+                            value = value[index];
+                        } else {
+                            return;
+                        }
+                    }
+
+                    if (this.type === 'checkbox' || this.type === 'radio') {
+                        var active = $this.val() == value;
+                        $this.prop('checked', active);
+                        $this.parent('.btn').toggleClass('active', active);
+                    } else if (this.type === 'hidden' && $this.data('checkbox')) {
+                        $this.prop('disabled', $this.val() != value);
+                    } else {
+                        $this.val(value);
+                    }
+
+                    // Reformat values when needed
+                    if ($this.data('formatted')) $this.trigger('change');
+                });
+
+                checkDisableIfs();
+            });
+
+            var wifiRssiColorClass = function(rssi) {
+                if (rssi > -50) {
+                    return 'primary';
+                } else if (rssi > -60) {
+                    return 'success';
+                } else if (rssi > -70) {
+                    return 'warning';
+                } else {
+                    return 'danger';
+                }
+            };
+
+            var deviceUptimeText = $('footer .uptime');
+            var deviceHeapText = $('footer .heap');
+
+            var wifiApStatusText = form.find('.wifi-ap-status');
+            var wifiStaStatusText = form.find('.wifi-sta-status');
+            var gnssSummary = $('.gnss-summary');
+            var gnssDiagnosticsSummary = $('.gnss-diagnostics-summary');
+            var gnssConstellationSummary = $('.gnss-constellation-summary');
+            var gnssSatelliteTable = $('.gnss-satellite-table tbody');
+            var gnssSatelliteStatus = $('.gnss-satellite-status');
+            var gnssProfileStatus = $('.gnss-profile-status');
+            var gnssProfileSelect = $('#gnss-profile');
+            var gnssRawConsole = $('#gnss-raw-console');
+            var gnssBaseSummary = $('.gnss-base-summary');
+            var gnssBaseStatus = $('.gnss-base-status');
+            var capabilitiesSummary = $('.capabilities-summary');
+            var ntripSlotsSummary = $('.ntrip-slots-summary');
+            var ntripRuntimeSummary = $('.ntrip-runtime-summary');
+            var ntripSlotsEditor = $('#ntrip-slot-editor');
+            var ntripSlotsSaveButton = $('#save-ntrip-slots');
+
+            var streamStatsTexts = form.find('.stream-stats');
+
+            var reloadOnStatus = false;
+
+            var secondsToHHMMSS = (seconds) => {
+                var hours   = Math.floor(seconds / 3600);
+                var minutes = Math.floor(seconds / 60) % 60;
+                seconds %= 60;
+
+                return [hours, minutes, seconds]
+                    .map(v => v < 10 ? "0" + v : v)
+                    .join(":");
+            };
+
+            var humanDataSize = (bytes) => {
+                var thresh = 1000;
+                if(Math.abs(bytes) < thresh) {
+                    return bytes + 'B';
+                }
+                var units = ['kB','MB','GB','TB','PB','EB','ZB','YB'];
+                var u = -1;
+                do {
+                    bytes /= thresh;
+                    ++u;
+                } while(Math.abs(bytes) >= thresh && u < units.length - 1);
+                return bytes.toFixed(1) + units[u];
+            };
+
+            var slotBadgeClass = function(status) {
+                if (status === 'streaming') return 'ok';
+                if (status === 'connecting' || status === 'authenticating' || status === 'reconnect_wait' || status === 'hardware_limited') return 'warn';
+                if (status === 'error') return 'error';
+                return 'muted';
+            };
+
+            var secondsToShort = function(seconds) {
+                seconds = parseInt(seconds || 0, 10);
+                const h = Math.floor(seconds / 3600);
+                const m = Math.floor((seconds % 3600) / 60);
+                const s = seconds % 60;
+                return [h, m, s].map(v => v < 10 ? '0' + v : '' + v).join(':');
+            };
+
+            var renderNtripRuntimeSummary = function(runtime) {
+                if (!runtime || !ntripRuntimeSummary.length) return;
+                ntripRuntimeSummary.empty()
+                    .append($('<span>', {class: 'capability-pill', text: runtime.active_slot_count + ' active slot(s)'}))
+                    .append($('<span>', {class: 'capability-pill', text: humanDataSize(runtime.free_heap_bytes || 0) + ' free heap'}))
+                    .append($('<span>', {class: 'capability-pill', text: humanDataSize(runtime.min_free_heap_bytes || 0) + ' min heap'}))
+                    .append($('<span>', {class: 'capability-pill', text: runtime.fake_rtcm_enabled ? ('Fake RTCM ' + (runtime.fake_rtcm_rate_hz || 0) + 'Hz') : 'Fake RTCM off'}))
+                    .append($('<span>', {class: 'capability-pill', text: runtime.safe_mode ? 'Safe mode' : 'Normal mode'}));
+            };
+
+            var renderGnssSummary = function(gnss) {
+                if (!gnssSummary.length || !gnss) return;
+                gnssSummary.empty();
+
+                if (!gnss.detected) {
+                    gnssSummary
+                        .append($('<div>', {class: 'small font-weight-bold mb-2', text: 'GNSS receiver'}))
+                        .append($('<div>', {class: 'small text-muted', text: 'Not connected'}));
+                    return;
+                }
+
+                gnssSummary
+                    .append($('<span>', {class: 'capability-pill', text: gnss.receiver_type || 'unknown'}))
+                    .append($('<span>', {class: 'capability-pill', text: gnss.model || 'unknown model'}))
+                    .append($('<span>', {class: 'capability-pill', text: gnss.fix_type || 'unknown fix'}))
+                    .append($('<span>', {class: 'capability-pill', text: (gnss.satellites_used || 0) + ' used / ' + (gnss.satellites_visible || 0) + ' visible'}))
+                    .append($('<span>', {class: 'capability-pill', text: 'RTK ' + (gnss.rtk_status || 'unknown')}))
+                    .append($('<span>', {class: 'capability-pill', text: 'CN0 ' + (gnss.cn0_mean || 0) + '/' + (gnss.cn0_max || 0)}))
+                    .append($('<span>', {class: 'capability-pill', text: 'HDOP ' + (((gnss.hdop_centi || 0) / 100).toFixed(2))}))
+                    .append($('<span>', {class: 'capability-pill', text: gnss.rtcm_alive && !gnss.rtcm_stale ? 'RTCM alive' : (gnss.rtcm_stale ? 'RTCM stale' : 'RTCM idle')}));
+            };
+
+            var renderGnssDiagnostics = function(diagnostics) {
+                if (!gnssDiagnosticsSummary.length || !diagnostics) return;
+                gnssDiagnosticsSummary.empty();
+
+                if (!diagnostics.detected) {
+                    gnssDiagnosticsSummary.append($('<div>', {class: 'small text-muted', text: 'No GNSS data'}));
+                    return;
+                }
+
+                gnssDiagnosticsSummary
+                    .append($('<span>', {class: 'capability-pill', text: 'Fix ' + (diagnostics.fix_type || 'unknown')}))
+                    .append($('<span>', {class: 'capability-pill', text: 'Quality ' + (diagnostics.fix_quality || 0)}))
+                    .append($('<span>', {class: 'capability-pill', text: 'RTK ' + (diagnostics.rtk_status || 'unknown')}))
+                    .append($('<span>', {class: 'capability-pill', text: 'RTCM ' + (diagnostics.rtcm_state || 'idle')}))
+                    .append($('<span>', {class: 'capability-pill', text: 'Diff age ' + (diagnostics.diff_age || 0)}))
+                    .append($('<span>', {class: 'capability-pill', text: 'Base ' + (diagnostics.base_id || '-')}))
+                    .append($('<span>', {class: 'capability-pill', text: 'Antenna ' + (diagnostics.antenna_status || 'unknown')}))
+                    .append($('<span>', {class: 'capability-pill', text: 'Jamming ' + (diagnostics.jamming_status || 'unknown')}))
+                    .append($('<span>', {class: 'capability-pill', text: 'HW ' + (diagnostics.hardware_status || 'unknown')}))
+                    .append($('<span>', {class: 'capability-pill', text: 'Parser ' + (diagnostics.parser_errors || 0)}))
+                    .append($('<span>', {class: 'capability-pill', text: 'Last ' + (diagnostics.last_message_ms || 0) + 'ms'}));
+
+                if (typeof diagnostics.agc_main === 'number' && diagnostics.agc_main >= 0) {
+                    gnssDiagnosticsSummary.append($('<span>', {class: 'capability-pill', text: 'AGC main ' + diagnostics.agc_main}));
+                }
+                if (typeof diagnostics.agc_aux === 'number' && diagnostics.agc_aux >= 0) {
+                    gnssDiagnosticsSummary.append($('<span>', {class: 'capability-pill', text: 'AGC aux ' + diagnostics.agc_aux}));
+                }
+            };
+
+            var renderGnssSatellites = function(payload) {
+                if (!gnssSatelliteTable.length || !gnssSatelliteStatus.length) return;
+                gnssSatelliteTable.empty();
+                gnssSatelliteStatus.empty();
+                if (gnssConstellationSummary.length) gnssConstellationSummary.empty();
+
+                if (!payload || !payload.detected) {
+                    gnssSatelliteStatus.text('No GNSS data');
+                    if (gnssConstellationSummary.length) {
+                        gnssConstellationSummary.append($('<div>', {class: 'small text-muted', text: 'Connect a receiver to populate satellite diagnostics.'}));
+                    }
+                    return;
+                }
+
+                const satellites = Array.isArray(payload.satellites) ? payload.satellites.slice() : [];
+                if (gnssConstellationSummary.length) {
+                    gnssConstellationSummary
+                        .append($('<span>', {class: 'capability-pill', text: (payload.total_visible || 0) + ' visible'}))
+                        .append($('<span>', {class: 'capability-pill', text: (payload.total_used || 0) + ' used'}))
+                        .append($('<span>', {class: 'capability-pill', text: 'CN0 ' + (payload.cn0_mean || 0) + '/' + (payload.cn0_max || 0)}))
+                        .append($('<span>', {class: 'capability-pill', text: 'Fix ' + (payload.fix_type || 'unknown')}))
+                        .append($('<span>', {class: 'capability-pill', text: 'RTK ' + (payload.rtk_status || 'unknown')}));
+
+                    if (Array.isArray(payload.constellations)) {
+                        payload.constellations.forEach(function(entry) {
+                            if (!entry || !entry.visible) return;
+                            gnssConstellationSummary.append($('<span>', {
+                                class: 'capability-pill',
+                                text: entry.name + ' ' + entry.visible + '/' + (entry.used || 0) + ' CN0 ' + (entry.cn0_mean || 0) + '/' + (entry.cn0_max || 0)
+                            }));
+                        });
+                    }
+                }
+
+                if (!satellites.length) {
+                    gnssSatelliteStatus.text('Receiver connected, waiting for satellite details');
+                    return;
+                }
+
+                satellites.sort(function(a, b) {
+                    if (!!b.used !== !!a.used) return (b.used ? 1 : 0) - (a.used ? 1 : 0);
+                    return (b.cn0 || 0) - (a.cn0 || 0);
+                });
+
+                satellites.forEach(function(sat) {
+                    gnssSatelliteTable.append($('<tr>')
+                        .append($('<td>', {text: sat.constellation || 'unknown'}))
+                        .append($('<td>', {text: sat.prn || sat.svid || 0}))
+                        .append($('<td>', {text: sat.elevation || 0}))
+                        .append($('<td>', {text: sat.azimuth || 0}))
+                        .append($('<td>', {text: sat.cn0 || 0}))
+                        .append($('<td>', {text: sat.signal_id || '-'}))
+                        .append($('<td>', {text: sat.used ? 'yes' : 'no'}))
+                        .append($('<td>', {text: (sat.last_seen_ms || 0) + 'ms'}))
+                    );
+                });
+
+                gnssSatelliteStatus.text((payload.total_visible || satellites.length) + ' visible, ' + (payload.total_used || 0) + ' used');
+            };
+
+            var renderGnssBaseStatus = function(base) {
+                if (!gnssBaseSummary.length || !gnssBaseStatus.length) return;
+                gnssBaseSummary.empty();
+                gnssBaseStatus.empty();
+
+                var disabled = !base || !base.detected;
+                $('#base-start-survey, #base-stop-survey, #base-apply-fixed, #base-clear')
+                    .prop('disabled', disabled);
+
+                if (!base || !base.detected) {
+                    gnssBaseSummary.append($('<div>', {class: 'small text-muted', text: 'No GNSS receiver detected'}));
+                    gnssBaseStatus.text(base && base.disabled_reason ? base.disabled_reason : 'Base controls are disabled until a receiver is connected.');
+                    return;
+                }
+
+                gnssBaseSummary
+                    .append($('<span>', {class: 'capability-pill', text: 'Mode ' + (base.configured_mode || 'rover')}))
+                    .append($('<span>', {class: 'capability-pill', text: 'Profile ' + (base.active_profile || 'none')}))
+                    .append($('<span>', {class: 'capability-pill', text: 'RTCM ' + (base.rtcm_output ? 'on' : 'off')}))
+                    .append($('<span>', {class: 'capability-pill', text: 'Survey ' + (base.survey_running ? 'running' : 'idle')}))
+                    .append($('<span>', {class: 'capability-pill', text: 'Target ' + (base.survey_duration_target_s || 0) + 's / ' + (base.survey_accuracy_target_mm || 0) + 'mm'}));
+
+                if (base.has_fixed_position) {
+                    gnssBaseSummary
+                        .append($('<span>', {class: 'capability-pill', text: 'Lat ' + ((base.latitude_e7 || 0) / 10000000).toFixed(7)}))
+                        .append($('<span>', {class: 'capability-pill', text: 'Lon ' + ((base.longitude_e7 || 0) / 10000000).toFixed(7)}))
+                        .append($('<span>', {class: 'capability-pill', text: 'Alt ' + ((base.altitude_mm || 0) / 1000).toFixed(3) + 'm'}));
+                }
+
+                if (base.survey_running) {
+                    gnssBaseStatus.text('Survey running: ' + (base.survey_elapsed_s || 0) + 's elapsed, ' + (base.survey_progress_percent || 0) + '% complete.');
+                } else {
+                    gnssBaseStatus.text(base.last_action_status || 'Idle');
+                }
+
+                $('#base-latitude').val(((base.latitude_e7 || 0) / 10000000).toFixed(7));
+                $('#base-longitude').val(((base.longitude_e7 || 0) / 10000000).toFixed(7));
+                $('#base-altitude-mm').val(base.altitude_mm || 0);
+                $('#base-survey-duration').val(base.survey_duration_target_s || 300);
+                $('#base-survey-accuracy').val(base.survey_accuracy_target_mm || 5000);
+                $('#base-rtcm-output').prop('checked', !!base.rtcm_output);
+            };
+
+            var refreshGnssViews = function() {
+                $.getJSON('api/gnss/diagnostics').done(function(data) {
+                    renderGnssDiagnostics(data);
+                });
+                $.getJSON('api/gnss/satellites').done(function(data) {
+                    renderGnssSatellites(data);
+                });
+                $.getJSON('api/gnss/base/status').done(function(data) {
+                    renderGnssBaseStatus(data);
+                });
+                $.getJSON('api/gnss/receiver/raw').done(function(data) {
+                    if (!data) return;
+                    if (gnssRawConsole.length) {
+                        gnssRawConsole.val(data.raw || '');
+                        gnssRawConsole.scrollTop(gnssRawConsole[0].scrollHeight);
+                    }
+                    if (gnssProfileStatus.length) {
+                        gnssProfileStatus.empty()
+                            .append($('<span>', {class: 'capability-pill', text: data.profile || 'none'}))
+                            .append($('<span>', {class: 'capability-pill', text: data.command_busy ? 'Applying' : 'Idle'}))
+                            .append($('<span>', {class: 'capability-pill', text: 'Queue ' + (data.command_queue_depth || 0)}))
+                            .append($('<span>', {class: 'capability-pill', text: data.last_command_status || 'idle'}));
+                    }
+                });
+            };
+
+            var loadGnssProfiles = function() {
+                $.getJSON('api/gnss/profiles').done(function(data) {
+                    if (!data || !Array.isArray(data.profiles) || !gnssProfileSelect.length) return;
+
+                    gnssProfileSelect.empty();
+                    data.profiles.forEach(function(profile) {
+                        gnssProfileSelect.append($('<option>', {
+                            value: profile.name,
+                            text: profile.label || profile.name,
+                            selected: !!profile.selected
+                        }));
+                    });
+
+                    $('#gnss-baud').val(data.receiver_baud || 115200);
+                    $('#gnss-nmea-rate').val(data.nmea_rate_hz || 1);
+                    $('#gnss-rtk-timeout').val(data.rtk_timeout || 60);
+                    $('#gnss-dgps-timeout').val(data.dgps_timeout || 120);
+                    $('#gnss-constellation-mask').val(data.constellation_mask || 0);
+                    $('#gnss-signal-mask').val(data.signal_mask || '');
+                    $('#gnss-rtcm-output').prop('checked', !!data.rtcm_output);
+                    $('#gnss-agnss-enable').prop('checked', !!data.agnss_enable);
+                    $('#base-survey-duration').val(data.base_survey_duration_s || 300);
+                    $('#base-survey-accuracy').val(data.base_survey_accuracy_mm || 5000);
+                    $('#base-rtcm-output').prop('checked', !!data.base_rtcm_output);
+                });
+            };
+
+            var updateNtripSlotRuntime = function(slots) {
+                if (!Array.isArray(slots)) return;
+
+                slots.forEach(function(slot) {
+                    const card = ntripSlotsEditor.find('.ntrip-slot-card[data-slot-index="' + slot.index + '"]');
+                    if (!card.length) return;
+
+                    card.find('.slot-name').text(slot.name);
+                    card.find('.slot-status')
+                        .removeClass('ok warn error muted')
+                        .addClass(slotBadgeClass(slot.status))
+                        .text(slot.stale && slot.status === 'streaming' ? 'stale' : slot.status);
+                    card.find('.slot-reason').text(slot.disabled_reason || (slot.stale ? 'No recent RTCM activity' : ''));
+                    card.find('.slot-bytes').text(humanDataSize(slot.bytes_sent));
+                    card.find('.slot-rate').text(humanDataSize(slot.bytes_per_sec) + '/s');
+                    card.find('.slot-reconnects').text(slot.reconnect_count);
+                    card.find('.slot-uptime').text(secondsToShort(slot.uptime_seconds));
+                    card.find('.slot-http').text(slot.last_http_code || '-');
+                    card.find('.slot-dropped').text(slot.dropped_rtcm_packets || 0);
+                    card.find('.slot-high-water').text(humanDataSize(slot.ringbuffer_high_water || 0));
+                    card.find('.slot-mock-current').text(slot.mock_mode || 'none');
+                    card.find('.slot-error').text(slot.last_error || 'None');
+                    card.attr('data-has-password', slot.has_password ? '1' : '0');
+                });
+            };
+
+            var renderNtripSlots = function(payload) {
+                if (!payload || !Array.isArray(payload.slots)) return;
+
+                ntripSlotsEditor.empty();
+
+                payload.slots.forEach(function(slot) {
+                    const card = $('<div>', {
+                        class: 'card mb-3 ntrip-slot-card',
+                        'data-slot-index': slot.index,
+                        'data-has-password': slot.has_password ? '1' : '0'
+                    });
+
+                    const header = $('<div>', {class: 'card-header d-flex justify-content-between align-items-center'});
+                    const left = $('<div>');
+                    left.append($('<strong>', {class: 'slot-name', text: slot.name}));
+                    left.append(' ');
+                    left.append($('<span>', {
+                        class: 'slot-badge slot-status ' + slotBadgeClass(slot.status),
+                        text: slot.status
+                    }));
+
+                    const right = $('<label>', {class: 'mb-0 small'});
+                    right.append($('<input>', {
+                        type: 'checkbox',
+                        class: 'mr-2 slot-enabled',
+                        checked: slot.enabled
+                    }));
+                    right.append(document.createTextNode('Enabled'));
+
+                    header.append(left).append(right);
+                    card.append(header);
+
+                    const body = $('<div>', {class: 'card-body'});
+
+                    body.append($('<div>', {class: 'small text-muted slot-reason mb-3', text: slot.disabled_reason || ''}));
+
+                    const row1 = $('<div>', {class: 'form-row mb-3'});
+                    row1.append($('<div>', {class: 'col-md-4'}).append(
+                        $('<label>', {text: 'Name'}),
+                        $('<input>', {type: 'text', class: 'form-control slot-name-input', value: slot.name, maxlength: 31})
+                    ));
+                    row1.append($('<div>', {class: 'col-md-5'}).append(
+                        $('<label>', {text: 'Host'}),
+                        $('<input>', {type: 'text', class: 'form-control slot-host', value: slot.host, maxlength: 95})
+                    ));
+                    row1.append($('<div>', {class: 'col-md-3'}).append(
+                        $('<label>', {text: 'Port'}),
+                        $('<input>', {type: 'number', class: 'form-control slot-port', value: slot.port, min: 0, max: 65535})
+                    ));
+
+                    const row2 = $('<div>', {class: 'form-row mb-3'});
+                    row2.append($('<div>', {class: 'col-md-4'}).append(
+                        $('<label>', {text: 'Mountpoint'}),
+                        $('<input>', {type: 'text', class: 'form-control slot-mountpoint', value: slot.mountpoint, maxlength: 63})
+                    ));
+                    row2.append($('<div>', {class: 'col-md-4'}).append(
+                        $('<label>', {text: 'Username'}),
+                        $('<input>', {type: 'text', class: 'form-control slot-username', value: slot.username, maxlength: 63})
+                    ));
+                    row2.append($('<div>', {class: 'col-md-4'}).append(
+                        $('<label>', {text: 'Password'}),
+                        $('<input>', {
+                            type: 'password',
+                            class: 'form-control slot-password',
+                            placeholder: slot.has_password ? 'Leave empty to keep stored password' : ''
+                        })
+                    ));
+
+                    const row3 = $('<div>', {class: 'form-row mb-3'});
+                    row3.append($('<div>', {class: 'col-md-4'}).append(
+                        $('<label>', {text: 'NTRIP Version'}),
+                        $('<input>', {type: 'text', class: 'form-control slot-version', value: slot.ntrip_version, maxlength: 15})
+                    ));
+                    row3.append($('<div>', {class: 'col-md-4 d-flex align-items-end'}).append(
+                        $('<label>', {class: 'mb-2'}).append(
+                            $('<input>', {
+                                type: 'checkbox',
+                                class: 'mr-2 slot-use-tls',
+                                checked: !!slot.use_tls
+                            }),
+                            document.createTextNode('Use TLS (future)')
+                        )
+                    ));
+
+                    const row4 = $('<div>', {class: 'form-row mb-3'});
+                    row4.append($('<div>', {class: 'col-md-5'}).append(
+                        $('<label>', {text: 'Mock mode'}),
+                        $('<select>', {class: 'form-control slot-mock-mode'})
+                            .append($('<option>', {value: 'none', text: 'none'}))
+                            .append($('<option>', {value: 'connect_ok', text: 'connect_ok'}))
+                            .append($('<option>', {value: 'auth_fail', text: 'auth_fail'}))
+                            .append($('<option>', {value: 'disconnect_after_packets', text: 'disconnect_after_packets'}))
+                            .append($('<option>', {value: 'slow_socket', text: 'slow_socket'}))
+                            .append($('<option>', {value: 'unreachable', text: 'unreachable'}))
+                            .val(slot.mock_mode || 'none')
+                    ));
+                    row4.append($('<div>', {class: 'col-md-3'}).append(
+                        $('<label>', {text: 'Mock value'}),
+                        $('<input>', {type: 'number', class: 'form-control slot-mock-value', value: slot.mock_mode_value || 0, min: 0})
+                    ));
+                    row4.append($('<div>', {class: 'col-md-4 d-flex align-items-end'}).append(
+                        $('<button>', {type: 'button', class: 'btn btn-outline-secondary w-100 slot-apply-mock', text: 'Apply Mock'})
+                    ));
+
+                    const meta = $('<div>', {class: 'ntrip-slot-meta'});
+                    meta.append($('<div>', {html: 'Bytes sent: <strong class="slot-bytes">' + humanDataSize(slot.bytes_sent) + '</strong>'}));
+                    meta.append($('<div>', {html: 'Rate: <strong class="slot-rate">' + humanDataSize(slot.bytes_per_sec || 0) + '/s</strong>'}));
+                    meta.append($('<div>', {html: 'Reconnect count: <strong class="slot-reconnects">' + slot.reconnect_count + '</strong>'}));
+                    meta.append($('<div>', {html: 'Uptime: <strong class="slot-uptime">' + secondsToShort(slot.uptime_seconds || 0) + '</strong>'}));
+                    meta.append($('<div>', {html: 'Last HTTP code: <strong class="slot-http">' + (slot.last_http_code || '-') + '</strong>'}));
+                    meta.append($('<div>', {html: 'Dropped RTCM packets: <strong class="slot-dropped">' + (slot.dropped_rtcm_packets || 0) + '</strong>'}));
+                    meta.append($('<div>', {html: 'Buffer high-water: <strong class="slot-high-water">' + humanDataSize(slot.ringbuffer_high_water || 0) + '</strong>'}));
+                    meta.append($('<div>', {html: 'Mock mode: <strong class="slot-mock-current">' + (slot.mock_mode || 'none') + '</strong>'}));
+                    meta.append($('<div>', {html: 'Last error: <strong class="slot-error">' + (slot.last_error || 'None') + '</strong>'}));
+
+                    body.append(row1, row2, row3, row4, meta);
+                    card.append(body);
+                    ntripSlotsEditor.append(card);
+                });
+            };
+
+            var loadNtripSlots = function() {
+                $.getJSON('api/ntrip/runtime').done(function(data) {
+                    renderNtripSlots(data);
+                    renderNtripRuntimeSummary(data.runtime);
+                });
+            };
+
+            var refreshNtripRuntime = function() {
+                $.getJSON('api/ntrip/runtime').done(function(data) {
+                    if (data && data.slots) {
+                        updateNtripSlotRuntime(data.slots);
+                    }
+                    if (data && data.runtime) {
+                        renderNtripRuntimeSummary(data.runtime);
+                    }
+                }).always(function() {
+                    setTimeout(refreshNtripRuntime, 2500);
+                });
+            };
+
+            var statusUpdate = function() {
+                $.ajax({
+                    url: 'status',
+                    dataType: 'json',
+                    timeout: 2000
+                }).done(function(data) {
+                    if (reloadOnStatus) window.location.reload();
+
+                    // Uptime
+                    deviceUptimeText.text(secondsToHHMMSS(parseInt(data.uptime)));
+
+                    // Heap
+                    deviceHeapText.text(Math.round(data.heap.free / data.heap.total * 100) + "% free");
+
+                    // Streams
+                    streamStatsTexts.each(function() {
+                        const stream = $(this).data('stream');
+                        if (typeof data.streams[stream] === 'undefined') return;
+
+                        const stats = data.streams[stream];
+
+                        $(this).text(humanDataSize(stats.total.in) +
+                            " in (" + humanDataSize(stats.rate.in) + "/s) / " +
+                            humanDataSize(stats.total.out) +
+                            " out (" + humanDataSize(stats.rate.out) + "/s)");
+                        $(this).prop('title', stats.total.in.toLocaleString() +
+                            " bytes in (" + (stats.rate.in * 8) + "bps) / " +
+                            stats.total.out.toLocaleString() +
+                            " bytes out (" + (stats.rate.out * 8) + "bps)");
+                    });
+
+                    // WiFi
+                    let wifi = data.wifi;
+
+                    wifiApStatusText.empty();
+                    wifiStaStatusText.empty();
+
+                    if (!wifi.ap.active) {
+                        wifiApStatusText.text("Disabled");
+                    } else {
+                        wifiApStatusText.appendText(wifi.ap.ssid + (wifi.ap.authmode == 'OPEN' ? " (OPEN)" : ''))
+                            .appendText(" / ")
+                            .append($('<a>', {text: wifi.ap.ip4, href: 'http://' + wifi.ap.ip4 + '/'}))
+                            .appendText(" / ")
+                            .appendText(wifi.ap.devices + " device" + (wifi.ap.devices != 1 ? "s" : ''));
+                    }
+
+                    if (!wifi.sta.active) {
+                        wifiStaStatusText.text("Not Active");
+                    } else if (!wifi.sta.connected) {
+                        wifiStaStatusText.text("Not Connected");
+                    } else {
+                        wifiStaStatusText.appendText(wifi.sta.ssid + (wifi.sta.authmode == 'OPEN' ? " (OPEN)" : ''))
+                            .appendText(" / ")
+                            .append($('<a>', {text: wifi.sta.ip4, href: 'http://' + wifi.sta.ip4 + '/'}))
+                            .appendText(" / ")
+                            .append($('<span>', {class: 'text-' + wifiRssiColorClass(wifi.sta.rssi), text: wifi.sta.rssi + "dBm"}));
+                    }
+
+                    if (data.capabilities) {
+                        const cap = data.capabilities;
+                        capabilitiesSummary.empty()
+                            .append($('<span>', {class: 'capability-pill', text: cap.chip_family}))
+                            .append($('<span>', {class: 'capability-pill', text: cap.network_profile}))
+                            .append($('<span>', {class: 'capability-pill', text: cap.max_ntrip_slots + ' NTRIP slot(s) max'}))
+                            .append($('<span>', {class: 'capability-pill', text: cap.psram_available ? 'PSRAM' : 'No PSRAM'}))
+                            .append($('<span>', {class: 'capability-pill', text: cap.ethernet_active ? 'Ethernet active' : 'Wi-Fi only'}));
+                    }
+
+                    if (data.gnss) {
+                        renderGnssSummary(data.gnss);
+                    }
+                    refreshGnssViews();
+
+                    if (data.ntrip && Array.isArray(data.ntrip.slots)) {
+                        ntripSlotsSummary.empty();
+                        ntripSlotsSummary.append($('<div>', {
+                            class: 'small font-weight-bold mb-2',
+                            text: 'NTRIP slots'
+                        }));
+
+                        data.ntrip.slots.forEach(function(slot) {
+                            let text = (slot.index + 1) + '. ' + slot.name + ' - ' + slot.status;
+                            if (slot.disabled_reason) {
+                                text += ' (' + slot.disabled_reason + ')';
+                            }
+
+                            let color = 'text-muted';
+                            if (slot.running) {
+                                color = 'text-success';
+                            } else if (slot.enabled && !slot.allowed_by_platform) {
+                                color = 'text-warning';
+                            } else if (slot.enabled) {
+                                color = 'text-primary';
+                            }
+
+                            ntripSlotsSummary.append($('<div>', {
+                                class: 'small ' + color,
+                                text: text
+                            }));
+                        });
+
+                        updateNtripSlotRuntime(data.ntrip.slots);
+                    }
+                }).always(function() {
+                    setTimeout(statusUpdate, 2500);
+                });
+            };
+            statusUpdate();
+            loadNtripSlots();
+            refreshNtripRuntime();
+            loadGnssProfiles();
+
+            ntripSlotsSaveButton.on('click', function() {
+                const slots = [];
+
+                ntripSlotsEditor.find('.ntrip-slot-card').each(function() {
+                    const card = $(this);
+                    const hasPassword = card.attr('data-has-password') === '1';
+                    let password = card.find('.slot-password').val();
+                    if (!password && hasPassword) {
+                        password = '\x1a\x1a\x1a\x1a\x1a\x1a\x1a\x1a';
+                    }
+
+                    slots.push({
+                        index: parseInt(card.attr('data-slot-index'), 10),
+                        enabled: card.find('.slot-enabled').is(':checked'),
+                        name: card.find('.slot-name-input').val(),
+                        host: card.find('.slot-host').val(),
+                        port: parseInt(card.find('.slot-port').val() || '0', 10),
+                        mountpoint: card.find('.slot-mountpoint').val(),
+                        username: card.find('.slot-username').val(),
+                        password: password || '',
+                        ntrip_version: card.find('.slot-version').val(),
+                        use_tls: card.find('.slot-use-tls').is(':checked')
+                    });
+                });
+
+                ntripSlotsSaveButton.prop('disabled', true);
+                $.ajax({
+                    url: 'api/ntrip',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({slots: slots})
+                }).done(function() {
+                    loadNtripSlots();
+                }).always(function() {
+                    ntripSlotsSaveButton.prop('disabled', false);
+                });
+            });
+            $('#restart-ntrip-runtime').on('click', function() {
+                const button = $(this);
+                button.prop('disabled', true);
+                $.post('api/ntrip/restart').always(function() {
+                    button.prop('disabled', false);
+                });
+            });
+            $('#fake-rtcm-start').on('click', function() {
+                const button = $(this);
+                button.prop('disabled', true);
+                $.ajax({
+                    url: 'api/dev/fake-rtcm/start',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({
+                        rate_hz: parseInt($('#fake-rtcm-rate').val() || '5', 10),
+                        packet_size: parseInt($('#fake-rtcm-size').val() || '180', 10)
+                    })
+                }).always(function() {
+                    button.prop('disabled', false);
+                });
+            });
+            $('#fake-rtcm-stop').on('click', function() {
+                const button = $(this);
+                button.prop('disabled', true);
+                $.post('api/dev/fake-rtcm/stop').always(function() {
+                    button.prop('disabled', false);
+                });
+            });
+            $('#gnss-detect').on('click', function() {
+                const button = $(this);
+                button.prop('disabled', true);
+                $.ajax({
+                    url: 'api/gnss/detect',
+                    method: 'POST',
+                    dataType: 'json'
+                }).done(function(data) {
+                    if (data) {
+                        renderGnssSummary(data);
+                        refreshGnssViews();
+                        loadGnssProfiles();
+                    }
+                }).always(function() {
+                    button.prop('disabled', false);
+                });
+            });
+            $('#gnss-profile-apply').on('click', function() {
+                const button = $(this);
+                button.prop('disabled', true);
+                $.ajax({
+                    url: 'api/gnss/profile/apply',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({
+                        profile: $('#gnss-profile').val(),
+                        persist: true,
+                        receiver_baud: parseInt($('#gnss-baud').val() || '115200', 10),
+                        nmea_rate_hz: parseInt($('#gnss-nmea-rate').val() || '1', 10),
+                        rtk_timeout: parseInt($('#gnss-rtk-timeout').val() || '60', 10),
+                        dgps_timeout: parseInt($('#gnss-dgps-timeout').val() || '120', 10),
+                        constellation_mask: parseInt($('#gnss-constellation-mask').val() || '0', 10),
+                        signal_mask: $('#gnss-signal-mask').val(),
+                        rtcm_output: $('#gnss-rtcm-output').is(':checked'),
+                        agnss_enable: $('#gnss-agnss-enable').is(':checked')
+                    })
+                }).done(function() {
+                    refreshGnssViews();
+                    loadGnssProfiles();
+                }).always(function() {
+                    button.prop('disabled', false);
+                });
+            });
+            $('#gnss-command-send').on('click', function() {
+                const input = $('#gnss-command-input');
+                const button = $(this);
+                const command = input.val();
+                if (!command) return;
+                button.prop('disabled', true);
+                $.ajax({
+                    url: 'api/gnss/command',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({command: command})
+                }).done(function() {
+                    input.val('');
+                    refreshGnssViews();
+                }).always(function() {
+                    button.prop('disabled', false);
+                });
+            });
+            $('#base-start-survey').on('click', function() {
+                const button = $(this);
+                button.prop('disabled', true);
+                $.ajax({
+                    url: 'api/gnss/base/start-survey',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({
+                        duration_s: parseInt($('#base-survey-duration').val() || '300', 10),
+                        accuracy_mm: parseInt($('#base-survey-accuracy').val() || '5000', 10),
+                        rtcm_output: $('#base-rtcm-output').is(':checked')
+                    })
+                }).done(function() {
+                    refreshGnssViews();
+                    loadGnssProfiles();
+                }).always(function() {
+                    button.prop('disabled', false);
+                });
+            });
+            $('#base-stop-survey').on('click', function() {
+                const button = $(this);
+                button.prop('disabled', true);
+                $.post('api/gnss/base/stop-survey').done(function() {
+                    refreshGnssViews();
+                    loadGnssProfiles();
+                }).always(function() {
+                    button.prop('disabled', false);
+                });
+            });
+            $('#base-apply-fixed').on('click', function() {
+                const button = $(this);
+                button.prop('disabled', true);
+                $.ajax({
+                    url: 'api/gnss/base/apply-fixed',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({
+                        latitude: parseFloat($('#base-latitude').val() || '0'),
+                        longitude: parseFloat($('#base-longitude').val() || '0'),
+                        altitude_mm: parseInt($('#base-altitude-mm').val() || '0', 10),
+                        rtcm_output: $('#base-rtcm-output').is(':checked')
+                    })
+                }).done(function() {
+                    refreshGnssViews();
+                    loadGnssProfiles();
+                }).always(function() {
+                    button.prop('disabled', false);
+                });
+            });
+            $('#base-clear').on('click', function() {
+                const button = $(this);
+                button.prop('disabled', true);
+                $.post('api/gnss/base/clear').done(function() {
+                    refreshGnssViews();
+                    loadGnssProfiles();
+                }).always(function() {
+                    button.prop('disabled', false);
+                });
+            });
+            ntripSlotsEditor.on('click', '.slot-apply-mock', function() {
+                const button = $(this);
+                const card = button.closest('.ntrip-slot-card');
+                button.prop('disabled', true);
+                $.ajax({
+                    url: 'api/dev/ntrip/mock',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({
+                        slot: parseInt(card.attr('data-slot-index'), 10),
+                        mode: card.find('.slot-mock-mode').val(),
+                        value: parseInt(card.find('.slot-mock-value').val() || '0', 10)
+                    })
+                }).always(function() {
+                    button.prop('disabled', false);
+                });
+            });
+
+            // WiFi Station networks list
+            var wifiNetworksScanButton = form.find('.wifi-networks-scan');
+            var wifiNetworksDropdownButton = form.find('.wifi-networks-dropdown');
+            var wifiNetworksList = form.find('.wifi-networks');
+            var wifiNetworksOpenList = wifiNetworksList.find('.wifi-networks-open');
+            var wifiNetworksSecuredList = wifiNetworksList.find('.wifi-networks-secured');
+            var wifiNetworksSsidInput = form.find('.wifi-networks-ssid');
+            var wifiNetworksPasswordInput = form.find('.wifi-networks-pass');
+            var wifiNetworksPasswordEmptyInput = form.find('.wifi-networks-pass-empty');
+            wifiNetworksScanButton.on('click', function() {
+                wifiNetworksOpenList.empty();
+                wifiNetworksSecuredList.empty();
+
+                wifiNetworksScanButton.prop('disabled', true);
+                wifiNetworksDropdownButton.prop('disabled', true);
+                $.getJSON('wifi/scan').always(function() {
+                    wifiNetworksScanButton.prop('disabled', false);
+                    wifiNetworksDropdownButton.prop('disabled', false);
+                }).done(function(data) {
+                    data.forEach(function(network) {
+                        var entry = $('<a>', {class: 'wifi-network dropdown-item', href: 'javascript:void(0);'});
+                        var open = network.authmode === "OPEN";
+                        entry.data('ssid', network.ssid);
+                        entry.data('rssi', network.rssi);
+                        entry.data('authmode', network.authmode);
+                        entry.data('open', open);
+
+                        entry.appendText(network.ssid + (open ? '' : " (" + network.authmode + ") "))
+                            .append($('<span>', {class: 'text-' + wifiRssiColorClass(network.rssi), text: network.rssi + "dBm"}));
+
+                        entry.appendTo(open ? wifiNetworksOpenList : wifiNetworksSecuredList);
+                    });
+
+                    wifiNetworksList.find('.wifi-network').on('click', function() {
+                        wifiNetworksSsidInput.val($(this).data('ssid'));
+                        wifiNetworksPasswordInput.val('').prop('disabled', $(this).data('open'));
+                        wifiNetworksPasswordEmptyInput.val('').prop('disabled', !$(this).data('open'));
+                    });
+
+                    wifiNetworksDropdownButton.trigger('click');
+                });
+            });
+
+            wifiNetworksSsidInput.on('input change', function() {
+                wifiNetworksPasswordInput.prop('disabled', false);
+                wifiNetworksPasswordEmptyInput.prop('disabled', true);
+            });
+
+            // WiFi Station IP configuration
+            var wifiStaSubnetInput = form.find('input[name="w_sta_subnet"]');
+
+            // WiFi SoftAP IP configuration
+            var wifiApGwInputs = form.find('input[name="w_ap_gw"]');
+            var wifiApGwPrefixText = form.find('.wifi-ap-ip-prefix');
+            var wifiApIpMinInput = form.find('input[name="w_ap_ip_min"]');
+            var wifiApIpMaxInput = form.find('input[name="w_ap_ip_max"]');
+            var wifiApSubnetInput = form.find('select[name="w_ap_subnet"]');
+
+            wifiApSubnetInput.add(wifiApGwInputs).on('change input', function() {
+                const parts = wifiApGwInputs.map((i, el) => Math.max(0, Math.min(255, el.value))).get();
+                const subnet = parseInt(wifiApSubnetInput.children('option:selected').val());
+
+                wifiApGwPrefixText.text(parts.slice(0, 3).join(".") + ".");
+
+                const mask = 255 >> (subnet - 24);
+
+                const d = parts[3];
+                const min = (d & ~mask) + 1;
+                const max = (d | mask) - 1;
+
+                wifiApGwInputs.eq(3).prop('min', min).prop('max', max).toggleClass('is-invalid', d < min || d > max);
+
+                wifiApIpMinInput.val(min);
+                wifiApIpMaxInput.val(max);
+            }).trigger('change');
+
+            var socketClientConnectMessageInput = form.find('input[name="sck_cli_msg"]');
+            var socketClientConnectMessageUnformattedInput = form.find('input[name="sck_cli_msg_unformatted"]');
+            socketClientConnectMessageInput.on('change', function() {
+                socketClientConnectMessageUnformattedInput.val(print_escape($(this).val()));
+            });
+            socketClientConnectMessageUnformattedInput.on('change', function() {
+                socketClientConnectMessageInput.val(print_unescape($(this).val()));
+            });
+        });
+
+        function autoTab(target) {
+            var length = target.value.length;
+            if (length >= target.maxLength) {
+                target.value = target.value.slice(-1);
+                var next = target;
+                while (next = next.nextElementSibling) {
+                    if (next == null)
+                        break;
+                    if (next.tagName.toLowerCase() === "input") {
+                        next.focus();
+                        next.select();
+                        break;
+                    }
+                }
+            } else if (length === 0) {
+                var previous = target;
+                while (previous = previous.previousElementSibling) {
+                    if (previous == null)
+                        break;
+                    if (previous.tagName.toLowerCase() === "input") {
+                        previous.focus();
+                        break;
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-light">
+    <div class="container">
+        <div class="pt-5 text-center">
+            <h2>ESP32 NTRIP Duo <a id="project-version" href="https://github.com/nebkat/esp32-xbee/releases" class="text-muted small"></a> <a id="prerelease-available" class="text-info small" style="display: none">(beta available)</a></h2>
+
+            <p class="lead">Adjust the settings below and then click on "Submit". The device will restart with the new settings applied. If you have adjusted WiFi settings the device may be moved onto a new IP address, or require you to reconnect to its access point.</p>
+            <div class="mb-4">
+                <a class="btn btn-outline-secondary btn-sm" href="/dashboard.html">Dashboard</a>
+                <a class="btn btn-outline-primary btn-sm" href="/config.html">Config</a>
+                <a class="btn btn-outline-dark btn-sm" href="/advanced.html">Advanced</a>
+                <a class="btn btn-outline-secondary btn-sm" href="/log.html">Logs</a>
+            </div>
+        </div>
+        <div class="card mb-3">
+            <div class="card-header">Platform Capabilities</div>
+            <div class="card-body py-3">
+                <div class="capabilities-summary small text-muted">Loading platform profile...</div>
+                <div class="ntrip-slots-summary mt-2"></div>
+            </div>
+        </div>
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>GNSS Receiver</span>
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="gnss-detect">Detect</button>
+            </div>
+            <div class="card-body py-3">
+                <div class="gnss-summary small text-muted">Loading GNSS status...</div>
+                <div class="gnss-profile-status small text-muted mt-3"></div>
+                <div class="form-row mt-3">
+                    <div class="col-md-4">
+                        <label>Profile</label>
+                        <select class="form-control" id="gnss-profile"></select>
+                    </div>
+                    <div class="col-md-2">
+                        <label>Baud</label>
+                        <input type="number" class="form-control" id="gnss-baud" value="115200" min="9600" step="1200">
+                    </div>
+                    <div class="col-md-2">
+                        <label>NMEA Hz</label>
+                        <input type="number" class="form-control" id="gnss-nmea-rate" value="1" min="1" max="10">
+                    </div>
+                    <div class="col-md-2">
+                        <label>RTK timeout</label>
+                        <input type="number" class="form-control" id="gnss-rtk-timeout" value="60" min="1" max="600">
+                    </div>
+                    <div class="col-md-2">
+                        <label>DGPS timeout</label>
+                        <input type="number" class="form-control" id="gnss-dgps-timeout" value="120" min="1" max="600">
+                    </div>
+                </div>
+                <div class="form-row mt-2">
+                    <div class="col-md-4">
+                        <label>Constellation mask</label>
+                        <input type="number" class="form-control" id="gnss-constellation-mask" value="0">
+                    </div>
+                    <div class="col-md-4">
+                        <label>Signal mask</label>
+                        <input type="text" class="form-control" id="gnss-signal-mask" value="">
+                    </div>
+                    <div class="col-md-2 d-flex align-items-end">
+                        <div class="custom-control custom-switch">
+                            <input type="checkbox" class="custom-control-input" id="gnss-rtcm-output" checked>
+                            <label class="custom-control-label" for="gnss-rtcm-output">RTCM output</label>
+                        </div>
+                    </div>
+                    <div class="col-md-2 d-flex align-items-end">
+                        <div class="custom-control custom-switch">
+                            <input type="checkbox" class="custom-control-input" id="gnss-agnss-enable">
+                            <label class="custom-control-label" for="gnss-agnss-enable">AGNSS</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="mt-3">
+                    <button type="button" class="btn btn-sm btn-primary" id="gnss-profile-apply">Apply Profile</button>
+                    <small class="text-muted ml-2">Profile apply is queued asynchronously and may take a few seconds.</small>
+                </div>
+                <div class="gnss-diagnostics-summary small text-muted mt-3"></div>
+                <div class="gnss-constellation-summary small text-muted mt-2"></div>
+                <div class="table-responsive mt-3">
+                    <table class="table table-sm table-striped mb-0 gnss-satellite-table">
+                        <thead>
+                            <tr>
+                                <th>Constellation</th>
+                                <th>PRN</th>
+                                <th>El</th>
+                                <th>Az</th>
+                                <th>CN0</th>
+                                <th>Sig</th>
+                                <th>Used</th>
+                                <th>Age</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div class="gnss-satellite-status small text-muted mt-2">Waiting for GNSS data...</div>
+                <div class="mt-3">
+                    <label>Receiver Raw Console</label>
+                    <textarea class="form-control" id="gnss-raw-console" rows="8" readonly></textarea>
+                </div>
+                <div class="input-group mt-2">
+                    <input type="text" class="form-control" id="gnss-command-input" placeholder="Manual Unicore ASCII command">
+                    <div class="input-group-append">
+                        <button type="button" class="btn btn-outline-secondary" id="gnss-command-send">Send</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="card mb-3">
+            <div class="card-header">Base Station</div>
+            <div class="card-body py-3">
+                <div class="gnss-base-summary small text-muted">Loading base station status...</div>
+                <div class="gnss-base-status small text-muted mt-2"></div>
+                <div class="form-row mt-3">
+                    <div class="col-md-4">
+                        <label>Latitude</label>
+                        <input type="number" class="form-control" id="base-latitude" value="0" step="0.0000001">
+                    </div>
+                    <div class="col-md-4">
+                        <label>Longitude</label>
+                        <input type="number" class="form-control" id="base-longitude" value="0" step="0.0000001">
+                    </div>
+                    <div class="col-md-4">
+                        <label>Altitude (mm)</label>
+                        <input type="number" class="form-control" id="base-altitude-mm" value="0" step="1">
+                    </div>
+                </div>
+                <div class="form-row mt-2">
+                    <div class="col-md-4">
+                        <label>Survey duration (s)</label>
+                        <input type="number" class="form-control" id="base-survey-duration" value="300" min="30" step="30">
+                    </div>
+                    <div class="col-md-4">
+                        <label>Survey accuracy (mm)</label>
+                        <input type="number" class="form-control" id="base-survey-accuracy" value="5000" min="100" step="100">
+                    </div>
+                    <div class="col-md-4 d-flex align-items-end">
+                        <div class="custom-control custom-switch">
+                            <input type="checkbox" class="custom-control-input" id="base-rtcm-output" checked>
+                            <label class="custom-control-label" for="base-rtcm-output">RTCM output</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="mt-3">
+                    <button type="button" class="btn btn-sm btn-primary" id="base-start-survey">Start Survey</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary ml-2" id="base-stop-survey">Stop Survey</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary ml-2" id="base-apply-fixed">Apply Fixed</button>
+                    <button type="button" class="btn btn-sm btn-outline-danger ml-2" id="base-clear">Clear</button>
+                </div>
+            </div>
+        </div>
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>Persistent NTRIP Slots</span>
+                <div>
+                    <button type="button" class="btn btn-sm btn-outline-secondary mr-2" id="restart-ntrip-runtime">Restart Runtime</button>
+                    <button type="button" class="btn btn-sm btn-primary" id="save-ntrip-slots">Save</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <p class="small text-muted mb-3">This is the new 5-slot persistent NTRIP model with live runtime supervision. Legacy server A/B settings still remain below for backward compatibility and are synchronized to slots 0 and 1.</p>
+                <div class="ntrip-runtime-summary small text-muted mb-3">Loading runtime monitoring...</div>
+                <div class="form-row mb-3">
+                    <div class="col-md-3">
+                        <label>Fake RTCM rate (Hz)</label>
+                        <input type="number" class="form-control" id="fake-rtcm-rate" value="5" min="1" max="100">
+                    </div>
+                    <div class="col-md-3">
+                        <label>Fake RTCM packet size</label>
+                        <input type="number" class="form-control" id="fake-rtcm-size" value="180" min="24" max="512">
+                    </div>
+                    <div class="col-md-3 d-flex align-items-end">
+                        <button type="button" class="btn btn-outline-secondary w-100" id="fake-rtcm-start">Start Fake RTCM</button>
+                    </div>
+                    <div class="col-md-3 d-flex align-items-end">
+                        <button type="button" class="btn btn-outline-secondary w-100" id="fake-rtcm-stop">Stop Fake RTCM</button>
+                    </div>
+                </div>
+                <div id="ntrip-slot-editor"></div>
+            </div>
+        </div>
+        <form class="needs-validation" id="form" novalidate>
+            <div class="row mb-1">
+                <div class="col-xl-6">
+                    <div class="card mb-3">
+                        <div class="card-header">
+                            WiFi
+                            <small class="wifi-sta-status"></small>
+                            <div class="custom-control custom-switch d-inline float-right">
+                                <input type="checkbox" name="w_sta_active" value="1" checked class="custom-control-input" id="switch-wifi-sta">
+                                <label class="custom-control-label" for="switch-wifi-sta"></label>
+                            </div>
+                            <div class="d-inline mr-1 float-right">
+                                <input type="color" name="w_sta_color" data-disable-if="#switch-wifi-sta" value="#ffffff" id="color-wifi-sta">
+                            </div>
+                        </div>
+                        <div class="card-body" data-disable-if="#switch-wifi-sta">
+                            <div class="form-row mb-3">
+                                <div class="col-8">
+                                    <label>SSID</label>
+                                    <div class="input-group">
+                                        <input type="text" name="w_sta_ssid" class="wifi-networks-ssid form-control" maxlength="32" required>
+                                        <div class="input-group-append">
+                                            <button type="button" class="wifi-networks-dropdown btn btn-outline-secondary dropdown-toggle dropdown-toggle-split" data-toggle="dropdown" disabled></button>
+                                            <div class="wifi-networks dropdown-menu">
+                                                <h6 class="dropdown-header">Open networks</h6>
+                                                <span class="wifi-networks-open">
+                                                </span>
+                                                <h6 class="dropdown-header">Secured networks</h6>
+                                                <span class="wifi-networks-secured">
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <div class="input-group-append">
+                                            <button type="button" class="wifi-networks-scan btn btn-outline-secondary">Scan</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col">
+                                    <label>Password</label>
+                                    <input type="hidden" name="w_sta_pass" class="wifi-networks-pass-empty" value="" disabled>
+                                    <div class="input-group">
+                                        <input type="password" name="w_sta_pass" class="wifi-networks-pass form-control">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="form-row mb-3">
+                                <div class="col-6">
+                                    <label class="d-block">Scan mode <small class="text-muted" data-toggle="tooltip" title="In fast scan mode, WiFi channels are scanned sequentially and a connection is made to the first matching SSID.<br><br>In all channel mode, every channel is scanned and if multiple matching SSIDs are found, the one with the strongest signal is chosen, but the process can be significantly slower.<br><br>This is useful in environments where there are a number of APs with the same SSID covering a large area. If you only have a single AP, fast mode is preferred.">?</small></label>
+                                    <div class="btn-group btn-group-toggle d-flex" data-toggle="buttons">
+                                        <label class="btn btn-outline-secondary">
+                                            <input type="radio" name="w_sta_scan_mode" value="0" checked> Fast
+                                        </label>
+                                        <label class="btn btn-outline-secondary">
+                                            <input type="radio" name="w_sta_scan_mode" value="1"> All Channels
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <label class="d-block">IP config <small class="text-muted" data-toggle="tooltip" title="In DHCP mode, IPs will automatically be configured by the network upon successful connection.<br><br>In static mode, the IPs are hardcoded and must be set up correctly for the given WiFi network, but the connection is faster.">?</small></label>
+                                    <div class="btn-group btn-group-toggle d-flex" data-toggle="buttons">
+                                        <label class="btn btn-outline-success">
+                                            <input type="radio" name="w_sta_static" value="0" checked> DHCP
+                                        </label>
+                                        <label class="btn btn-outline-warning">
+                                            <input type="radio" name="w_sta_static" value="1"> Static
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div data-disable-if="input[type='radio'][name='w_sta_static']" data-disable-if-condition="[value=0]:checked" class="form-row mb-3">
+                                <div class="col">
+                                    <label>IP address</label>
+                                    <div class="input-group">
+                                        <input type="number" name="w_sta_ip" value="192" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
+                                        <div class="input-group-append input-group-prepend">
+                                            <span class="input-group-text px-1">.</span>
+                                        </div>
+                                        <input type="number" name="w_sta_ip" value="168" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
+                                        <div class="input-group-append input-group-prepend">
+                                            <span class="input-group-text px-1">.</span>
+                                        </div>
+                                        <input type="number" name="w_sta_ip" value="0" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
+                                        <div class="input-group-append input-group-prepend">
+                                            <span class="input-group-text px-1">.</span>
+                                        </div>
+                                        <input type="number" name="w_sta_ip" value="100" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
+                                    </div>
+                                </div>
+                                <div class="col-7">
+                                    <label>Gateway and subnet</label>
+                                    <div class="input-group">
+                                        <input type="number" name="w_sta_gw" value="192" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
+                                        <div class="input-group-append input-group-prepend">
+                                            <span class="input-group-text px-1">.</span>
+                                        </div>
+                                        <input type="number" name="w_sta_gw" value="168" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
+                                        <div class="input-group-append input-group-prepend">
+                                            <span class="input-group-text px-1">.</span>
+                                        </div>
+                                        <input type="number" name="w_sta_gw" value="4" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
+                                        <div class="input-group-append input-group-prepend">
+                                            <span class="input-group-text px-1">.</span>
+                                        </div>
+                                        <input type="number" name="w_sta_gw" value="1" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
+                                        <div class="input-group-append input-group-prepend">
+                                            <span class="input-group-text px-1">/</span>
+                                        </div>
+                                        <select name="w_sta_subnet" class="custom-select px-2" required>
+                                            <option value="8">8</option>
+                                            <option value="9">9</option>
+                                            <option value="10">10</option>
+                                            <option value="11">11</option>
+                                            <option value="12">12</option>
+                                            <option value="13">13</option>
+                                            <option value="14">14</option>
+                                            <option value="15">15</option>
+                                            <option value="16">16</option>
+                                            <option value="17">17</option>
+                                            <option value="18">18</option>
+                                            <option value="19">19</option>
+                                            <option value="20">20</option>
+                                            <option value="21">21</option>
+                                            <option value="22">22</option>
+                                            <option value="23">23</option>
+                                            <option value="24" selected>24</option>
+                                            <option value="25">25</option>
+                                            <option value="26">26</option>
+                                            <option value="27">27</option>
+                                            <option value="28">28</option>
+                                            <option value="29">29</option>
+                                            <option value="30">30</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                            <div data-disable-if="input[type='radio'][name='w_sta_static']" data-disable-if-condition="[value=0]:checked" class="form-row mb-3">
+                                <div class="col">
+                                    <label>DNS</label>
+                                    <div class="input-group">
+                                        <input type="number" name="w_sta_dns_a" value="1" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
+                                        <div class="input-group-append input-group-prepend">
+                                            <span class="input-group-text px-1">.</span>
+                                        </div>
+                                        <input type="number" name="w_sta_dns_a" value="1" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
+                                        <div class="input-group-append input-group-prepend">
+                                            <span class="input-group-text px-1">.</span>
+                                        </div>
+                                        <input type="number" name="w_sta_dns_a" value="1" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
+                                        <div class="input-group-append input-group-prepend">
+                                            <span class="input-group-text px-1">.</span>
+                                        </div>
+                                        <input type="number" name="w_sta_dns_a" value="1" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
+                                    </div>
+                                </div>
+                                <div class="col">
+                                    <label>Backup DNS</label>
+                                    <div class="input-group">
+                                        <input type="number" name="w_sta_dns_b" value="1" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
+                                        <div class="input-group-append input-group-prepend">
+                                            <span class="input-group-text px-1">.</span>
+                                        </div>
+                                        <input type="number" name="w_sta_dns_b" value="0" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
+                                        <div class="input-group-append input-group-prepend">
+                                            <span class="input-group-text px-1">.</span>
+                                        </div>
+                                        <input type="number" name="w_sta_dns_b" value="0" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
+                                        <div class="input-group-append input-group-prepend">
+                                            <span class="input-group-text px-1">.</span>
+                                        </div>
+                                        <input type="number" name="w_sta_dns_b" value="1" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card mb-3">
+                        <div class="card-header">
+                            Admin (this page)
+                        </div>
+                        <div class="card-body">
+                            <div class="form-row mb-3">
+                                <div class="col-4">
+                                    <label>Auth method</label>
+                                    <select name="adm_auth" class="custom-select">
+                                        <option value="0" selected>Open</option>
+                                        <option value="1">Hotspot devices only</option>
+                                        <option value="2">Username/password</option>
+                                        <!--<option value="3">Button press</option>-->
+                                    </select>
+                                </div>
+                                <div class="col-4">
+                                    <label>Username</label>
+                                    <input type="text" name="adm_user" data-disable-if="select[name='adm_auth'] > option[value!='2']" data-disable-if-condition=":selected" class="form-control" maxlength="32" required/>
+                                </div>
+                                <div class="col-4">
+                                    <label>Password</label>
+                                    <input type="password" name="adm_pass" data-disable-if="select[name='adm_auth'] > option[value!='2']" data-disable-if-condition=":selected" class="form-control" maxlength="64" required/>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!--
+                    <div class="card mb-3">
+                        <div class="card-header">
+                            Bluetooth
+                            <div class="custom-control custom-switch d-inline float-right">
+                                <input type="checkbox" name="bt_active" value="1" class="custom-control-input" id="switch-bluetooth">
+                                <label class="custom-control-label" for="switch-wifi-bluetooth"></label>
+                            </div>
+                        </div>
+                        <div class="card-body" data-disable-if="#switch-bluetooth">
+                            <div class="form-row mb-3">
+                                <div class="col-8">
+                                    <label>Device name</label>
+                                    <div class="input-group">
+                                        <input type="text" name="bt_dev_name" class="form-control" maxlength="32" required>
+                                        <div class="input-group-append btn-group-toggle" data-toggle="buttons">
+                                            <label class="btn btn-outline-secondary active">
+                                                <input type="checkbox" name="bt_dev_vis" value="1" checked> Discoverable
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col">
+                                    <label>Pin code</label>
+                                    <div class="input-group">
+                                        <input type="number" name="bt_pin_code" class="form-control text-center" maxlength="1" min="0" max="9" pattern="[0-9]" oninput="autoTab(this)" required/>
+                                        <input type="number" name="bt_pin_code" class="form-control text-center" maxlength="1" min="0" max="9" pattern="[0-9]" oninput="autoTab(this)" required/>
+                                        <input type="number" name="bt_pin_code" class="form-control text-center" maxlength="1" min="0" max="9" pattern="[0-9]" oninput="autoTab(this)" required/>
+                                        <input type="number" name="bt_pin_code" class="form-control text-center" maxlength="1" min="0" max="9" pattern="[0-9]" oninput="autoTab(this)" required/>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    -->
+                </div>
+                <div class="col-xl-6">
+                    <div class="card mb-3">
+                        <div class="card-header">
+                            WiFi hotspot
+                            <small class="wifi-ap-status"></small>
+                            <div class="custom-control custom-switch d-inline float-right active">
+                                <input type="checkbox" name="w_ap_active" value="1" checked class="custom-control-input" id="switch-wifi-ap">
+                                <label class="custom-control-label" for="switch-wifi-ap"></label>
+                            </div>
+                            <div class="d-inline mr-1 float-right">
+                                <input type="color" name="w_ap_color" data-disable-if="#switch-wifi-ap" value="#ffffff" id="color-wifi-ap">
+                            </div>
+                        </div>
+                        <div class="card-body" data-disable-if="#switch-wifi-ap">
+                            <div class="form-row mb-3">
+                                <div class="col-6">
+                                    <label>SSID</label>
+                                    <div class="input-group">
+                                        <input type="text" name="w_ap_ssid" class="form-control" maxlength="32">
+                                        <div class="input-group-append btn-group-toggle" data-toggle="buttons">
+                                            <label class="btn btn-outline-warning">
+                                                <input type="checkbox" name="w_ap_ssid_hid" value="1"> Hidden
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <label>Security</label>
+                                    <div class="input-group">
+                                        <input type="password" name="w_ap_pass" data-disable-if="select[name='w_ap_auth_mode'] > option[value='0']" data-disable-if-condition=":selected" class="form-control" style="flex-grow: 2" >
+                                        <select name="w_ap_auth_mode" class="custom-select">
+                                            <option value="0" selected>Open</option>
+                                            <option value="1">WEP</option>
+                                            <option value="2">WPA-PSK</option>
+                                            <option value="3">WPA2-PSK</option>
+                                            <option value="4">WPA/2-PSK (recommended)</option>
+                                            <option value="4">WPA2 Enterprise</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="form-row mb-3">
+                                <div class="col-6">
+                                    <label>Gateway and subnet</label>
+                                    <div class="input-group">
+                                        <div class="input-group-prepend">
+                                            <span class="input-group-text px-1">192.168.</span>
+                                        </div>
+                                        <input type="hidden" name="w_ap_gw" value="192">
+                                        <input type="hidden" name="w_ap_gw" value="168">
+                                        <input type="number" name="w_ap_gw" value="4" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
+                                        <div class="input-group-append input-group-prepend">
+                                            <span class="input-group-text px-1">.</span>
+                                        </div>
+                                        <input type="number" name="w_ap_gw" value="1" maxlength="3" min="1" max="254" required class="form-control text-center px-1">
+                                        <div class="input-group-append input-group-prepend">
+                                            <span class="input-group-text px-1">/</span>
+                                        </div>
+                                        <select name="w_ap_subnet" class="custom-select px-2" required>
+                                            <option value="24" selected>24</option>
+                                            <option value="25">25</option>
+                                            <option value="26">26</option>
+                                            <option value="27">27</option>
+                                            <option value="28">28</option>
+                                            <option value="29">29</option>
+                                            <option value="30">30</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="col">
+                                    <label>Min/max IP address</label>
+                                    <div class="input-group">
+                                        <div class="input-group-prepend">
+                                            <span class="wifi-ap-ip-prefix input-group-text">192.168.4.</span>
+                                        </div>
+                                        <input type="number" name="w_ap_ip_min" value="1" disabled class="form-control text-center px-1">
+                                        <div class="input-group-append input-group-prepend">
+                                            <span class="input-group-text">-</span>
+                                        </div>
+                                        <input type="number" name="w_ap_ip_max" value="254" disabled class="form-control text-center px-1">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card mb-3 border border-warning">
+                        <div class="card-header">
+                            UART (main communication)
+                            <small class="uart-stats stream-stats" data-stream="uart"></small>
+                            <div class="d-inline float-right">
+                                <a href="javascript:void(0)" id="switch-uart">Configure</a>
+                            </div>
+                        </div>
+                        <div class="card-body" data-disable-if="#switch-uart" data-disable-if-condition=":visible">
+                            <div class="form-row mb-3">
+                                <div class="col-8">
+                                    <label class="d-block">UART controller</label>
+                                    <div class="btn-group btn-group-toggle d-flex" data-toggle="buttons">
+                                        <label class="btn btn-outline-secondary active">
+                                            <input type="radio" name="uart_num" value="0" checked> UART&nbsp;0
+                                        </label>
+                                        <label class="btn btn-outline-secondary">
+                                            <input type="radio" name="uart_num" value="1"> UART&nbsp;1
+                                        </label>
+                                        <label class="btn btn-outline-secondary">
+                                            <input type="radio" name="uart_num" value="2"> UART&nbsp;2
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col">
+                                    <label>TX pin</label>
+                                    <input type="number" name="uart_tx_pin" class="form-control" placeholder="1" value="1" required>
+                                </div>
+                                <div class="col">
+                                    <label>RX pin</label>
+                                    <input type="number" name="uart_rx_pin" class="form-control" placeholder="3" value="3" required>
+                                </div>
+                            </div>
+                            <div class="form-row mb-3">
+                                <div class="col-md-4 col-6">
+                                    <label>Baud rate</label>
+                                    <div class="input-group">
+                                        <select name="uart_baud_rate" class="custom-select" required>
+                                            <option value="9600">9600</option>
+                                            <option value="19200">19200</option>
+                                            <option value="38400">38400</option>
+                                            <option value="57600">57600</option>
+                                            <option value="115200" selected>115200</option>
+                                            <option value="230400">230400</option>
+                                            <option value="460800">460800</option>
+                                            <option value="921600">921600</option>
+                                        </select>
+                                        <div class="input-group-append">
+                                            <span class="input-group-text px-2">baud</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md col-6">
+                                    <label>Data bits</label>
+                                    <div class="input-group">
+                                        <select name="uart_data_bits" class="custom-select" required>
+                                            <option value="0">5</option>
+                                            <option value="1">6</option>
+                                            <option value="2">7</option>
+                                            <option value="3" selected>8</option>
+                                        </select>
+                                        <div class="input-group-append">
+                                            <span class="input-group-text px-2">bits</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md col-6">
+                                    <label>Stop bits</label>
+                                    <div class="input-group">
+                                        <select name="uart_stop_bits" class="custom-select" required>
+                                            <option value="1" selected>1</option>
+                                            <option value="2">1.5</option>
+                                            <option value="3">2</option>
+                                        </select>
+                                        <div class="input-group-append">
+                                            <span class="input-group-text px-2">bits</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md col-6">
+                                    <label>Parity</label>
+                                    <select name="uart_parity" class="custom-select px-2" required>
+                                        <option value="0" selected>Disabled</option>
+                                        <option value="2">Even</option>
+                                        <option value="3">Odd</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="col-3">
+                                    <label class="d-block">Log forward  <small class="text-muted" data-toggle="tooltip" title="If enabled, log messages (normally sent to UART1, and visible on the /log.html page) are forwarded to the main UART, primarily for debugging purposes. This setting can interfere with normal communication over UART0.">?</small></label>
+                                    <div class="btn-group btn-group-toggle d-flex" data-toggle="buttons">
+                                        <label class="btn btn-outline-warning">
+                                            <input type="checkbox" value="1" name="uart_log_fwd"> Print
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-5">
+                                    <label class="d-block">Flow control</label>
+                                    <div class="btn-group btn-group-toggle d-flex" data-toggle="buttons">
+                                        <label class="btn btn-outline-success">
+                                            <input type="checkbox" value="1" name="uart_fc_rts"> RTS
+                                        </label>
+                                        <label class="btn btn-outline-primary">
+                                            <input type="checkbox" value="1" name="uart_fc_cts"> CTS
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col">
+                                    <label>RTS pin</label>
+                                    <input type="number" name="uart_rts_pin" data-disable-if="input[type='checkbox'][name='uart_fc_rts']" class="form-control" placeholder="22" value="22" required>
+                                </div>
+                                <div class="col">
+                                    <label>CTS pin</label>
+                                    <input type="number" name="uart_cts_pin" data-disable-if="input[type='checkbox'][name='uart_fc_cts']" class="form-control" placeholder="19" value="19" required>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="row mb-3">
+                <div class="col">
+                    <input type="submit" class="form-control">
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-xl-6">
+
+                    <div class="card mb-3">
+                        <div class="card-header">
+                            NTRIP server A
+                            <small class="ntrip-server-stats stream-stats" data-stream="ntrip_server"></small>
+                            <div class="custom-control custom-switch d-inline float-right">
+                                <input type="checkbox" name="ntr_srv_active" value="1" class="custom-control-input" id="switch-ntrip-server">
+                                <label class="custom-control-label" for="switch-ntrip-server"></label>
+                            </div>
+                            <div class="d-inline mr-1 float-right">
+                                <input type="color" name="ntr_srv_color" data-disable-if="#switch-ntrip-server" value="#ffffff" id="color-ntrip-server">
+                            </div>
+                        </div>
+                        <div class="card-body" data-disable-if="#switch-ntrip-server">
+                            <div class="form-row mb-3">
+                                <div class="col">
+                                    <label>Host and port</label>
+                                    <div class="input-group">
+                                        <input type="text" name="ntr_srv_host" class="form-control" style="flex-grow: 3" required>
+                                        <div class="input-group-append input-group-prepend">
+                                            <span class="input-group-text">:</span>
+                                        </div>
+                                        <input type="number" name="ntr_srv_port" maxlength="5" min="0" max="65535" class="form-control" required>
+                                    </div>
+                                </div>
+                                <div class="col">
+                                    <label>Mountpoint</label>
+                                    <div class="input-group">
+                                        <input type="text" name="ntr_srv_mp" class="form-control" maxlength="32" required>
+                                        <!--<div class="input-group-append">
+                                            <button type="button" class="btn btn-outline-secondary dropdown-toggle dropdown-toggle-split" data-toggle="dropdown"></button>
+                                            <div class="dropdown-menu">
+                                                <a class="dropdown-item" href="#">Action</a>
+                                                <a class="dropdown-item" href="#">Another action</a>
+                                                <a class="dropdown-item" href="#">Something else here</a>
+                                                <div role="separator" class="dropdown-divider"></div>
+                                                <a class="dropdown-item" href="#">Separated link</a>
+                                            </div>
+                                        </div>
+                                        <div class="input-group-append">
+                                            <button type="button" class="btn btn-outline-secondary">Search</button>
+                                        </div>-->
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="form-row mb-3">
+                                <div class="col">
+                                    <label>Username</label>
+                                    <div class="input-group">
+                                        <input type="text" name="ntr_srv_user" class="form-control">
+                                    </div>
+                                </div>
+                                <div class="col">
+                                    <label>Password</label>
+                                    <div class="input-group">
+                                        <input type="password" name="ntr_srv_pass" class="form-control">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card mb-3">
+                        <div class="card-header">
+                            NTRIP server B
+                            <small class="ntrip-server-2-stats stream-stats" data-stream="ntrip_server_2"></small>
+                            <div class="custom-control custom-switch d-inline float-right">
+                                <input type="checkbox" name="ntr_srv2_active" value="1" class="custom-control-input" id="switch-ntrip-server-2">
+                                <label class="custom-control-label" for="switch-ntrip-server-2"></label>
+                            </div>
+                            <div class="d-inline mr-1 float-right">
+                                <input type="color" name="ntr_srv2_color" data-disable-if="#switch-ntrip-server-2" value="#ffffff" id="color-ntrip-server-2">
+                            </div>
+                        </div>
+                        <div class="card-body" data-disable-if="#switch-ntrip-server-2">
+                            <div class="form-row mb-3">
+                                <div class="col">
+                                    <label>Host and port</label>
+                                    <div class="input-group">
+                                        <input type="text" name="ntr_srv2_host" class="form-control" style="flex-grow: 3" required>
+                                        <div class="input-group-append input-group-prepend">
+                                            <span class="input-group-text">:</span>
+                                        </div>
+                                        <input type="number" name="ntr_srv2_port" maxlength="5" min="0" max="65535" class="form-control" required>
+                                    </div>
+                                </div>
+                                <div class="col">
+                                    <label>Mountpoint</label>
+                                    <div class="input-group">
+                                        <input type="text" name="ntr_srv2_mp" class="form-control" maxlength="32" required>
+                                        <!--<div class="input-group-append">
+                                            <button type="button" class="btn btn-outline-secondary dropdown-toggle dropdown-toggle-split" data-toggle="dropdown"></button>
+                                            <div class="dropdown-menu">
+                                                <a class="dropdown-item" href="#">Action</a>
+                                                <a class="dropdown-item" href="#">Another action</a>
+                                                <a class="dropdown-item" href="#">Something else here</a>
+                                                <div role="separator" class="dropdown-divider"></div>
+                                                <a class="dropdown-item" href="#">Separated link</a>
+                                            </div>
+                                        </div>
+                                        <div class="input-group-append">
+                                            <button type="button" class="btn btn-outline-secondary">Search</button>
+                                        </div>-->
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="form-row mb-3">
+                                <div class="col">
+                                    <label>Username</label>
+                                    <div class="input-group">
+                                        <input type="text" name="ntr_srv2_user" class="form-control">
+                                    </div>
+                                </div>
+                                <div class="col">
+                                    <label>Password</label>
+                                    <div class="input-group">
+                                        <input type="password" name="ntr_srv2_pass" class="form-control">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card mb-3">
+                        <div class="card-header">
+                            NTRIP client
+                            <small class="ntrip-client-stats stream-stats" data-stream="ntrip_client"></small>
+                            <div class="custom-control custom-switch d-inline float-right">
+                                <input type="checkbox" name="ntr_cli_active" value="1" class="custom-control-input" id="switch-ntrip-client">
+                                <label class="custom-control-label" for="switch-ntrip-client"></label>
+                            </div>
+                            <div class="d-inline mr-1 float-right">
+                                <input type="color" name="ntr_cli_color" data-disable-if="#switch-ntrip-client" value="#ffffff" id="color-ntrip-client">
+                            </div>
+                        </div>
+                        <div class="card-body" data-disable-if="#switch-ntrip-client">
+                            <div class="form-row mb-3">
+                                <div class="col">
+                                    <label>Host and port</label>
+                                    <div class="input-group">
+                                        <input type="text" name="ntr_cli_host" class="form-control" style="flex-grow: 3" required>
+                                        <div class="input-group-append input-group-prepend">
+                                            <span class="input-group-text">:</span>
+                                        </div>
+                                        <input type="number" name="ntr_cli_port" maxlength="5" min="0" max="65535" class="form-control" required>
+                                    </div>
+                                </div>
+                                <div class="col">
+                                    <label>Mountpoint</label>
+                                    <div class="input-group">
+                                        <input type="text" name="ntr_cli_mp" class="form-control" maxlength="32" required>
+                                        <!--<div class="input-group-append">
+                                            <button type="button" class="btn btn-outline-secondary dropdown-toggle dropdown-toggle-split" data-toggle="dropdown"></button>
+                                            <div class="dropdown-menu">
+                                                <a class="dropdown-item" href="#">Action</a>
+                                                <a class="dropdown-item" href="#">Another action</a>
+                                                <a class="dropdown-item" href="#">Something else here</a>
+                                                <div role="separator" class="dropdown-divider"></div>
+                                                <a class="dropdown-item" href="#">Separated link</a>
+                                            </div>
+                                        </div>
+                                        <div class="input-group-append">
+                                            <button type="button" class="btn btn-outline-secondary">Search</button>
+                                        </div>-->
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="form-row mb-3">
+                                <div class="col">
+                                    <label>Username</label>
+                                    <div class="input-group">
+                                        <input type="text" name="ntr_cli_user" class="form-control">
+                                    </div>
+                                </div>
+                                <div class="col">
+                                    <label>Password</label>
+                                    <div class="input-group">
+                                        <input type="password" name="ntr_cli_pass" class="form-control">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            
+
+                <div class="col-xl-6">
+            
+                        <div class="card mb-3">
+                            <div class="card-header">
+                                Socket server
+                                <small class="socket-server-stats stream-stats" data-stream="socket_server"></small>
+                                <div class="custom-control custom-switch d-inline float-right">
+                                    <input type="checkbox" name="sck_srv_active" value="1" class="custom-control-input" id="switch-socket-server">
+                                    <label class="custom-control-label" for="switch-socket-server"></label>
+                                </div>
+                                <div class="d-inline mr-1 float-right">
+                                    <input type="color" name="sck_srv_color" data-disable-if="#switch-socket-server" value="#ffffff" id="color-socket-server">
+                                </div>
+                            </div>
+                            <div class="card-body" data-disable-if="#switch-socket-server">
+                                <div class="form-row mb-3">
+                                    <div class="col">
+                                        <label>TCP port</label>
+                                        <div class="input-group">
+                                            <input type="number" name="sck_srv_t_port" maxlength="5" min="0" max="65535" class="form-control" required>
+                                        </div>
+                                    </div>
+                                    <div class="col">
+                                        <label>UDP port</label>
+                                        <div class="input-group">
+                                            <input type="number" name="sck_srv_u_port" maxlength="5" min="0" max="65535" class="form-control" required>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card mb-3">
+                            <div class="card-header">
+                                Socket client
+                                <small class="socket-client-stats stream-stats" data-stream="socket_client"></small>
+                                <div class="custom-control custom-switch d-inline float-right">
+                                    <input type="checkbox" name="sck_cli_active" value="1" class="custom-control-input" id="switch-socket-client">
+                                    <label class="custom-control-label" for="switch-socket-client"></label>
+                                </div>
+                                <div class="d-inline mr-1 float-right">
+                                    <input type="color" name="sck_cli_color" data-disable-if="#switch-socket-client" value="#ffffff" id="color-socket-client">
+                                </div>
+                            </div>
+                            <div class="card-body" data-disable-if="#switch-socket-client">
+                                <div class="form-row mb-3">
+                                    <div class="col-8">
+                                        <label>Host and port</label>
+                                        <div class="input-group">
+                                            <div class="btn-group btn-group-toggle d-flex input-group-prepend" data-toggle="buttons">
+                                                <label class="btn btn-outline-secondary active">
+                                                    <input type="radio" name="sck_cli_type" value="1" checked> TCP
+                                                </label>
+                                                <label class="btn btn-outline-secondary">
+                                                    <input type="radio" name="sck_cli_type" value="0"> UDP
+                                                </label>
+                                            </div>
+                                            <input type="text" name="sck_cli_host" class="form-control" style="flex-grow: 3" required>
+                                            <div class="input-group-append input-group-prepend">
+                                                <span class="input-group-text">:</span>
+                                            </div>
+                                            <input type="number" name="sck_cli_port" maxlength="5" min="0" max="65535" class="form-control" required>
+                                        </div>
+                                    </div>
+                                    <div class="col-4">
+                                        <label>Connect message</label>
+                                        <div class="input-group">
+                                            <input type="text" name="sck_cli_msg_unformatted" class="form-control" value="">
+                                            <input type="hidden" name="sck_cli_msg" data-formatted="true">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card mb-3">
+                            <div class="card-header">
+                                NTRIP caster
+                                <small class="ntrip-caster-stats stream-stats" data-stream="ntrip_caster"></small>
+                                <div class="custom-control custom-switch d-inline float-right">
+                                    <input type="checkbox" name="ntr_cst_active" value="1" class="custom-control-input" id="switch-ntrip-caster">
+                                    <label class="custom-control-label" for="switch-ntrip-caster"></label>
+                                </div>
+                                <div class="d-inline mr-1 float-right">
+                                    <input type="color" name="ntr_cst_color" data-disable-if="#switch-ntrip-caster" value="#ffffff" id="color-ntrip-caster">
+                                </div>
+                            </div>
+                            <div class="card-body" data-disable-if="#switch-ntrip-caster">
+                                <div class="form-row mb-3">
+                                    <div class="col">
+                                        <label>Port</label>
+                                        <div class="input-group">
+                                            <input type="number" name="ntr_cst_port" maxlength="5" min="0" max="65535" class="form-control" required>
+                                        </div>
+                                    </div>
+                                    <div class="col">
+                                        <label>Mountpoint</label>
+                                        <div class="input-group">
+                                            <input type="text" name="ntr_cst_mp" class="form-control" maxlength="32" required>
+                                        </div>
+                                    </div>
+                                    <div class="col">
+                                        <label>Username</label>
+                                        <div class="input-group">
+                                            <input type="text" name="ntr_cst_user" class="form-control">
+                                        </div>
+                                    </div>
+                                    <div class="col">
+                                        <label>Password</label>
+                                        <div class="input-group">
+                                            <input type="password" name="ntr_cst_pass" class="form-control">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                </div>
+    
+            </div>
+        </form>
+    </div>
+    <footer id="footer" class="bg-dark">
+        <div class="container">
+            <div class="text-center text-light">
+                <small>&copy; </a> 2024 - <a href="https://github.com/incarvr6" class="text-white">GitHub</a> - <a href="https://github.com/incarvr6/esp32-ntrip" class="text-white">Project</a> - Uptime <span class="uptime">loading...</span> - Heap <span class="heap">loading...</span></small>
+            </div>
+        </div>
+    </footer>
+    <div class="modal fade" id="restarting-modal">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h4 class="modal-title">Waiting for restart...</h4>
+                </div>
+                <div class="modal-body">
+                    <p>The ESP32 XBee has been restarted to apply the new configuration.</p>
+                    <p>Please wait a few seconds, and this page will automatically reload.</p>
+                    <p>If you have made changes to the WiFi connection, or are using the ESP32's WiFi hotspot, you may need to check your device's WiFi connection, or read the new IP address from a serial terminal.</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-danger" onclick="window.location.reload()">Reload</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

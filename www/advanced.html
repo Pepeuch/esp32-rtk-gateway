@@ -1,0 +1,241 @@
+<html>
+<head>
+    <title>ESP32 RTK Gateway Advanced</title>
+    <script src="jquery-3.4.1.min.js"></script>
+    <script src="bs-4.3.1.bundle.min.js"></script>
+    <link rel="stylesheet" href="bs-4.3.1.min.css">
+    <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
+    <style>
+        body {
+            background: #f7f9fb;
+        }
+
+        .capability-pill {
+            display: inline-block;
+            margin: 0 8px 8px 0;
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: #eef3f7;
+            font-size: 0.875rem;
+        }
+
+        textarea {
+            font-family: monospace;
+        }
+    </style>
+    <script>
+        $(function() {
+            var gnssDiagnostics = $('.gnss-diagnostics');
+            var gnssSatellites = $('.gnss-satellites tbody');
+            var gnssSatelliteStatus = $('.gnss-satellite-status');
+            var rawConsole = $('#gnss-raw-console');
+            var ntripRuntime = $('.ntrip-runtime');
+            var selftestStatus = $('.selftest-status');
+
+            var appendPill = function(container, text) {
+                container.append($('<span>', {class: 'capability-pill', text: text}));
+            };
+
+            var humanDataSize = function(bytes) {
+                var value = parseInt(bytes || 0, 10);
+                if (Math.abs(value) < 1000) return value + 'B';
+                var units = ['kB','MB','GB'];
+                var index = -1;
+                do {
+                    value /= 1000;
+                    index++;
+                } while (Math.abs(value) >= 1000 && index < units.length - 1);
+                return value.toFixed(1) + units[index];
+            };
+
+            var renderDiagnostics = function(data) {
+                gnssDiagnostics.empty();
+                if (!data || !data.detected) {
+                    gnssDiagnostics.text('No GNSS data');
+                    return;
+                }
+
+                appendPill(gnssDiagnostics, data.receiver_type || 'unknown');
+                appendPill(gnssDiagnostics, 'Fix ' + (data.fix_type || 'unknown'));
+                appendPill(gnssDiagnostics, 'RTK ' + (data.rtk_status || 'unknown'));
+                appendPill(gnssDiagnostics, 'RTCM ' + (data.rtcm_state || 'idle'));
+                appendPill(gnssDiagnostics, 'Diff age ' + (data.diff_age || 0));
+                appendPill(gnssDiagnostics, 'AGC main ' + (data.agc_main != null ? data.agc_main : 'n/a'));
+                appendPill(gnssDiagnostics, 'AGC aux ' + (data.agc_aux != null ? data.agc_aux : 'n/a'));
+                appendPill(gnssDiagnostics, 'Antenna ' + (data.antenna_status || 'unknown'));
+                appendPill(gnssDiagnostics, 'Jamming ' + (data.jamming_status || 'unknown'));
+                appendPill(gnssDiagnostics, 'HW ' + (data.hardware_status || 'unknown'));
+                appendPill(gnssDiagnostics, 'Parser ' + (data.parser_errors || 0));
+            };
+
+            var renderSatellites = function(data) {
+                gnssSatellites.empty();
+                if (!data || !data.detected) {
+                    gnssSatelliteStatus.text('No GNSS data');
+                    return;
+                }
+
+                var satellites = Array.isArray(data.satellites) ? data.satellites.slice() : [];
+                gnssSatelliteStatus.text((data.total_visible || satellites.length) + ' visible, ' + (data.total_used || 0) + ' used');
+                satellites.sort(function(a, b) {
+                    return (b.cn0 || 0) - (a.cn0 || 0);
+                });
+
+                satellites.forEach(function(sat) {
+                    gnssSatellites.append($('<tr>')
+                        .append($('<td>', {text: sat.constellation || 'unknown'}))
+                        .append($('<td>', {text: sat.prn || sat.svid || 0}))
+                        .append($('<td>', {text: sat.cn0 || 0}))
+                        .append($('<td>', {text: sat.used ? 'yes' : 'no'}))
+                        .append($('<td>', {text: (sat.last_seen_ms || 0) + 'ms'}))
+                    );
+                });
+            };
+
+            var renderRuntime = function(data) {
+                ntripRuntime.empty();
+                if (!data || !Array.isArray(data.slots)) {
+                    ntripRuntime.text('NTRIP runtime unavailable');
+                    return;
+                }
+
+                if (data.runtime) {
+                    appendPill(ntripRuntime, (data.runtime.active_slot_count || 0) + ' active slots');
+                    appendPill(ntripRuntime, humanDataSize(data.runtime.free_heap_bytes || 0) + ' free heap');
+                    appendPill(ntripRuntime, data.runtime.fake_rtcm_enabled ? 'Fake RTCM on' : 'Fake RTCM off');
+                }
+
+                data.slots.forEach(function(slot) {
+                    ntripRuntime.append($('<div>', {
+                        class: 'small mb-1',
+                        text: (slot.index + 1) + '. ' + (slot.name || 'slot') + ' - ' + (slot.status || 'unknown') + ' - ' + humanDataSize(slot.bytes_sent || 0)
+                    }));
+                });
+            };
+
+            var refreshAdvanced = function() {
+                $.getJSON('api/gnss/diagnostics').done(renderDiagnostics);
+                $.getJSON('api/gnss/satellites').done(renderSatellites);
+                $.getJSON('api/gnss/receiver/raw').done(function(data) {
+                    rawConsole.val(data && data.raw ? data.raw : '');
+                });
+                $.getJSON('api/ntrip/runtime').done(renderRuntime).always(function() {
+                    setTimeout(refreshAdvanced, 4000);
+                });
+            };
+
+            var refreshSelftest = function() {
+                $.getJSON('api/dev/ntrip/selftest/result').done(function(data) {
+                    selftestStatus.text(JSON.stringify(data || {}, null, 2));
+                });
+            };
+
+            $('#fake-rtcm-start').on('click', function() {
+                $.ajax({
+                    url: 'api/dev/fake-rtcm/start',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({
+                        rate_hz: parseInt($('#fake-rtcm-rate').val() || '5', 10),
+                        packet_size: parseInt($('#fake-rtcm-size').val() || '180', 10)
+                    })
+                }).done(refreshAdvanced);
+            });
+
+            $('#fake-rtcm-stop').on('click', function() {
+                $.post('api/dev/fake-rtcm/stop').done(refreshAdvanced);
+            });
+
+            $('#selftest-start').on('click', function() {
+                $.post('api/dev/ntrip/selftest/start').done(refreshSelftest);
+            });
+
+            $('#selftest-refresh').on('click', refreshSelftest);
+
+            refreshAdvanced();
+            refreshSelftest();
+        });
+    </script>
+</head>
+<body>
+    <div class="container py-4">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <div>
+                <h2 class="mb-1">ESP32 RTK Gateway</h2>
+                <div class="text-muted">Advanced diagnostics and developer tools</div>
+            </div>
+            <div>
+                <a class="btn btn-outline-secondary btn-sm" href="/dashboard.html">Dashboard</a>
+                <a class="btn btn-outline-primary btn-sm" href="/config.html">Config</a>
+                <a class="btn btn-outline-dark btn-sm" href="/advanced.html">Advanced</a>
+                <a class="btn btn-outline-secondary btn-sm" href="/log.html">Logs</a>
+            </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header">GNSS Diagnostics</div>
+            <div class="card-body gnss-diagnostics small text-muted">Loading GNSS diagnostics...</div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header">Satellites</div>
+            <div class="card-body">
+                <div class="gnss-satellite-status small text-muted mb-2">Loading satellites...</div>
+                <div class="table-responsive">
+                    <table class="table table-sm table-striped gnss-satellites">
+                        <thead>
+                            <tr>
+                                <th>Constellation</th>
+                                <th>PRN</th>
+                                <th>CN0</th>
+                                <th>Used</th>
+                                <th>Age</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header">NTRIP Runtime</div>
+            <div class="card-body ntrip-runtime small text-muted">Loading NTRIP runtime...</div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header">Developer Tools</div>
+            <div class="card-body">
+                <div class="form-row mb-3">
+                    <div class="col-md-3">
+                        <label>Fake RTCM rate (Hz)</label>
+                        <input type="number" class="form-control" id="fake-rtcm-rate" value="5" min="1" max="100">
+                    </div>
+                    <div class="col-md-3">
+                        <label>Fake RTCM packet size</label>
+                        <input type="number" class="form-control" id="fake-rtcm-size" value="180" min="24" max="512">
+                    </div>
+                    <div class="col-md-3 d-flex align-items-end">
+                        <button type="button" class="btn btn-outline-secondary w-100" id="fake-rtcm-start">Start Fake RTCM</button>
+                    </div>
+                    <div class="col-md-3 d-flex align-items-end">
+                        <button type="button" class="btn btn-outline-secondary w-100" id="fake-rtcm-stop">Stop Fake RTCM</button>
+                    </div>
+                </div>
+                <div class="mb-2">
+                    <button type="button" class="btn btn-sm btn-primary" id="selftest-start">Start Self-Test</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="selftest-refresh">Refresh Result</button>
+                </div>
+                <pre class="small text-muted selftest-status mb-0">Loading self-test status...</pre>
+            </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header">Receiver Raw Console</div>
+            <div class="card-body">
+                <textarea class="form-control" id="gnss-raw-console" rows="10" readonly></textarea>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
