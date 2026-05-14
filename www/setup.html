@@ -1,0 +1,232 @@
+<html>
+<head>
+    <title>ESP32 RTK Gateway Setup Wizard</title>
+    <script src="jquery-3.4.1.min.js"></script>
+    <script src="bs-4.3.1.bundle.min.js"></script>
+    <link rel="stylesheet" href="bs-4.3.1.min.css">
+    <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
+    <style>
+        body { background: #f7f9fb; }
+        .wizard-step { border-left: 4px solid #17a2b8; }
+        .hint { color: #6c757d; font-size: 0.9rem; }
+        .capability-pill { display: inline-block; margin: 0 8px 8px 0; padding: 4px 10px; border-radius: 999px; background: #eef3f7; font-size: 0.875rem; }
+        .wizard-summary { background: #fefefe; border: 1px solid #e4e9ef; border-radius: 0.5rem; padding: 1rem; }
+        .wizard-status { min-height: 24px; }
+    </style>
+    <script>
+        $(function() {
+            var capabilityPills = $('.capability-pills');
+            var setupStatus = $('.wizard-status');
+            var summaryList = $('.wizard-summary-list');
+            var ntripRecommendation = $('.ntrip-recommendation');
+            var memorySummary = $('.memory-summary');
+
+            var setStatus = function(text, kind) {
+                var klass = 'text-muted';
+                if (kind === 'ok') klass = 'text-success';
+                if (kind === 'warn') klass = 'text-warning';
+                if (kind === 'error') klass = 'text-danger';
+                setupStatus.attr('class', 'wizard-status small ' + klass).text(text);
+            };
+
+            var appendPill = function(text) {
+                capabilityPills.append($('<span>', {class: 'capability-pill', text: text}));
+            };
+
+            var selectValueIfPresent = function(selector, value) {
+                if (value == null) return;
+                var field = $(selector);
+                if (field.find('option[value="' + value + '"]').length > 0) field.val(value);
+            };
+
+            var formatBytes = function(bytes) {
+                var value = parseInt(bytes || 0, 10);
+                if (value < 1024) return value + ' B';
+                if (value < 1024 * 1024) return (value / 1024).toFixed(1) + ' KB';
+                return (value / (1024 * 1024)).toFixed(1) + ' MB';
+            };
+
+            var inferEthernetDefault = function(cap) {
+                if (!cap || !cap.ethernet_supported) return 'none';
+                if ((cap.chip_family || '').toLowerCase().indexOf('esp32s3') !== -1) return 'w5500';
+                return 'lan8720';
+            };
+
+            var buildSummary = function(context) {
+                summaryList.empty();
+                var lines = [];
+                lines.push('Target family: ' + ($('#setup-chip').val() || 'unknown'));
+                lines.push('Flash profile: ' + ($('#setup-flash').val() || 'unknown'));
+                lines.push('PSRAM: ' + ($('#setup-psram').val() || 'unknown'));
+                lines.push('Ethernet backend: ' + ($('#setup-ethernet').val() || 'none'));
+                lines.push('GNSS receiver: ' + ($('#setup-gnss').val() || 'unknown'));
+                lines.push('UART mapping: ' + ($('#setup-uart-port').val() || 'default') + ' @ ' + ($('#setup-uart-baud').val() || 'unknown') + ' baud');
+                lines.push('Mode preset: ' + ($('#setup-mode').val() || 'rover'));
+                lines.push('Recommended NTRIP slots: ' + ($('#setup-ntrip-slots').val() || '0'));
+                if (context && context.base && context.base.detected && context.base.has_fixed_position) lines.push('Stored base coordinates detected');
+                lines.forEach(function(text) { summaryList.append($('<li>', {text: text})); });
+            };
+
+            var refreshDerivedHints = function(context) {
+                var slots = parseInt($('#setup-ntrip-slots').val() || '0', 10);
+                var mode = $('#setup-mode').val() || 'rover';
+                ntripRecommendation.text(slots > 0 ? ('This platform currently supports ' + slots + ' simultaneous NTRIP runtime slot(s).') : 'NTRIP capability information is not available yet.');
+                if (context && context.status && context.status.heap) {
+                    var heapText = 'Heap free ' + formatBytes(context.status.heap.free || 0);
+                    if (context.status.heap.min_free != null) heapText += ' / min ' + formatBytes(context.status.heap.min_free || 0);
+                    if (context.status.psram && context.status.psram.available) heapText += ' | PSRAM free ' + formatBytes(context.status.psram.free || 0);
+                    memorySummary.text(heapText);
+                } else {
+                    memorySummary.text('Memory diagnostics unavailable');
+                }
+                if (mode === 'base_survey') setStatus('Survey base preset selected. Review RTCM output and survey targets in Config before applying.', 'warn');
+                else if (mode === 'base_fixed') setStatus('Fixed base preset selected. Verify stored coordinates before applying in Config.', 'warn');
+                else setStatus('Wizard loaded. Review recommendations, then apply settings from Config when ready.', 'ok');
+            };
+
+            var loadData = function() {
+                var requests = [
+                    $.getJSON('/api/capabilities'),
+                    $.getJSON('/api/status'),
+                    $.getJSON('/api/gnss/status'),
+                    $.getJSON('/api/gnss/profiles'),
+                    $.getJSON('/api/gnss/base/status'),
+                    $.getJSON('/api/ntrip')
+                ];
+                $.when.apply($, requests).done(function(capRes, statusRes, gnssRes, profileRes, baseRes, ntripRes) {
+                    var capabilities = capRes[0] || {};
+                    var status = statusRes[0] || {};
+                    var gnss = gnssRes[0] || {};
+                    var profiles = profileRes[0] || {};
+                    var base = baseRes[0] || {};
+                    var ntrip = ntripRes[0] || {};
+                    var context = { capabilities: capabilities, status: status, gnss: gnss, profiles: profiles, base: base, ntrip: ntrip };
+                    capabilityPills.empty();
+                    appendPill(capabilities.chip_family || 'unknown target');
+                    appendPill(capabilities.network_profile || 'unknown network profile');
+                    appendPill(capabilities.psram_available ? 'PSRAM available' : 'No PSRAM');
+                    appendPill(capabilities.ethernet_supported ? 'Ethernet supported' : 'Wi-Fi only hardware');
+                    appendPill((capabilities.max_ntrip_slots || 0) + ' NTRIP slot(s)');
+                    if (gnss.detected) appendPill('GNSS ' + (gnss.receiver_type || 'unknown'));
+                    selectValueIfPresent('#setup-chip', (capabilities.chip_family || '').toLowerCase());
+                    selectValueIfPresent('#setup-psram', capabilities.psram_available ? 'available' : 'none');
+                    selectValueIfPresent('#setup-ethernet', inferEthernetDefault(capabilities));
+                    selectValueIfPresent('#setup-gnss', gnss.detected ? (gnss.receiver_type || 'nmea') : 'nmea');
+                    selectValueIfPresent('#setup-mode', base && base.configured_mode ? base.configured_mode : 'rover');
+                    selectValueIfPresent('#setup-ntrip-slots', String(capabilities.max_ntrip_slots || 0));
+                    if (profiles && profiles.receiver_baud) $('#setup-uart-baud').val(profiles.receiver_baud);
+                    $('#setup-uart-port').val('shared-uart');
+                    if (base && base.detected && base.active_profile) {
+                        if (base.active_profile === 'base_fixed') $('#setup-mode').val('base_fixed');
+                        else if (base.active_profile === 'base_survey') $('#setup-mode').val('base_survey');
+                    }
+                    buildSummary(context);
+                    refreshDerivedHints(context);
+                }).fail(function() { setStatus('Could not load setup defaults from the device APIs.', 'error'); });
+            };
+
+            $('.wizard-form').on('change input', 'select,input', function() { buildSummary(null); refreshDerivedHints(null); });
+            $('.open-config').on('click', function() { window.location.href = '/config.html'; });
+            loadData();
+        });
+    </script>
+</head>
+<body>
+    <div class="container py-4">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <div>
+                <h2 class="mb-1">ESP32 RTK Gateway</h2>
+                <div class="text-muted">Hardware setup wizard</div>
+            </div>
+            <div>
+                <a class="btn btn-outline-secondary btn-sm" href="/dashboard.html">Dashboard</a>
+                <a class="btn btn-outline-info btn-sm" href="/setup.html">Setup</a>
+                <a class="btn btn-outline-primary btn-sm" href="/config.html">Config</a>
+                <a class="btn btn-outline-dark btn-sm" href="/advanced.html">Advanced</a>
+                <a class="btn btn-outline-secondary btn-sm" href="/log.html">Logs</a>
+            </div>
+        </div>
+        <div class="card mb-3">
+            <div class="card-header">Detected Platform</div>
+            <div class="card-body">
+                <div class="capability-pills mb-2">Loading capabilities...</div>
+                <div class="memory-summary small text-muted">Loading memory diagnostics...</div>
+                <div class="wizard-status small text-muted mt-2">Loading setup defaults...</div>
+            </div>
+        </div>
+        <div class="card wizard-step mb-3">
+            <div class="card-header">Setup Wizard</div>
+            <div class="card-body">
+                <form class="wizard-form">
+                    <div class="form-row">
+                        <div class="form-group col-md-4">
+                            <label for="setup-chip">ESP family</label>
+                            <select class="form-control" id="setup-chip"><option value="esp32">ESP32</option><option value="esp32c3">ESP32-C3</option><option value="esp32c6">ESP32-C6</option><option value="esp32s3">ESP32-S3</option></select>
+                        </div>
+                        <div class="form-group col-md-4">
+                            <label for="setup-flash">Flash size</label>
+                            <select class="form-control" id="setup-flash"><option value="4mb">4 MB</option><option value="8mb">8 MB</option><option value="16mb">16 MB</option></select>
+                            <div class="hint">Manual for now. Pick the partition profile that matches your module.</div>
+                        </div>
+                        <div class="form-group col-md-4">
+                            <label for="setup-psram">PSRAM</label>
+                            <select class="form-control" id="setup-psram"><option value="none">None</option><option value="available">Available</option></select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group col-md-4">
+                            <label for="setup-ethernet">Ethernet</label>
+                            <select class="form-control" id="setup-ethernet"><option value="none">None</option><option value="w5500">W5500</option><option value="lan8720">LAN8720</option></select>
+                        </div>
+                        <div class="form-group col-md-4">
+                            <label for="setup-gnss">GNSS receiver</label>
+                            <select class="form-control" id="setup-gnss"><option value="nmea">NMEA / generic</option><option value="ublox">u-blox</option><option value="unicore_n4">Unicore</option></select>
+                        </div>
+                        <div class="form-group col-md-4">
+                            <label for="setup-mode">Mode preset</label>
+                            <select class="form-control" id="setup-mode"><option value="rover">Rover</option><option value="base_fixed">Base fixed</option><option value="base_survey">Base survey</option></select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group col-md-4">
+                            <label for="setup-uart-port">UART mapping</label>
+                            <input type="text" class="form-control" id="setup-uart-port" value="shared-uart">
+                            <div class="hint">Read-only recommendation for now. Runtime mapping is unchanged in this phase.</div>
+                        </div>
+                        <div class="form-group col-md-4">
+                            <label for="setup-uart-baud">Receiver baud</label>
+                            <input type="number" class="form-control" id="setup-uart-baud" value="115200" min="4800" step="1">
+                        </div>
+                        <div class="form-group col-md-4">
+                            <label for="setup-ntrip-slots">NTRIP preset count</label>
+                            <select class="form-control" id="setup-ntrip-slots"><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select>
+                            <div class="hint ntrip-recommendation">Waiting for capability data...</div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+        <div class="row">
+            <div class="col-lg-6">
+                <div class="card mb-3">
+                    <div class="card-header">Recommended Next Steps</div>
+                    <div class="card-body">
+                        <ul class="wizard-summary-list mb-3"></ul>
+                        <div class="hint mb-3">This wizard does not change the running firmware configuration yet. Review the recommendations, then apply the matching settings from the Config page.</div>
+                        <button type="button" class="btn btn-primary open-config">Open Config Page</button>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-6">
+                <div class="card mb-3">
+                    <div class="card-header">What This Uses</div>
+                    <div class="card-body">
+                        <div class="small mb-2">This setup page reads from the current firmware foundations:</div>
+                        <ul class="small mb-0"><li>board / target capabilities</li><li>heap and PSRAM diagnostics</li><li>Ethernet support status</li><li>GNSS receiver detection</li><li>NTRIP slot capabilities</li><li>rover / base profile status</li></ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
