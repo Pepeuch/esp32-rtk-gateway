@@ -545,8 +545,13 @@ void ntrip_slots_get_status(size_t slot_index, ntrip_slot_status_t *status)
     status->packets_sent = have_runtime ? runtime_snapshot.packets_sent : 0;
     status->uptime_seconds = have_runtime ? runtime_snapshot.uptime_seconds : 0;
     status->last_activity_ms = have_runtime ? runtime_snapshot.last_activity_ms : 0;
+    status->dropped_rtcm_packets = have_runtime ? runtime_snapshot.dropped_rtcm_packets : 0;
+    status->ringbuffer_high_water = have_runtime ? runtime_snapshot.ringbuffer_high_water : 0;
     status->last_http_code = have_runtime ? runtime_snapshot.last_http_code : 0;
     status->stale = have_runtime ? runtime_snapshot.stale : false;
+    status->mock_mode_value = have_runtime ? runtime_snapshot.mock_mode_value : 0;
+    snprintf(status->mock_mode, sizeof(status->mock_mode), "%s",
+             have_runtime ? ntrip_runtime_mock_mode_name(runtime_snapshot.mock_mode) : "none");
 
     if (have_runtime) {
         status->running = runtime_snapshot.state == NTRIP_RUNTIME_STATE_STREAMING;

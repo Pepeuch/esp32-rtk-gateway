@@ -19,6 +19,15 @@ typedef enum ntrip_runtime_state {
     NTRIP_RUNTIME_STATE_ERROR,
 } ntrip_runtime_state_t;
 
+typedef enum ntrip_runtime_mock_mode {
+    NTRIP_RUNTIME_MOCK_NONE = 0,
+    NTRIP_RUNTIME_MOCK_CONNECT_OK,
+    NTRIP_RUNTIME_MOCK_AUTH_FAIL,
+    NTRIP_RUNTIME_MOCK_DISCONNECT_AFTER_PACKETS,
+    NTRIP_RUNTIME_MOCK_SLOW_SOCKET,
+    NTRIP_RUNTIME_MOCK_UNREACHABLE,
+} ntrip_runtime_mock_mode_t;
+
 typedef struct ntrip_runtime_snapshot {
     bool task_running;
     bool stop_requested;
@@ -30,10 +39,24 @@ typedef struct ntrip_runtime_snapshot {
     uint32_t uptime_seconds;
     uint32_t last_activity_ms;
     uint32_t bytes_per_sec;
+    uint32_t dropped_rtcm_packets;
+    uint32_t ringbuffer_high_water;
     int64_t last_connect_time_us;
     ntrip_runtime_state_t state;
+    ntrip_runtime_mock_mode_t mock_mode;
+    uint32_t mock_mode_value;
     char last_error[96];
 } ntrip_runtime_snapshot_t;
+
+typedef struct ntrip_runtime_info {
+    bool fake_rtcm_enabled;
+    bool safe_mode;
+    uint32_t fake_rtcm_rate_hz;
+    uint32_t fake_rtcm_packet_size;
+    uint32_t active_slot_count;
+    uint32_t free_heap_bytes;
+    uint32_t min_free_heap_bytes;
+} ntrip_runtime_info_t;
 
 esp_err_t ntrip_runtime_init(void);
 void ntrip_runtime_start(void);
@@ -41,6 +64,11 @@ void ntrip_runtime_restart_all(void);
 esp_err_t ntrip_runtime_slot_enable(size_t slot_index, bool enabled, bool persist);
 esp_err_t ntrip_runtime_get_snapshot(size_t slot_index, ntrip_runtime_snapshot_t *snapshot);
 void ntrip_runtime_get_all(ntrip_runtime_snapshot_t *snapshots, size_t count);
+void ntrip_runtime_get_info(ntrip_runtime_info_t *info);
+esp_err_t ntrip_runtime_fake_rtcm_start(uint32_t rate_hz, uint32_t packet_size);
+void ntrip_runtime_fake_rtcm_stop(void);
+esp_err_t ntrip_runtime_set_mock_mode(size_t slot_index, ntrip_runtime_mock_mode_t mode, uint32_t value);
 const char *ntrip_runtime_state_name(ntrip_runtime_state_t state);
+const char *ntrip_runtime_mock_mode_name(ntrip_runtime_mock_mode_t mode);
 
 #endif // ESP32_XBEE_NTRIP_RUNTIME_H

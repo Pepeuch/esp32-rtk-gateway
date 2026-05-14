@@ -1,5 +1,6 @@
 #include "ntrip_runtime.h"
 
+#include <inttypes.h>
 #include <errno.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -31,6 +32,10 @@ static const char *TAG = "NTRIP_RUNTIME";
 #define NTRIP_STALE_THRESHOLD_MS 10000
 #define NTRIP_BACKOFF_MIN_MS 1000
 #define NTRIP_BACKOFF_MAX_MS 30000
+#define NTRIP_FAKE_RTCM_PACKET_MIN 24
+#define NTRIP_FAKE_RTCM_PACKET_MAX 512
+#define NTRIP_FAKE_RTCM_RATE_HZ_DEFAULT 5
+#define NTRIP_MONITOR_LOG_INTERVAL_TICKS 10
 
 typedef struct ntrip_runtime_slot {
     size_t index;
@@ -47,10 +52,14 @@ typedef struct ntrip_runtime_slot {
     uint32_t bytes_per_sec;
     uint32_t last_rate_bytes_sent;
     uint32_t uptime_seconds;
+    uint32_t dropped_rtcm_packets;
+    uint32_t ringbuffer_high_water;
     int64_t connected_since_us;
     int64_t last_connect_time_us;
     int64_t last_send_activity_us;
     ntrip_runtime_state_t state;
+    ntrip_runtime_mock_mode_t mock_mode;
+    uint32_t mock_mode_value;
     char last_error[96];
     TaskHandle_t task_handle;
     StreamBufferHandle_t rtcm_buffer;
@@ -58,10 +67,26 @@ typedef struct ntrip_runtime_slot {
 
 static SemaphoreHandle_t s_runtime_mutex = NULL;
 static TaskHandle_t s_supervisor_task = NULL;
+static TaskHandle_t s_fake_rtcm_task = NULL;
 static bool s_runtime_initialized = false;
 static volatile int64_t s_last_rtcm_input_us = 0;
+static volatile bool s_fake_rtcm_enabled = false;
+static volatile bool s_fake_rtcm_stop_requested = false;
+static uint32_t s_fake_rtcm_rate_hz = 0;
+static uint32_t s_fake_rtcm_packet_size = 0;
+static uint32_t s_runtime_free_heap_bytes = 0;
+static uint32_t s_runtime_min_free_heap_bytes = 0;
+static uint32_t s_runtime_active_slot_count = 0;
+static bool s_runtime_safe_mode = false;
 static ntrip_runtime_slot_t s_runtime_slots[NTRIP_SLOT_COUNT];
 static stream_stats_handle_t s_runtime_stats[NTRIP_SLOT_COUNT];
+static const char *S_RUNTIME_STREAM_NAMES[NTRIP_SLOT_COUNT] = {
+    "ntrip_rt_0",
+    "ntrip_rt_1",
+    "ntrip_rt_2",
+    "ntrip_rt_3",
+    "ntrip_rt_4",
+};
 
 static void ntrip_runtime_lock(void)
 {
@@ -100,6 +125,19 @@ static void ntrip_runtime_note_send(ntrip_runtime_slot_t *slot, int written)
     ntrip_runtime_unlock();
 }
 
+static void ntrip_runtime_update_ringbuffer_high_water_locked(ntrip_runtime_slot_t *slot)
+{
+    if (slot == NULL || slot->rtcm_buffer == NULL) {
+        return;
+    }
+
+    size_t free_bytes = xStreamBufferSpacesAvailable(slot->rtcm_buffer);
+    uint32_t used_bytes = (uint32_t)(NTRIP_RTCM_BUFFER_SIZE - free_bytes);
+    if (used_bytes > slot->ringbuffer_high_water) {
+        slot->ringbuffer_high_water = used_bytes;
+    }
+}
+
 static void ntrip_runtime_note_socket_closed(ntrip_runtime_slot_t *slot)
 {
     ntrip_runtime_lock();
@@ -117,11 +155,8 @@ static int ntrip_runtime_current_backoff_ms(uint32_t reconnect_count)
     return (int)(backoff + (esp_random() % 500));
 }
 
-static void ntrip_runtime_uart_handler(void *handler_args, esp_event_base_t base, int32_t length, void *buffer)
+static void ntrip_runtime_fanout_rtcm(const void *buffer, size_t length)
 {
-    (void)handler_args;
-    (void)base;
-
     s_last_rtcm_input_us = esp_timer_get_time();
 
     ntrip_runtime_lock();
@@ -131,18 +166,72 @@ static void ntrip_runtime_uart_handler(void *handler_args, esp_event_base_t base
             continue;
         }
 
-        size_t sent = xStreamBufferSend(slot->rtcm_buffer, buffer, (size_t)length, 0);
-        if (sent < (size_t)length) {
+        size_t sent = xStreamBufferSend(slot->rtcm_buffer, buffer, length, 0);
+        ntrip_runtime_update_ringbuffer_high_water_locked(slot);
+        if (sent < length) {
             slot->stale = true;
+            slot->dropped_rtcm_packets++;
             snprintf(slot->last_error, sizeof(slot->last_error), "%s", "RTCM buffer overflow");
         }
     }
     ntrip_runtime_unlock();
 }
 
+static void ntrip_runtime_uart_handler(void *handler_args, esp_event_base_t base, int32_t length, void *buffer)
+{
+    (void)handler_args;
+    (void)base;
+
+    ntrip_runtime_fanout_rtcm(buffer, (size_t)length);
+}
+
+static void ntrip_runtime_mark_streaming(ntrip_runtime_slot_t *slot)
+{
+    ntrip_runtime_lock();
+    slot->connected_since_us = esp_timer_get_time();
+    slot->last_connect_time_us = slot->connected_since_us;
+    slot->stale = false;
+    slot->last_http_code = 200;
+    slot->last_send_activity_us = 0;
+    slot->last_activity_ms = 0;
+    ntrip_runtime_set_state_locked(slot, NTRIP_RUNTIME_STATE_STREAMING, NULL);
+    ntrip_runtime_unlock();
+}
+
+static esp_err_t ntrip_runtime_mock_connect_and_auth(ntrip_runtime_slot_t *slot)
+{
+    switch (slot->mock_mode) {
+        case NTRIP_RUNTIME_MOCK_UNREACHABLE:
+            ntrip_runtime_lock();
+            slot->last_http_code = 0;
+            ntrip_runtime_unlock();
+            ntrip_runtime_set_state(slot, NTRIP_RUNTIME_STATE_ERROR, "Mock unreachable host");
+            return ESP_FAIL;
+        case NTRIP_RUNTIME_MOCK_AUTH_FAIL:
+            ntrip_runtime_lock();
+            slot->last_http_code = 401;
+            ntrip_runtime_unlock();
+            ntrip_runtime_set_state(slot, NTRIP_RUNTIME_STATE_ERROR, "Mock 401 Unauthorized");
+            return ESP_FAIL;
+        case NTRIP_RUNTIME_MOCK_CONNECT_OK:
+        case NTRIP_RUNTIME_MOCK_DISCONNECT_AFTER_PACKETS:
+        case NTRIP_RUNTIME_MOCK_SLOW_SOCKET:
+            ntrip_runtime_mark_streaming(slot);
+            return ESP_OK;
+        case NTRIP_RUNTIME_MOCK_NONE:
+        default:
+            return ESP_ERR_NOT_SUPPORTED;
+    }
+}
+
 static esp_err_t ntrip_runtime_connect_and_auth(ntrip_runtime_slot_t *slot, const ntrip_slot_config_t *config)
 {
     char request[512];
+
+    if (slot->mock_mode != NTRIP_RUNTIME_MOCK_NONE) {
+        ntrip_runtime_set_state(slot, NTRIP_RUNTIME_STATE_CONNECTING, NULL);
+        return ntrip_runtime_mock_connect_and_auth(slot);
+    }
 
     ntrip_runtime_set_state(slot, NTRIP_RUNTIME_STATE_CONNECTING, NULL);
     int sock = connect_socket((char *)config->host, config->port, SOCK_STREAM);
@@ -204,17 +293,32 @@ static esp_err_t ntrip_runtime_connect_and_auth(ntrip_runtime_slot_t *slot, cons
     }
     free(status);
 
-    ntrip_runtime_lock();
-    slot->connected_since_us = esp_timer_get_time();
-    slot->last_connect_time_us = slot->connected_since_us;
-    slot->stale = false;
-    slot->last_http_code = 200;
-    slot->last_send_activity_us = 0;
-    slot->last_activity_ms = 0;
-    ntrip_runtime_set_state_locked(slot, NTRIP_RUNTIME_STATE_STREAMING, NULL);
-    ntrip_runtime_unlock();
-
+    ntrip_runtime_mark_streaming(slot);
     return ESP_OK;
+}
+
+static int ntrip_runtime_slot_write(ntrip_runtime_slot_t *slot, const uint8_t *buffer, size_t length)
+{
+    if (slot->mock_mode == NTRIP_RUNTIME_MOCK_SLOW_SOCKET) {
+        uint32_t slow_ms = slot->mock_mode_value > 0 ? slot->mock_mode_value : 250;
+        vTaskDelay(pdMS_TO_TICKS(slow_ms));
+        return (int)length;
+    }
+
+    if (slot->mock_mode == NTRIP_RUNTIME_MOCK_DISCONNECT_AFTER_PACKETS) {
+        uint32_t disconnect_after = slot->mock_mode_value > 0 ? slot->mock_mode_value : 10;
+        if (slot->packets_sent >= disconnect_after) {
+            ntrip_runtime_set_state(slot, NTRIP_RUNTIME_STATE_ERROR, "Mock disconnect after packets");
+            return -1;
+        }
+        return (int)length;
+    }
+
+    if (slot->mock_mode == NTRIP_RUNTIME_MOCK_CONNECT_OK) {
+        return (int)length;
+    }
+
+    return write(slot->sock, buffer, length);
 }
 
 static bool ntrip_runtime_should_stop(ntrip_runtime_slot_t *slot)
@@ -245,6 +349,8 @@ static void ntrip_runtime_slot_task(void *ctx)
     slot->connected_since_us = 0;
     slot->last_connect_time_us = 0;
     slot->last_rate_bytes_sent = 0;
+    slot->dropped_rtcm_packets = 0;
+    slot->ringbuffer_high_water = 0;
     slot->last_error[0] = '\0';
     slot->state = NTRIP_RUNTIME_STATE_DISCONNECTED;
     xStreamBufferReset(slot->rtcm_buffer);
@@ -291,14 +397,11 @@ static void ntrip_runtime_slot_task(void *ctx)
                 continue;
             }
 
-            int sock;
-            ntrip_runtime_lock();
-            sock = slot->sock;
-            ntrip_runtime_unlock();
-
-            int written = write(sock, rtcm_buffer, received);
+            int written = ntrip_runtime_slot_write(slot, rtcm_buffer, received);
             if (written < 0) {
-                ntrip_runtime_set_state(slot, NTRIP_RUNTIME_STATE_ERROR, "Socket write failed");
+                if (slot->last_error[0] == '\0') {
+                    ntrip_runtime_set_state(slot, NTRIP_RUNTIME_STATE_ERROR, "Socket write failed");
+                }
                 break;
             }
 
@@ -341,15 +444,73 @@ static void ntrip_runtime_slot_task(void *ctx)
     vTaskDelete(NULL);
 }
 
+static void ntrip_runtime_fake_rtcm_task(void *ctx)
+{
+    (void)ctx;
+    uint32_t sequence = 0;
+    uint8_t packet[NTRIP_FAKE_RTCM_PACKET_MAX];
+
+    esp_task_wdt_add(NULL);
+
+    while (!s_fake_rtcm_stop_requested) {
+        uint32_t packet_size;
+        uint32_t rate_hz;
+
+        ntrip_runtime_lock();
+        packet_size = s_fake_rtcm_packet_size;
+        rate_hz = s_fake_rtcm_rate_hz;
+        ntrip_runtime_unlock();
+
+        if (packet_size < NTRIP_FAKE_RTCM_PACKET_MIN) {
+            packet_size = NTRIP_FAKE_RTCM_PACKET_MIN;
+        } else if (packet_size > NTRIP_FAKE_RTCM_PACKET_MAX) {
+            packet_size = NTRIP_FAKE_RTCM_PACKET_MAX;
+        }
+
+        uint16_t payload_length = (uint16_t)(packet_size - 6);
+        packet[0] = 0xD3;
+        packet[1] = (uint8_t)((payload_length >> 8) & 0x03);
+        packet[2] = (uint8_t)(payload_length & 0xFF);
+        for (uint32_t i = 3; i < packet_size - 3; i++) {
+            packet[i] = (uint8_t)((sequence + i) & 0xFF);
+        }
+        packet[packet_size - 3] = (uint8_t)(sequence & 0xFF);
+        packet[packet_size - 2] = (uint8_t)((sequence >> 8) & 0xFF);
+        packet[packet_size - 1] = (uint8_t)((sequence >> 16) & 0xFF);
+        sequence++;
+
+        ntrip_runtime_fanout_rtcm(packet, packet_size);
+        esp_task_wdt_reset();
+
+        uint32_t interval_ms = rate_hz > 0 ? 1000 / rate_hz : (1000 / NTRIP_FAKE_RTCM_RATE_HZ_DEFAULT);
+        if (interval_ms == 0) {
+            interval_ms = 1;
+        }
+        vTaskDelay(pdMS_TO_TICKS(interval_ms));
+    }
+
+    ntrip_runtime_lock();
+    s_fake_rtcm_enabled = false;
+    s_fake_rtcm_stop_requested = false;
+    s_fake_rtcm_task = NULL;
+    ntrip_runtime_unlock();
+
+    esp_task_wdt_delete(NULL);
+    vTaskDelete(NULL);
+}
+
 static void ntrip_runtime_supervisor_task(void *ctx)
 {
     (void)ctx;
     esp_task_wdt_add(NULL);
 
+    uint32_t log_tick = 0;
+
     while (true) {
         platform_capabilities_t capabilities;
         bool safe_mode = heap_caps_get_free_size(MALLOC_CAP_8BIT) < (48 * 1024);
         size_t allowed_started = 0;
+        size_t active_slot_count = 0;
 
         capabilities_get(&capabilities);
 
@@ -367,6 +528,7 @@ static void ntrip_runtime_supervisor_task(void *ctx)
             ntrip_runtime_lock();
             ntrip_runtime_slot_t *slot = &s_runtime_slots[i];
             slot->should_run = allow_slot;
+            ntrip_runtime_update_ringbuffer_high_water_locked(slot);
 
             if (!config.enabled) {
                 slot->stop_requested = true;
@@ -390,6 +552,10 @@ static void ntrip_runtime_supervisor_task(void *ctx)
                 );
             }
 
+            if (slot->task_running) {
+                active_slot_count++;
+            }
+
             if (slot->bytes_sent >= slot->last_rate_bytes_sent) {
                 slot->bytes_per_sec = slot->bytes_sent - slot->last_rate_bytes_sent;
             } else {
@@ -403,6 +569,39 @@ static void ntrip_runtime_supervisor_task(void *ctx)
                 slot->uptime_seconds = 0;
             }
             ntrip_runtime_unlock();
+        }
+
+        ntrip_runtime_lock();
+        s_runtime_active_slot_count = (uint32_t)active_slot_count;
+        s_runtime_free_heap_bytes = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+        s_runtime_min_free_heap_bytes = heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
+        s_runtime_safe_mode = safe_mode;
+        ntrip_runtime_unlock();
+
+        log_tick++;
+        if ((log_tick % NTRIP_MONITOR_LOG_INTERVAL_TICKS) == 0) {
+            ESP_LOGI(
+                TAG,
+                "runtime heap free=%" PRIu32 " min=%" PRIu32 " active_slots=%u fake_rtcm=%s",
+                s_runtime_free_heap_bytes,
+                s_runtime_min_free_heap_bytes,
+                (unsigned)s_runtime_active_slot_count,
+                s_fake_rtcm_enabled ? "on" : "off"
+            );
+            for (size_t i = 0; i < NTRIP_SLOT_COUNT; i++) {
+                ntrip_runtime_lock();
+                ntrip_runtime_slot_t *slot = &s_runtime_slots[i];
+                ESP_LOGI(
+                    TAG,
+                    "slot%u state=%s dropped=%" PRIu32 " high_water=%" PRIu32 "B reconnects=%" PRIu32,
+                    (unsigned)i,
+                    ntrip_runtime_state_name(slot->state),
+                    slot->dropped_rtcm_packets,
+                    slot->ringbuffer_high_water,
+                    slot->reconnect_count
+                );
+                ntrip_runtime_unlock();
+            }
         }
 
         esp_task_wdt_reset();
@@ -430,9 +629,7 @@ esp_err_t ntrip_runtime_init(void)
             return ESP_ERR_NO_MEM;
         }
 
-        char *name = NULL;
-        asprintf(&name, "ntrip_rt_%u", (unsigned)i);
-        s_runtime_stats[i] = stream_stats_new(name);
+        s_runtime_stats[i] = stream_stats_new(S_RUNTIME_STREAM_NAMES[i]);
     }
 
     uart_register_read_handler(ntrip_runtime_uart_handler);
@@ -468,6 +665,69 @@ void ntrip_runtime_restart_all(void)
         s_runtime_slots[i].state = NTRIP_RUNTIME_STATE_DISCONNECTED;
     }
     ntrip_runtime_unlock();
+}
+
+esp_err_t ntrip_runtime_fake_rtcm_start(uint32_t rate_hz, uint32_t packet_size)
+{
+    if (!s_runtime_initialized) {
+        ESP_RETURN_ON_ERROR(ntrip_runtime_init(), TAG, "runtime init failed");
+    }
+
+    if (rate_hz == 0) {
+        rate_hz = NTRIP_FAKE_RTCM_RATE_HZ_DEFAULT;
+    }
+    if (packet_size < NTRIP_FAKE_RTCM_PACKET_MIN || packet_size > NTRIP_FAKE_RTCM_PACKET_MAX) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    ntrip_runtime_lock();
+    s_fake_rtcm_rate_hz = rate_hz;
+    s_fake_rtcm_packet_size = packet_size;
+    s_fake_rtcm_stop_requested = false;
+    if (s_fake_rtcm_enabled) {
+        ntrip_runtime_unlock();
+        return ESP_OK;
+    }
+    s_fake_rtcm_enabled = true;
+    ntrip_runtime_unlock();
+
+    if (xTaskCreate(
+            ntrip_runtime_fake_rtcm_task,
+            "ntrip_fake_rtcm",
+            4096,
+            NULL,
+            TASK_PRIORITY_INTERFACE,
+            &s_fake_rtcm_task) != pdPASS) {
+        ntrip_runtime_lock();
+        s_fake_rtcm_enabled = false;
+        s_fake_rtcm_task = NULL;
+        ntrip_runtime_unlock();
+        return ESP_ERR_NO_MEM;
+    }
+
+    return ESP_OK;
+}
+
+void ntrip_runtime_fake_rtcm_stop(void)
+{
+    ntrip_runtime_lock();
+    s_fake_rtcm_stop_requested = true;
+    ntrip_runtime_unlock();
+}
+
+esp_err_t ntrip_runtime_set_mock_mode(size_t slot_index, ntrip_runtime_mock_mode_t mode, uint32_t value)
+{
+    if (slot_index >= NTRIP_SLOT_COUNT) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    ntrip_runtime_lock();
+    s_runtime_slots[slot_index].mock_mode = mode;
+    s_runtime_slots[slot_index].mock_mode_value = value;
+    s_runtime_slots[slot_index].stop_requested = true;
+    destroy_socket(&s_runtime_slots[slot_index].sock);
+    ntrip_runtime_unlock();
+    return ESP_OK;
 }
 
 esp_err_t ntrip_runtime_slot_enable(size_t slot_index, bool enabled, bool persist)
@@ -512,8 +772,12 @@ esp_err_t ntrip_runtime_get_snapshot(size_t slot_index, ntrip_runtime_snapshot_t
     snapshot->uptime_seconds = slot->uptime_seconds;
     snapshot->last_activity_ms = slot->last_activity_ms;
     snapshot->bytes_per_sec = slot->bytes_per_sec;
+    snapshot->dropped_rtcm_packets = slot->dropped_rtcm_packets;
+    snapshot->ringbuffer_high_water = slot->ringbuffer_high_water;
     snapshot->last_connect_time_us = slot->last_connect_time_us;
     snapshot->state = slot->state;
+    snapshot->mock_mode = slot->mock_mode;
+    snapshot->mock_mode_value = slot->mock_mode_value;
     snprintf(snapshot->last_error, sizeof(snapshot->last_error), "%s", slot->last_error);
     ntrip_runtime_unlock();
     return ESP_OK;
@@ -529,6 +793,23 @@ void ntrip_runtime_get_all(ntrip_runtime_snapshot_t *snapshots, size_t count)
     for (size_t i = 0; i < limit; i++) {
         ntrip_runtime_get_snapshot(i, &snapshots[i]);
     }
+}
+
+void ntrip_runtime_get_info(ntrip_runtime_info_t *info)
+{
+    if (info == NULL) {
+        return;
+    }
+
+    ntrip_runtime_lock();
+    info->fake_rtcm_enabled = s_fake_rtcm_enabled;
+    info->safe_mode = s_runtime_safe_mode;
+    info->fake_rtcm_rate_hz = s_fake_rtcm_rate_hz;
+    info->fake_rtcm_packet_size = s_fake_rtcm_packet_size;
+    info->active_slot_count = s_runtime_active_slot_count;
+    info->free_heap_bytes = s_runtime_free_heap_bytes;
+    info->min_free_heap_bytes = s_runtime_min_free_heap_bytes;
+    ntrip_runtime_unlock();
 }
 
 const char *ntrip_runtime_state_name(ntrip_runtime_state_t state)
@@ -550,6 +831,26 @@ const char *ntrip_runtime_state_name(ntrip_runtime_state_t state)
             return "disabled";
         case NTRIP_RUNTIME_STATE_ERROR:
             return "error";
+        default:
+            return "unknown";
+    }
+}
+
+const char *ntrip_runtime_mock_mode_name(ntrip_runtime_mock_mode_t mode)
+{
+    switch (mode) {
+        case NTRIP_RUNTIME_MOCK_NONE:
+            return "none";
+        case NTRIP_RUNTIME_MOCK_CONNECT_OK:
+            return "connect_ok";
+        case NTRIP_RUNTIME_MOCK_AUTH_FAIL:
+            return "auth_fail";
+        case NTRIP_RUNTIME_MOCK_DISCONNECT_AFTER_PACKETS:
+            return "disconnect_after_packets";
+        case NTRIP_RUNTIME_MOCK_SLOW_SOCKET:
+            return "slow_socket";
+        case NTRIP_RUNTIME_MOCK_UNREACHABLE:
+            return "unreachable";
         default:
             return "unknown";
     }

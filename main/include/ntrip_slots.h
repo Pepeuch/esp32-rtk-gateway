@@ -53,8 +53,12 @@ typedef struct ntrip_slot_status {
     uint32_t packets_sent;
     uint32_t uptime_seconds;
     uint32_t last_activity_ms;
+    uint32_t dropped_rtcm_packets;
+    uint32_t ringbuffer_high_water;
     int last_http_code;
     bool stale;
+    char mock_mode[32];
+    uint32_t mock_mode_value;
 } ntrip_slot_status_t;
 
 esp_err_t ntrip_slots_init(void);

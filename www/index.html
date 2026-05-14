@@ -310,6 +310,7 @@
             var wifiStaStatusText = form.find('.wifi-sta-status');
             var capabilitiesSummary = $('.capabilities-summary');
             var ntripSlotsSummary = $('.ntrip-slots-summary');
+            var ntripRuntimeSummary = $('.ntrip-runtime-summary');
             var ntripSlotsEditor = $('#ntrip-slot-editor');
             var ntripSlotsSaveButton = $('#save-ntrip-slots');
 
@@ -356,6 +357,16 @@
                 return [h, m, s].map(v => v < 10 ? '0' + v : '' + v).join(':');
             };
 
+            var renderNtripRuntimeSummary = function(runtime) {
+                if (!runtime || !ntripRuntimeSummary.length) return;
+                ntripRuntimeSummary.empty()
+                    .append($('<span>', {class: 'capability-pill', text: runtime.active_slot_count + ' active slot(s)'}))
+                    .append($('<span>', {class: 'capability-pill', text: humanDataSize(runtime.free_heap_bytes || 0) + ' free heap'}))
+                    .append($('<span>', {class: 'capability-pill', text: humanDataSize(runtime.min_free_heap_bytes || 0) + ' min heap'}))
+                    .append($('<span>', {class: 'capability-pill', text: runtime.fake_rtcm_enabled ? ('Fake RTCM ' + (runtime.fake_rtcm_rate_hz || 0) + 'Hz') : 'Fake RTCM off'}))
+                    .append($('<span>', {class: 'capability-pill', text: runtime.safe_mode ? 'Safe mode' : 'Normal mode'}));
+            };
+
             var updateNtripSlotRuntime = function(slots) {
                 if (!Array.isArray(slots)) return;
 
@@ -374,6 +385,9 @@
                     card.find('.slot-reconnects').text(slot.reconnect_count);
                     card.find('.slot-uptime').text(secondsToShort(slot.uptime_seconds));
                     card.find('.slot-http').text(slot.last_http_code || '-');
+                    card.find('.slot-dropped').text(slot.dropped_rtcm_packets || 0);
+                    card.find('.slot-high-water').text(humanDataSize(slot.ringbuffer_high_water || 0));
+                    card.find('.slot-mock-current').text(slot.mock_mode || 'none');
                     card.find('.slot-error').text(slot.last_error || 'None');
                     card.attr('data-has-password', slot.has_password ? '1' : '0');
                 });
@@ -463,15 +477,38 @@
                         )
                     ));
 
+                    const row4 = $('<div>', {class: 'form-row mb-3'});
+                    row4.append($('<div>', {class: 'col-md-5'}).append(
+                        $('<label>', {text: 'Mock mode'}),
+                        $('<select>', {class: 'form-control slot-mock-mode'})
+                            .append($('<option>', {value: 'none', text: 'none'}))
+                            .append($('<option>', {value: 'connect_ok', text: 'connect_ok'}))
+                            .append($('<option>', {value: 'auth_fail', text: 'auth_fail'}))
+                            .append($('<option>', {value: 'disconnect_after_packets', text: 'disconnect_after_packets'}))
+                            .append($('<option>', {value: 'slow_socket', text: 'slow_socket'}))
+                            .append($('<option>', {value: 'unreachable', text: 'unreachable'}))
+                            .val(slot.mock_mode || 'none')
+                    ));
+                    row4.append($('<div>', {class: 'col-md-3'}).append(
+                        $('<label>', {text: 'Mock value'}),
+                        $('<input>', {type: 'number', class: 'form-control slot-mock-value', value: slot.mock_mode_value || 0, min: 0})
+                    ));
+                    row4.append($('<div>', {class: 'col-md-4 d-flex align-items-end'}).append(
+                        $('<button>', {type: 'button', class: 'btn btn-outline-secondary w-100 slot-apply-mock', text: 'Apply Mock'})
+                    ));
+
                     const meta = $('<div>', {class: 'ntrip-slot-meta'});
                     meta.append($('<div>', {html: 'Bytes sent: <strong class="slot-bytes">' + humanDataSize(slot.bytes_sent) + '</strong>'}));
                     meta.append($('<div>', {html: 'Rate: <strong class="slot-rate">' + humanDataSize(slot.bytes_per_sec || 0) + '/s</strong>'}));
                     meta.append($('<div>', {html: 'Reconnect count: <strong class="slot-reconnects">' + slot.reconnect_count + '</strong>'}));
                     meta.append($('<div>', {html: 'Uptime: <strong class="slot-uptime">' + secondsToShort(slot.uptime_seconds || 0) + '</strong>'}));
                     meta.append($('<div>', {html: 'Last HTTP code: <strong class="slot-http">' + (slot.last_http_code || '-') + '</strong>'}));
+                    meta.append($('<div>', {html: 'Dropped RTCM packets: <strong class="slot-dropped">' + (slot.dropped_rtcm_packets || 0) + '</strong>'}));
+                    meta.append($('<div>', {html: 'Buffer high-water: <strong class="slot-high-water">' + humanDataSize(slot.ringbuffer_high_water || 0) + '</strong>'}));
+                    meta.append($('<div>', {html: 'Mock mode: <strong class="slot-mock-current">' + (slot.mock_mode || 'none') + '</strong>'}));
                     meta.append($('<div>', {html: 'Last error: <strong class="slot-error">' + (slot.last_error || 'None') + '</strong>'}));
 
-                    body.append(row1, row2, row3, meta);
+                    body.append(row1, row2, row3, row4, meta);
                     card.append(body);
                     ntripSlotsEditor.append(card);
                 });
@@ -480,6 +517,7 @@
             var loadNtripSlots = function() {
                 $.getJSON('api/ntrip/runtime').done(function(data) {
                     renderNtripSlots(data);
+                    renderNtripRuntimeSummary(data.runtime);
                 });
             };
 
@@ -487,6 +525,9 @@
                 $.getJSON('api/ntrip/runtime').done(function(data) {
                     if (data && data.slots) {
                         updateNtripSlotRuntime(data.slots);
+                    }
+                    if (data && data.runtime) {
+                        renderNtripRuntimeSummary(data.runtime);
                     }
                 }).always(function() {
                     setTimeout(refreshNtripRuntime, 2500);
@@ -644,6 +685,45 @@
                     button.prop('disabled', false);
                 });
             });
+            $('#fake-rtcm-start').on('click', function() {
+                const button = $(this);
+                button.prop('disabled', true);
+                $.ajax({
+                    url: 'api/dev/fake-rtcm/start',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({
+                        rate_hz: parseInt($('#fake-rtcm-rate').val() || '5', 10),
+                        packet_size: parseInt($('#fake-rtcm-size').val() || '180', 10)
+                    })
+                }).always(function() {
+                    button.prop('disabled', false);
+                });
+            });
+            $('#fake-rtcm-stop').on('click', function() {
+                const button = $(this);
+                button.prop('disabled', true);
+                $.post('api/dev/fake-rtcm/stop').always(function() {
+                    button.prop('disabled', false);
+                });
+            });
+            ntripSlotsEditor.on('click', '.slot-apply-mock', function() {
+                const button = $(this);
+                const card = button.closest('.ntrip-slot-card');
+                button.prop('disabled', true);
+                $.ajax({
+                    url: 'api/dev/ntrip/mock',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({
+                        slot: parseInt(card.attr('data-slot-index'), 10),
+                        mode: card.find('.slot-mock-mode').val(),
+                        value: parseInt(card.find('.slot-mock-value').val() || '0', 10)
+                    })
+                }).always(function() {
+                    button.prop('disabled', false);
+                });
+            });
 
             // WiFi Station networks list
             var wifiNetworksScanButton = form.find('.wifi-networks-scan');
@@ -783,6 +863,23 @@
             </div>
             <div class="card-body">
                 <p class="small text-muted mb-3">This is the new 5-slot persistent NTRIP model with live runtime supervision. Legacy server A/B settings still remain below for backward compatibility and are synchronized to slots 0 and 1.</p>
+                <div class="ntrip-runtime-summary small text-muted mb-3">Loading runtime monitoring...</div>
+                <div class="form-row mb-3">
+                    <div class="col-md-3">
+                        <label>Fake RTCM rate (Hz)</label>
+                        <input type="number" class="form-control" id="fake-rtcm-rate" value="5" min="1" max="100">
+                    </div>
+                    <div class="col-md-3">
+                        <label>Fake RTCM packet size</label>
+                        <input type="number" class="form-control" id="fake-rtcm-size" value="180" min="24" max="512">
+                    </div>
+                    <div class="col-md-3 d-flex align-items-end">
+                        <button type="button" class="btn btn-outline-secondary w-100" id="fake-rtcm-start">Start Fake RTCM</button>
+                    </div>
+                    <div class="col-md-3 d-flex align-items-end">
+                        <button type="button" class="btn btn-outline-secondary w-100" id="fake-rtcm-stop">Stop Fake RTCM</button>
+                    </div>
+                </div>
                 <div id="ntrip-slot-editor"></div>
             </div>
         </div>

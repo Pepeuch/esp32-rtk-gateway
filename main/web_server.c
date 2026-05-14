@@ -275,11 +275,30 @@ static void ntrip_slots_json_fill(cJSON *ntrip)
         cJSON_AddNumberToObject(slot, "reconnect_count", slot_status.reconnect_count);
         cJSON_AddNumberToObject(slot, "uptime_seconds", slot_status.uptime_seconds);
         cJSON_AddNumberToObject(slot, "last_activity_ms", slot_status.last_activity_ms);
+        cJSON_AddNumberToObject(slot, "dropped_rtcm_packets", slot_status.dropped_rtcm_packets);
+        cJSON_AddNumberToObject(slot, "ringbuffer_high_water", slot_status.ringbuffer_high_water);
         cJSON_AddNumberToObject(slot, "last_http_code", slot_status.last_http_code);
         cJSON_AddBoolToObject(slot, "stale", slot_status.stale);
+        cJSON_AddStringToObject(slot, "mock_mode", slot_status.mock_mode);
+        cJSON_AddNumberToObject(slot, "mock_mode_value", slot_status.mock_mode_value);
         cJSON_AddStringToObject(slot, "last_error", slot_status.last_error);
         cJSON_AddStringToObject(slot, "disabled_reason", slot_status.disabled_reason);
     }
+}
+
+static void ntrip_runtime_info_json_fill(cJSON *root)
+{
+    ntrip_runtime_info_t info;
+    ntrip_runtime_get_info(&info);
+
+    cJSON *runtime = cJSON_AddObjectToObject(root, "runtime");
+    cJSON_AddBoolToObject(runtime, "fake_rtcm_enabled", info.fake_rtcm_enabled);
+    cJSON_AddBoolToObject(runtime, "safe_mode", info.safe_mode);
+    cJSON_AddNumberToObject(runtime, "fake_rtcm_rate_hz", info.fake_rtcm_rate_hz);
+    cJSON_AddNumberToObject(runtime, "fake_rtcm_packet_size", info.fake_rtcm_packet_size);
+    cJSON_AddNumberToObject(runtime, "active_slot_count", info.active_slot_count);
+    cJSON_AddNumberToObject(runtime, "free_heap_bytes", info.free_heap_bytes);
+    cJSON_AddNumberToObject(runtime, "min_free_heap_bytes", info.min_free_heap_bytes);
 }
 
 static esp_err_t basic_auth(httpd_req_t *req) {
@@ -872,6 +891,7 @@ static esp_err_t ntrip_runtime_get_handler(httpd_req_t *req)
     cJSON *root = cJSON_CreateObject();
     capabilities_json_fill(cJSON_AddObjectToObject(root, "capabilities"));
     ntrip_slots_json_fill(root);
+    ntrip_runtime_info_json_fill(root);
     return json_response(req, root);
 }
 
@@ -900,6 +920,36 @@ static bool json_bool_value(cJSON *entry, bool default_value)
         return strcmp(entry->valuestring, "1") == 0 || strcasecmp(entry->valuestring, "true") == 0;
     }
     return default_value;
+}
+
+static uint32_t json_u32_value(cJSON *entry, uint32_t default_value)
+{
+    if (entry == NULL) {
+        return default_value;
+    }
+    if (cJSON_IsNumber(entry) && entry->valuedouble >= 0) {
+        return (uint32_t)entry->valuedouble;
+    }
+    if (cJSON_IsString(entry) && entry->valuestring != NULL) {
+        return (uint32_t)strtoul(entry->valuestring, NULL, 10);
+    }
+    return default_value;
+}
+
+static ntrip_runtime_mock_mode_t json_mock_mode_value(cJSON *entry)
+{
+    if (!cJSON_IsString(entry) || entry->valuestring == NULL) {
+        return NTRIP_RUNTIME_MOCK_NONE;
+    }
+
+    if (strcasecmp(entry->valuestring, "none") == 0) return NTRIP_RUNTIME_MOCK_NONE;
+    if (strcasecmp(entry->valuestring, "connect_ok") == 0) return NTRIP_RUNTIME_MOCK_CONNECT_OK;
+    if (strcasecmp(entry->valuestring, "auth_fail") == 0) return NTRIP_RUNTIME_MOCK_AUTH_FAIL;
+    if (strcasecmp(entry->valuestring, "disconnect_after_packets") == 0) return NTRIP_RUNTIME_MOCK_DISCONNECT_AFTER_PACKETS;
+    if (strcasecmp(entry->valuestring, "slow_socket") == 0) return NTRIP_RUNTIME_MOCK_SLOW_SOCKET;
+    if (strcasecmp(entry->valuestring, "unreachable") == 0) return NTRIP_RUNTIME_MOCK_UNREACHABLE;
+
+    return NTRIP_RUNTIME_MOCK_NONE;
 }
 
 static esp_err_t ntrip_post_handler(httpd_req_t *req)
@@ -1013,6 +1063,89 @@ static esp_err_t ntrip_restart_handler(httpd_req_t *req)
     return json_response(req, root);
 }
 
+static esp_err_t fake_rtcm_start_handler(httpd_req_t *req)
+{
+    if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
+
+    uint32_t rate_hz = 5;
+    uint32_t packet_size = 180;
+    char *request_body = NULL;
+    if (req->content_len > 0) {
+        if (request_body_alloc(req, &request_body) != ESP_OK) {
+            return ESP_FAIL;
+        }
+        cJSON *root = cJSON_Parse(request_body);
+        free(request_body);
+        if (root != NULL) {
+            rate_hz = json_u32_value(cJSON_GetObjectItem(root, "rate_hz"), rate_hz);
+            packet_size = json_u32_value(cJSON_GetObjectItem(root, "packet_size"), packet_size);
+            cJSON_Delete(root);
+        }
+    }
+
+    if (ntrip_runtime_fake_rtcm_start(rate_hz, packet_size) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Could not start fake RTCM");
+        return ESP_FAIL;
+    }
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "success", true);
+    cJSON_AddNumberToObject(root, "rate_hz", rate_hz);
+    cJSON_AddNumberToObject(root, "packet_size", packet_size);
+    return json_response(req, root);
+}
+
+static esp_err_t fake_rtcm_stop_handler(httpd_req_t *req)
+{
+    if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
+    ntrip_runtime_fake_rtcm_stop();
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "success", true);
+    return json_response(req, root);
+}
+
+static esp_err_t ntrip_mock_post_handler(httpd_req_t *req)
+{
+    if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
+
+    char *request_body = NULL;
+    if (request_body_alloc(req, &request_body) != ESP_OK) {
+        return ESP_FAIL;
+    }
+
+    cJSON *root = cJSON_Parse(request_body);
+    free(request_body);
+    if (root == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+
+    cJSON *slot = cJSON_GetObjectItem(root, "slot");
+    if (!cJSON_IsNumber(slot) || slot->valueint < 0 || slot->valueint >= NTRIP_SLOT_COUNT) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid slot");
+        return ESP_FAIL;
+    }
+
+    ntrip_runtime_mock_mode_t mode = json_mock_mode_value(cJSON_GetObjectItem(root, "mode"));
+    uint32_t value = json_u32_value(cJSON_GetObjectItem(root, "value"), 0);
+    int slot_index = slot->valueint;
+    cJSON_Delete(root);
+
+    if (ntrip_runtime_set_mock_mode((size_t)slot_index, mode, value) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Could not update mock mode");
+        return ESP_FAIL;
+    }
+
+    cJSON *response = cJSON_CreateObject();
+    cJSON_AddBoolToObject(response, "success", true);
+    cJSON_AddNumberToObject(response, "slot", slot_index);
+    cJSON_AddStringToObject(response, "mode", ntrip_runtime_mock_mode_name(mode));
+    cJSON_AddNumberToObject(response, "value", value);
+    return json_response(req, response);
+}
+
 static esp_err_t ntrip_enable_handler(httpd_req_t *req)
 {
     if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
@@ -1114,6 +1247,9 @@ static httpd_handle_t web_server_start(void)
         register_uri_handler(server, "/api/ntrip/restart", HTTP_POST, ntrip_restart_handler);
         register_uri_handler(server, "/api/ntrip/enable/*", HTTP_POST, ntrip_enable_handler);
         register_uri_handler(server, "/api/ntrip/disable/*", HTTP_POST, ntrip_disable_handler);
+        register_uri_handler(server, "/api/dev/fake-rtcm/start", HTTP_POST, fake_rtcm_start_handler);
+        register_uri_handler(server, "/api/dev/fake-rtcm/stop", HTTP_POST, fake_rtcm_stop_handler);
+        register_uri_handler(server, "/api/dev/ntrip/mock", HTTP_POST, ntrip_mock_post_handler);
 
         register_uri_handler(server, "/log", HTTP_GET, log_get_handler);
         register_uri_handler(server, "/core_dump", HTTP_GET, core_dump_get_handler);
