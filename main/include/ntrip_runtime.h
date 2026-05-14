@@ -41,6 +41,9 @@ typedef struct ntrip_runtime_snapshot {
     uint32_t bytes_per_sec;
     uint32_t dropped_rtcm_packets;
     uint32_t ringbuffer_high_water;
+    uint32_t ringbuffer_capacity;
+    uint32_t ringbuffer_used;
+    uint32_t ringbuffer_free;
     int64_t last_connect_time_us;
     ntrip_runtime_state_t state;
     ntrip_runtime_mock_mode_t mock_mode;
@@ -56,6 +59,13 @@ typedef struct ntrip_runtime_info {
     uint32_t active_slot_count;
     uint32_t free_heap_bytes;
     uint32_t min_free_heap_bytes;
+    uint32_t total_ringbuffer_capacity;
+    uint32_t total_ringbuffer_used;
+    uint32_t total_ringbuffer_high_water;
+    uint32_t total_dropped_rtcm_packets;
+    uint32_t psram_total_bytes;
+    uint32_t psram_free_bytes;
+    uint32_t psram_min_free_bytes;
 } ntrip_runtime_info_t;
 
 typedef enum ntrip_runtime_selftest_state {

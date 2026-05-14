@@ -547,6 +547,9 @@ void ntrip_slots_get_status(size_t slot_index, ntrip_slot_status_t *status)
     status->last_activity_ms = have_runtime ? runtime_snapshot.last_activity_ms : 0;
     status->dropped_rtcm_packets = have_runtime ? runtime_snapshot.dropped_rtcm_packets : 0;
     status->ringbuffer_high_water = have_runtime ? runtime_snapshot.ringbuffer_high_water : 0;
+    status->ringbuffer_capacity = have_runtime ? runtime_snapshot.ringbuffer_capacity : 0;
+    status->ringbuffer_used = have_runtime ? runtime_snapshot.ringbuffer_used : 0;
+    status->ringbuffer_free = have_runtime ? runtime_snapshot.ringbuffer_free : 0;
     status->last_http_code = have_runtime ? runtime_snapshot.last_http_code : 0;
     status->stale = have_runtime ? runtime_snapshot.stale : false;
     status->mock_mode_value = have_runtime ? runtime_snapshot.mock_mode_value : 0;

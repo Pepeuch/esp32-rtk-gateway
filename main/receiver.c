@@ -15,6 +15,7 @@
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "memory_policy.h"
 #include "uart.h"
 
 #define RECEIVER_LINE_BUFFER_SIZE 256
@@ -24,7 +25,8 @@
 #define RECEIVER_COMMAND_QUEUE_LENGTH 12
 #define RECEIVER_COMMAND_MAX_LEN 128
 #define RECEIVER_EXPECT_MAX_LEN 32
-#define RECEIVER_RAW_BUFFER_SIZE 4096
+#define RECEIVER_RAW_BUFFER_SIZE_INTERNAL 4096
+#define RECEIVER_RAW_BUFFER_SIZE_PSRAM 8192
 #define RECEIVER_COMMAND_TIMEOUT_MS 2000
 #define RECEIVER_COMMAND_RETRY_COUNT 1
 #define RECEIVER_UBX_MAX_PAYLOAD 1024
@@ -75,8 +77,10 @@ typedef struct receiver_context {
     int64_t last_message_us;
     int64_t last_rtcm_status_us;
     uint8_t prev_byte;
-    char raw_buffer[RECEIVER_RAW_BUFFER_SIZE];
+    char *raw_buffer;
+    size_t raw_buffer_size;
     size_t raw_length;
+    bool raw_buffer_psram;
     bool command_busy;
     bool expect_matched;
     char expect_token[RECEIVER_EXPECT_MAX_LEN];
@@ -94,6 +98,11 @@ typedef struct receiver_context {
 } receiver_context_t;
 
 static receiver_context_t s_receiver = {0};
+
+static size_t receiver_raw_buffer_target_size(void)
+{
+    return memory_policy_psram_available() ? RECEIVER_RAW_BUFFER_SIZE_PSRAM : RECEIVER_RAW_BUFFER_SIZE_INTERNAL;
+}
 
 static const receiver_profile_descriptor_t s_profiles[] = {
     {RECEIVER_PROFILE_NONE, "none", "None", "Observe only, no active configuration", "unknown"},
@@ -368,7 +377,7 @@ static uint32_t receiver_parse_decimal_centi(const char *text)
 
 static void receiver_raw_append_locked(const char *prefix, const char *text)
 {
-    if (text == NULL) {
+    if (text == NULL || s_receiver.raw_buffer == NULL || s_receiver.raw_buffer_size < 2) {
         return;
     }
 
@@ -383,16 +392,19 @@ static void receiver_raw_append_locked(const char *prefix, const char *text)
         line_len = sizeof(line) - 1;
     }
 
-    if (line_len >= sizeof(s_receiver.raw_buffer)) {
-        memcpy(s_receiver.raw_buffer, line + (line_len - sizeof(s_receiver.raw_buffer) + 1), sizeof(s_receiver.raw_buffer) - 1);
-        s_receiver.raw_length = sizeof(s_receiver.raw_buffer) - 1;
+    if (line_len >= s_receiver.raw_buffer_size) {
+        memcpy(s_receiver.raw_buffer,
+               line + (line_len - s_receiver.raw_buffer_size + 1),
+               s_receiver.raw_buffer_size - 1);
+        s_receiver.raw_length = s_receiver.raw_buffer_size - 1;
         s_receiver.raw_buffer[s_receiver.raw_length] = '\0';
+        s_receiver.status.raw_buffer_used = (uint32_t)s_receiver.raw_length;
         return;
     }
 
     size_t required = s_receiver.raw_length + line_len;
-    if (required >= sizeof(s_receiver.raw_buffer)) {
-        size_t drop = required - sizeof(s_receiver.raw_buffer) + 1;
+    if (required >= s_receiver.raw_buffer_size) {
+        size_t drop = required - s_receiver.raw_buffer_size + 1;
         if (drop > s_receiver.raw_length) {
             drop = s_receiver.raw_length;
         }
@@ -403,6 +415,7 @@ static void receiver_raw_append_locked(const char *prefix, const char *text)
     memcpy(s_receiver.raw_buffer + s_receiver.raw_length, line, line_len);
     s_receiver.raw_length += line_len;
     s_receiver.raw_buffer[s_receiver.raw_length] = '\0';
+    s_receiver.status.raw_buffer_used = (uint32_t)s_receiver.raw_length;
 }
 
 static void receiver_set_type_locked(receiver_type_t type)
@@ -1504,9 +1517,25 @@ esp_err_t receiver_init(void)
         return ESP_ERR_NO_MEM;
     }
 
+    bool raw_buffer_psram = false;
+    size_t raw_buffer_size = receiver_raw_buffer_target_size();
+    char *raw_buffer = memory_policy_alloc(raw_buffer_size, MEMORY_BUFFER_CLASS_LARGE, true, true, &raw_buffer_psram);
+    if (raw_buffer == NULL && raw_buffer_size != RECEIVER_RAW_BUFFER_SIZE_INTERNAL) {
+        raw_buffer_size = RECEIVER_RAW_BUFFER_SIZE_INTERNAL;
+        raw_buffer = memory_policy_alloc(raw_buffer_size, MEMORY_BUFFER_CLASS_LARGE, false, true, &raw_buffer_psram);
+    }
+    if (raw_buffer == NULL) {
+        raw_buffer_size = 0;
+        ESP_LOGW(TAG, "GNSS raw console buffer unavailable, continuing without raw console history");
+    }
+
     receiver_lock();
     memset(&s_receiver.status, 0, sizeof(s_receiver.status));
     memset(s_receiver.satellites, 0, sizeof(s_receiver.satellites));
+    s_receiver.raw_buffer = raw_buffer;
+    s_receiver.raw_buffer_size = raw_buffer_size;
+    s_receiver.raw_length = 0;
+    s_receiver.raw_buffer_psram = raw_buffer_psram;
     s_receiver.configured_type = receiver_configured_type();
     s_receiver.detected_type = RECEIVER_TYPE_UNKNOWN;
     s_receiver.configured_mode = receiver_configured_mode();
@@ -1529,6 +1558,9 @@ esp_err_t receiver_init(void)
     snprintf(s_receiver.status.jamming_status, sizeof(s_receiver.status.jamming_status), "%s", "unknown");
     snprintf(s_receiver.status.hardware_status, sizeof(s_receiver.status.hardware_status), "%s", "unknown");
     snprintf(s_receiver.status.last_command_status, sizeof(s_receiver.status.last_command_status), "%s", "idle");
+    s_receiver.status.raw_buffer_size = (uint32_t)s_receiver.raw_buffer_size;
+    s_receiver.status.raw_buffer_used = 0;
+    s_receiver.status.raw_buffer_psram = s_receiver.raw_buffer_psram;
     s_receiver.initialized = true;
     receiver_unlock();
 
@@ -1657,6 +1689,9 @@ esp_err_t receiver_get_diagnostics(receiver_diagnostics_t *diagnostics)
     diagnostics->rel_length_mm = s_receiver.status.rel_length_mm;
     diagnostics->rel_heading_e5 = s_receiver.status.rel_heading_e5;
     diagnostics->rel_accuracy_mm = s_receiver.status.rel_accuracy_mm;
+    diagnostics->raw_buffer_size = s_receiver.status.raw_buffer_size;
+    diagnostics->raw_buffer_used = s_receiver.status.raw_buffer_used;
+    diagnostics->raw_buffer_psram = s_receiver.status.raw_buffer_psram;
 
     uint32_t constellation_cn0_samples[RECEIVER_CONSTELLATION_COUNT] = {0};
     for (size_t i = 0; i < RECEIVER_MAX_SATELLITES; i++) {
@@ -1696,6 +1731,14 @@ esp_err_t receiver_get_raw_output(char *buffer, size_t buffer_size, size_t *out_
 
     receiver_lock();
     size_t length = s_receiver.raw_length;
+    if (s_receiver.raw_buffer == NULL || s_receiver.raw_buffer_size == 0) {
+        buffer[0] = '\0';
+        if (out_length != NULL) {
+            *out_length = 0;
+        }
+        receiver_unlock();
+        return ESP_OK;
+    }
     if (length >= buffer_size) {
         length = buffer_size - 1;
     }

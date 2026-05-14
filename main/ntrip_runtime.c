@@ -8,7 +8,6 @@
 
 #include "capabilities.h"
 #include "esp_check.h"
-#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "esp_random.h"
@@ -19,6 +18,7 @@
 #include "freertos/stream_buffer.h"
 #include "freertos/task.h"
 #include "interface/ntrip.h"
+#include "memory_policy.h"
 #include "network.h"
 #include "stream_stats.h"
 #include "tasks.h"
@@ -79,6 +79,9 @@ static uint32_t s_fake_rtcm_rate_hz = 0;
 static uint32_t s_fake_rtcm_packet_size = 0;
 static uint32_t s_runtime_free_heap_bytes = 0;
 static uint32_t s_runtime_min_free_heap_bytes = 0;
+static uint32_t s_runtime_psram_total_bytes = 0;
+static uint32_t s_runtime_psram_free_bytes = 0;
+static uint32_t s_runtime_psram_min_free_bytes = 0;
 static uint32_t s_runtime_active_slot_count = 0;
 static bool s_runtime_safe_mode = false;
 static ntrip_runtime_slot_t s_runtime_slots[NTRIP_SLOT_COUNT];
@@ -168,6 +171,34 @@ static void ntrip_runtime_update_ringbuffer_high_water_locked(ntrip_runtime_slot
     uint32_t used_bytes = (uint32_t)(NTRIP_RTCM_BUFFER_SIZE - free_bytes);
     if (used_bytes > slot->ringbuffer_high_water) {
         slot->ringbuffer_high_water = used_bytes;
+    }
+}
+
+static uint32_t ntrip_runtime_ringbuffer_capacity_bytes(const ntrip_runtime_slot_t *slot)
+{
+    (void)slot;
+    return NTRIP_RTCM_BUFFER_SIZE;
+}
+
+static void ntrip_runtime_ringbuffer_usage_locked(const ntrip_runtime_slot_t *slot, uint32_t *out_used, uint32_t *out_free)
+{
+    if (out_used != NULL) {
+        *out_used = 0;
+    }
+    if (out_free != NULL) {
+        *out_free = 0;
+    }
+
+    if (slot == NULL || slot->rtcm_buffer == NULL) {
+        return;
+    }
+
+    uint32_t free_bytes = (uint32_t)xStreamBufferSpacesAvailable(slot->rtcm_buffer);
+    if (out_free != NULL) {
+        *out_free = free_bytes;
+    }
+    if (out_used != NULL) {
+        *out_used = ntrip_runtime_ringbuffer_capacity_bytes(slot) - free_bytes;
     }
 }
 
@@ -861,7 +892,9 @@ static void ntrip_runtime_supervisor_task(void *ctx)
 
     while (true) {
         platform_capabilities_t capabilities;
-        bool safe_mode = heap_caps_get_free_size(MALLOC_CAP_8BIT) < (48 * 1024);
+        memory_stats_t memory = {0};
+        memory_policy_get_stats(&memory);
+        bool safe_mode = memory.heap_free_bytes < (48 * 1024);
         size_t allowed_started = 0;
         size_t active_slot_count = 0;
 
@@ -926,8 +959,11 @@ static void ntrip_runtime_supervisor_task(void *ctx)
 
         ntrip_runtime_lock();
         s_runtime_active_slot_count = (uint32_t)active_slot_count;
-        s_runtime_free_heap_bytes = heap_caps_get_free_size(MALLOC_CAP_8BIT);
-        s_runtime_min_free_heap_bytes = heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
+        s_runtime_free_heap_bytes = (uint32_t)memory.heap_free_bytes;
+        s_runtime_min_free_heap_bytes = (uint32_t)memory.heap_min_free_bytes;
+        s_runtime_psram_total_bytes = (uint32_t)memory.psram_total_bytes;
+        s_runtime_psram_free_bytes = (uint32_t)memory.psram_free_bytes;
+        s_runtime_psram_min_free_bytes = (uint32_t)memory.psram_min_free_bytes;
         s_runtime_safe_mode = safe_mode;
         ntrip_runtime_unlock();
 
@@ -1121,6 +1157,9 @@ esp_err_t ntrip_runtime_get_snapshot(size_t slot_index, ntrip_runtime_snapshot_t
 
     ntrip_runtime_lock();
     ntrip_runtime_slot_t *slot = &s_runtime_slots[slot_index];
+    uint32_t ringbuffer_used = 0;
+    uint32_t ringbuffer_free = 0;
+    ntrip_runtime_ringbuffer_usage_locked(slot, &ringbuffer_used, &ringbuffer_free);
     snapshot->task_running = slot->task_running;
     snapshot->stop_requested = slot->stop_requested;
     snapshot->stale = slot->stale;
@@ -1133,6 +1172,9 @@ esp_err_t ntrip_runtime_get_snapshot(size_t slot_index, ntrip_runtime_snapshot_t
     snapshot->bytes_per_sec = slot->bytes_per_sec;
     snapshot->dropped_rtcm_packets = slot->dropped_rtcm_packets;
     snapshot->ringbuffer_high_water = slot->ringbuffer_high_water;
+    snapshot->ringbuffer_capacity = ntrip_runtime_ringbuffer_capacity_bytes(slot);
+    snapshot->ringbuffer_used = ringbuffer_used;
+    snapshot->ringbuffer_free = ringbuffer_free;
     snapshot->last_connect_time_us = slot->last_connect_time_us;
     snapshot->state = slot->state;
     snapshot->mock_mode = slot->mock_mode;
@@ -1161,6 +1203,19 @@ void ntrip_runtime_get_info(ntrip_runtime_info_t *info)
     }
 
     ntrip_runtime_lock();
+    uint32_t total_ringbuffer_capacity = 0;
+    uint32_t total_ringbuffer_used = 0;
+    uint32_t total_ringbuffer_high_water = 0;
+    uint32_t total_dropped_rtcm_packets = 0;
+    for (size_t i = 0; i < NTRIP_SLOT_COUNT; i++) {
+        uint32_t ringbuffer_used = 0;
+        uint32_t ringbuffer_free = 0;
+        ntrip_runtime_ringbuffer_usage_locked(&s_runtime_slots[i], &ringbuffer_used, &ringbuffer_free);
+        total_ringbuffer_capacity += ntrip_runtime_ringbuffer_capacity_bytes(&s_runtime_slots[i]);
+        total_ringbuffer_used += ringbuffer_used;
+        total_ringbuffer_high_water += s_runtime_slots[i].ringbuffer_high_water;
+        total_dropped_rtcm_packets += s_runtime_slots[i].dropped_rtcm_packets;
+    }
     info->fake_rtcm_enabled = s_fake_rtcm_enabled;
     info->safe_mode = s_runtime_safe_mode;
     info->fake_rtcm_rate_hz = s_fake_rtcm_rate_hz;
@@ -1168,6 +1223,13 @@ void ntrip_runtime_get_info(ntrip_runtime_info_t *info)
     info->active_slot_count = s_runtime_active_slot_count;
     info->free_heap_bytes = s_runtime_free_heap_bytes;
     info->min_free_heap_bytes = s_runtime_min_free_heap_bytes;
+    info->total_ringbuffer_capacity = total_ringbuffer_capacity;
+    info->total_ringbuffer_used = total_ringbuffer_used;
+    info->total_ringbuffer_high_water = total_ringbuffer_high_water;
+    info->total_dropped_rtcm_packets = total_dropped_rtcm_packets;
+    info->psram_total_bytes = s_runtime_psram_total_bytes;
+    info->psram_free_bytes = s_runtime_psram_free_bytes;
+    info->psram_min_free_bytes = s_runtime_psram_min_free_bytes;
     ntrip_runtime_unlock();
 }
 

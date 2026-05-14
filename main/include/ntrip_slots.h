@@ -55,6 +55,9 @@ typedef struct ntrip_slot_status {
     uint32_t last_activity_ms;
     uint32_t dropped_rtcm_packets;
     uint32_t ringbuffer_high_water;
+    uint32_t ringbuffer_capacity;
+    uint32_t ringbuffer_used;
+    uint32_t ringbuffer_free;
     int last_http_code;
     bool stale;
     char mock_mode[32];

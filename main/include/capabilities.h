@@ -17,6 +17,12 @@ typedef struct platform_capabilities {
     bool safe_mode;
     size_t max_ntrip_slots;
     size_t configured_ntrip_slots;
+    size_t heap_total_bytes;
+    size_t heap_free_bytes;
+    size_t heap_min_free_bytes;
+    size_t psram_total_bytes;
+    size_t psram_free_bytes;
+    size_t psram_min_free_bytes;
 } platform_capabilities_t;
 
 void capabilities_get(platform_capabilities_t *capabilities);

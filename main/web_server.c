@@ -38,6 +38,7 @@
 #include "esp_task_wdt.h"
 #include "captive_portal.h"
 #include "capabilities.h"
+#include "memory_policy.h"
 #include "ntrip_runtime.h"
 #include "ntrip_slots.h"
 #include "receiver.h"
@@ -75,6 +76,8 @@ static bool json_bool_value(cJSON *entry, bool default_value);
 static uint32_t json_u32_value(cJSON *entry, uint32_t default_value);
 static int32_t json_i32_value(cJSON *entry, int32_t default_value);
 static int32_t json_scaled_e7_value(cJSON *entry, int32_t default_value);
+static void memory_json_fill(cJSON *root);
+static void buffer_summary_json_fill(cJSON *root);
 
 enum auth_method {
     AUTH_METHOD_OPEN = 0,
@@ -285,6 +288,60 @@ static void capabilities_json_fill(cJSON *cap)
     cJSON_AddBoolToObject(cap, "safe_mode", capabilities.safe_mode);
     cJSON_AddNumberToObject(cap, "max_ntrip_slots", capabilities.max_ntrip_slots);
     cJSON_AddNumberToObject(cap, "configured_ntrip_slots", capabilities.configured_ntrip_slots);
+
+    cJSON *memory = cJSON_AddObjectToObject(cap, "memory");
+    cJSON_AddNumberToObject(memory, "heap_total_bytes", capabilities.heap_total_bytes);
+    cJSON_AddNumberToObject(memory, "heap_free_bytes", capabilities.heap_free_bytes);
+    cJSON_AddNumberToObject(memory, "heap_min_free_bytes", capabilities.heap_min_free_bytes);
+    cJSON_AddNumberToObject(memory, "psram_total_bytes", capabilities.psram_total_bytes);
+    cJSON_AddNumberToObject(memory, "psram_free_bytes", capabilities.psram_free_bytes);
+    cJSON_AddNumberToObject(memory, "psram_min_free_bytes", capabilities.psram_min_free_bytes);
+}
+
+static void memory_json_fill(cJSON *root)
+{
+    if (root == NULL) {
+        return;
+    }
+
+    memory_stats_t stats = {0};
+    memory_policy_get_stats(&stats);
+
+    cJSON *heap = cJSON_AddObjectToObject(root, "heap");
+    cJSON_AddNumberToObject(heap, "total", stats.heap_total_bytes);
+    cJSON_AddNumberToObject(heap, "free", stats.heap_free_bytes);
+    cJSON_AddNumberToObject(heap, "min_free", stats.heap_min_free_bytes);
+
+    cJSON *psram = cJSON_AddObjectToObject(root, "psram");
+    cJSON_AddBoolToObject(psram, "available", stats.psram_available);
+    cJSON_AddNumberToObject(psram, "total", stats.psram_total_bytes);
+    cJSON_AddNumberToObject(psram, "free", stats.psram_free_bytes);
+    cJSON_AddNumberToObject(psram, "min_free", stats.psram_min_free_bytes);
+}
+
+static void buffer_summary_json_fill(cJSON *root)
+{
+    if (root == NULL) {
+        return;
+    }
+
+    receiver_status_t receiver_status;
+    ntrip_runtime_info_t ntrip_info;
+    bool have_receiver = receiver_get_status(&receiver_status) == ESP_OK;
+    ntrip_runtime_get_info(&ntrip_info);
+
+    cJSON *buffers = cJSON_AddObjectToObject(root, "buffers");
+
+    cJSON *gnss_raw = cJSON_AddObjectToObject(buffers, "gnss_raw");
+    cJSON_AddNumberToObject(gnss_raw, "size", have_receiver ? receiver_status.raw_buffer_size : 0);
+    cJSON_AddNumberToObject(gnss_raw, "used", have_receiver ? receiver_status.raw_buffer_used : 0);
+    cJSON_AddBoolToObject(gnss_raw, "psram", have_receiver ? receiver_status.raw_buffer_psram : false);
+
+    cJSON *ntrip = cJSON_AddObjectToObject(buffers, "ntrip");
+    cJSON_AddNumberToObject(ntrip, "ringbuffer_capacity", ntrip_info.total_ringbuffer_capacity);
+    cJSON_AddNumberToObject(ntrip, "ringbuffer_used", ntrip_info.total_ringbuffer_used);
+    cJSON_AddNumberToObject(ntrip, "ringbuffer_high_water", ntrip_info.total_ringbuffer_high_water);
+    cJSON_AddNumberToObject(ntrip, "dropped_rtcm_packets", ntrip_info.total_dropped_rtcm_packets);
 }
 
 static void ntrip_slots_json_fill(cJSON *ntrip)
@@ -326,6 +383,9 @@ static void ntrip_slots_json_fill(cJSON *ntrip)
         cJSON_AddNumberToObject(slot, "last_activity_ms", slot_status.last_activity_ms);
         cJSON_AddNumberToObject(slot, "dropped_rtcm_packets", slot_status.dropped_rtcm_packets);
         cJSON_AddNumberToObject(slot, "ringbuffer_high_water", slot_status.ringbuffer_high_water);
+        cJSON_AddNumberToObject(slot, "ringbuffer_capacity", slot_status.ringbuffer_capacity);
+        cJSON_AddNumberToObject(slot, "ringbuffer_used", slot_status.ringbuffer_used);
+        cJSON_AddNumberToObject(slot, "ringbuffer_free", slot_status.ringbuffer_free);
         cJSON_AddNumberToObject(slot, "last_http_code", slot_status.last_http_code);
         cJSON_AddBoolToObject(slot, "stale", slot_status.stale);
         cJSON_AddStringToObject(slot, "mock_mode", slot_status.mock_mode);
@@ -348,6 +408,13 @@ static void ntrip_runtime_info_json_fill(cJSON *root)
     cJSON_AddNumberToObject(runtime, "active_slot_count", info.active_slot_count);
     cJSON_AddNumberToObject(runtime, "free_heap_bytes", info.free_heap_bytes);
     cJSON_AddNumberToObject(runtime, "min_free_heap_bytes", info.min_free_heap_bytes);
+    cJSON_AddNumberToObject(runtime, "psram_total_bytes", info.psram_total_bytes);
+    cJSON_AddNumberToObject(runtime, "psram_free_bytes", info.psram_free_bytes);
+    cJSON_AddNumberToObject(runtime, "psram_min_free_bytes", info.psram_min_free_bytes);
+    cJSON_AddNumberToObject(runtime, "total_ringbuffer_capacity", info.total_ringbuffer_capacity);
+    cJSON_AddNumberToObject(runtime, "total_ringbuffer_used", info.total_ringbuffer_used);
+    cJSON_AddNumberToObject(runtime, "total_ringbuffer_high_water", info.total_ringbuffer_high_water);
+    cJSON_AddNumberToObject(runtime, "total_dropped_rtcm_packets", info.total_dropped_rtcm_packets);
 }
 
 static void ntrip_runtime_selftest_json_fill(cJSON *root, const ntrip_runtime_selftest_result_t *result)
@@ -446,6 +513,9 @@ static void gnss_status_json_fill(cJSON *root)
     cJSON_AddBoolToObject(root, "command_busy", status.command_busy);
     cJSON_AddBoolToObject(root, "profile_pending", status.profile_pending);
     cJSON_AddStringToObject(root, "last_command_status", status.last_command_status);
+    cJSON_AddNumberToObject(root, "raw_buffer_size", status.raw_buffer_size);
+    cJSON_AddNumberToObject(root, "raw_buffer_used", status.raw_buffer_used);
+    cJSON_AddBoolToObject(root, "raw_buffer_psram", status.raw_buffer_psram);
 }
 
 static void gnss_capabilities_json_fill(cJSON *root)
@@ -519,18 +589,25 @@ static void gnss_profiles_json_fill(cJSON *root)
 
 static void gnss_raw_json_fill(cJSON *root)
 {
-    char *buffer = calloc(1, 4096);
-    size_t length = 0;
     receiver_status_t status;
 
+    if (receiver_get_status(&status) != ESP_OK) {
+        cJSON_AddBoolToObject(root, "success", false);
+        cJSON_AddStringToObject(root, "error", "receiver_status_unavailable");
+        return;
+    }
+
+    size_t raw_capacity = status.raw_buffer_size > 0 ? (size_t)status.raw_buffer_size + 1 : 1;
+    char *buffer = memory_policy_alloc(raw_capacity, MEMORY_BUFFER_CLASS_LARGE, true, true, NULL);
+    size_t length = 0;
     if (buffer == NULL) {
         cJSON_AddBoolToObject(root, "success", false);
         cJSON_AddStringToObject(root, "error", "out_of_memory");
         return;
     }
 
-    if (receiver_get_status(&status) != ESP_OK || receiver_get_raw_output(buffer, 4096, &length) != ESP_OK) {
-        free(buffer);
+    if (receiver_get_raw_output(buffer, raw_capacity, &length) != ESP_OK) {
+        memory_policy_free(buffer);
         cJSON_AddBoolToObject(root, "success", false);
         cJSON_AddStringToObject(root, "error", "receiver_raw_unavailable");
         return;
@@ -543,9 +620,12 @@ static void gnss_raw_json_fill(cJSON *root)
     cJSON_AddBoolToObject(root, "command_busy", status.command_busy);
     cJSON_AddNumberToObject(root, "command_queue_depth", status.command_queue_depth);
     cJSON_AddStringToObject(root, "last_command_status", status.last_command_status);
+    cJSON_AddNumberToObject(root, "raw_buffer_size", status.raw_buffer_size);
+    cJSON_AddNumberToObject(root, "raw_buffer_used", status.raw_buffer_used);
+    cJSON_AddBoolToObject(root, "raw_buffer_psram", status.raw_buffer_psram);
     cJSON_AddStringToObject(root, "raw", buffer);
     cJSON_AddNumberToObject(root, "raw_length", length);
-    free(buffer);
+    memory_policy_free(buffer);
 }
 
 static const char *gnss_rtcm_state_string(bool rtcm_alive, bool rtcm_stale)
@@ -1226,10 +1306,8 @@ static esp_err_t status_get_handler(httpd_req_t *req) {
     // Uptime
     cJSON_AddNumberToObject(root, "uptime", (int) ((double) esp_timer_get_time() / 1000000));
 
-    // Heap
-    cJSON *heap = cJSON_AddObjectToObject(root, "heap");
-    cJSON_AddNumberToObject(heap, "total", heap_caps_get_total_size(MALLOC_CAP_8BIT));
-    cJSON_AddNumberToObject(heap, "free", heap_caps_get_free_size(MALLOC_CAP_8BIT));
+    // Memory
+    memory_json_fill(root);
 
     // Streams
     cJSON *streams = cJSON_AddObjectToObject(root, "streams");
@@ -1315,6 +1393,7 @@ static esp_err_t status_get_handler(httpd_req_t *req) {
     capabilities_json_fill(cJSON_AddObjectToObject(root, "capabilities"));
     ntrip_slots_json_fill(cJSON_AddObjectToObject(root, "ntrip"));
     gnss_status_json_fill(cJSON_AddObjectToObject(root, "gnss"));
+    buffer_summary_json_fill(root);
 
     return json_response(req, root);
 }
@@ -2126,7 +2205,12 @@ static httpd_handle_t web_server_start(void)
         return NULL;
     }
 
-    buffer = malloc(BUFFER_SIZE);
+    buffer = memory_policy_alloc(BUFFER_SIZE, MEMORY_BUFFER_CLASS_CRITICAL, false, false, NULL);
+    if (buffer == NULL) {
+        ESP_LOGE(TAG, "Could not allocate HTTP working buffer");
+        httpd_stop(server);
+        return NULL;
+    }
 
     return server;
 }

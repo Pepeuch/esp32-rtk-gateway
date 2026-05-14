@@ -91,6 +91,9 @@ typedef struct receiver_status {
     int32_t rel_length_mm;
     int32_t rel_heading_e5;
     uint32_t rel_accuracy_mm;
+    uint32_t raw_buffer_size;
+    uint32_t raw_buffer_used;
+    bool raw_buffer_psram;
 } receiver_status_t;
 
 typedef struct receiver_satellite {
@@ -137,6 +140,9 @@ typedef struct receiver_diagnostics {
     int32_t rel_length_mm;
     int32_t rel_heading_e5;
     uint32_t rel_accuracy_mm;
+    uint32_t raw_buffer_size;
+    uint32_t raw_buffer_used;
+    bool raw_buffer_psram;
 } receiver_diagnostics_t;
 
 typedef struct receiver_base_status {
