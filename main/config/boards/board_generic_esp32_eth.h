@@ -1,0 +1,25 @@
+#pragma once
+
+#include "../board_caps.h"
+
+#define BOARD_NAME "Generic ESP32 ETH"
+
+#define DEFAULT_DEBUG_UART_NUM     UART_NUM_0
+#define DEFAULT_DEBUG_UART_TX_PIN  GPIO_NUM_1
+#define DEFAULT_DEBUG_UART_RX_PIN  GPIO_NUM_3
+#define DEFAULT_DEBUG_UART_RTS_PIN GPIO_NUM_NC
+#define DEFAULT_DEBUG_UART_CTS_PIN GPIO_NUM_NC
+
+#define BOARD_ETH_MDC              GPIO_NUM_23
+#define BOARD_ETH_MDIO             GPIO_NUM_18
+#define BOARD_ETH_PHY_ADDR         1
+#define BOARD_ETH_PHY_POWER        GPIO_NUM_NC
+#define BOARD_ETH_RMII_CLK         GPIO_NUM_0
+
+#define BOARD_HAS_ETHERNET   1
+#define BOARD_HAS_WIFI       1
+#define BOARD_HAS_BLUETOOTH  1
+#define BOARD_HAS_SD         0
+#define BOARD_HAS_LORA_UART  0
+#define BOARD_HAS_GNSS_UART  0
+#define BOARD_ETHERNET_TYPE  BOARD_ETHERNET_TYPE_LAN8720

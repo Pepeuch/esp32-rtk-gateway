@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "config/board_config.h"
 #include "esp_heap_caps.h"
 #include "network.h"
 
@@ -27,19 +28,17 @@ void capabilities_get(platform_capabilities_t *capabilities)
 
     memset(capabilities, 0, sizeof(*capabilities));
 
+    snprintf(capabilities->chip_family, sizeof(capabilities->chip_family), "%s", TARGET_NAME);
+
 #if CONFIG_IDF_TARGET_ESP32S3
-    snprintf(capabilities->chip_family, sizeof(capabilities->chip_family), "ESP32-S3");
     capabilities->is_esp32s3 = true;
 #elif CONFIG_IDF_TARGET_ESP32
-    snprintf(capabilities->chip_family, sizeof(capabilities->chip_family), "ESP32");
     capabilities->is_esp32 = true;
-#else
-    snprintf(capabilities->chip_family, sizeof(capabilities->chip_family), "UNKNOWN");
 #endif
 
     capabilities->psram_available = heap_caps_get_total_size(MALLOC_CAP_SPIRAM) > 0;
-    capabilities->ethernet_supported = true;
-    capabilities->ethernet_active = network_is_ethernet_ready();
+    capabilities->ethernet_supported = BOARD_SUPPORTS_ETHERNET;
+    capabilities->ethernet_active = capabilities->ethernet_supported && network_is_ethernet_ready();
     capabilities->wifi_only = !capabilities->ethernet_active;
     capabilities->advanced_diagnostics = capabilities->ethernet_active && capabilities->psram_available;
     capabilities->configured_ntrip_slots = 5;
