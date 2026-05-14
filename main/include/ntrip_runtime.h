@@ -58,6 +58,43 @@ typedef struct ntrip_runtime_info {
     uint32_t min_free_heap_bytes;
 } ntrip_runtime_info_t;
 
+typedef enum ntrip_runtime_selftest_state {
+    NTRIP_SELFTEST_IDLE = 0,
+    NTRIP_SELFTEST_RUNNING,
+    NTRIP_SELFTEST_DONE,
+    NTRIP_SELFTEST_FAILED,
+} ntrip_runtime_selftest_state_t;
+
+typedef struct ntrip_runtime_selftest_slot_result {
+    size_t slot_index;
+    uint32_t bytes_sent;
+    uint32_t reconnect_count;
+    uint32_t dropped_packets;
+    char state[32];
+    char last_error[96];
+} ntrip_runtime_selftest_slot_result_t;
+
+typedef struct ntrip_runtime_selftest_scenario_result {
+    char name[48];
+    bool pass;
+    uint32_t duration_ms;
+    uint32_t heap_min_bytes;
+    uint32_t active_slot_count;
+    size_t slot_count;
+    ntrip_runtime_selftest_slot_result_t slots[NTRIP_SLOT_COUNT];
+} ntrip_runtime_selftest_scenario_result_t;
+
+typedef struct ntrip_runtime_selftest_result {
+    ntrip_runtime_selftest_state_t state;
+    bool completed;
+    bool pass;
+    uint32_t scenario_count;
+    uint32_t completed_scenarios;
+    uint32_t duration_ms;
+    char last_error[128];
+    ntrip_runtime_selftest_scenario_result_t scenarios[8];
+} ntrip_runtime_selftest_result_t;
+
 esp_err_t ntrip_runtime_init(void);
 void ntrip_runtime_start(void);
 void ntrip_runtime_restart_all(void);
@@ -68,7 +105,10 @@ void ntrip_runtime_get_info(ntrip_runtime_info_t *info);
 esp_err_t ntrip_runtime_fake_rtcm_start(uint32_t rate_hz, uint32_t packet_size);
 void ntrip_runtime_fake_rtcm_stop(void);
 esp_err_t ntrip_runtime_set_mock_mode(size_t slot_index, ntrip_runtime_mock_mode_t mode, uint32_t value);
+esp_err_t ntrip_runtime_selftest_start(void);
+void ntrip_runtime_selftest_get_result(ntrip_runtime_selftest_result_t *result);
 const char *ntrip_runtime_state_name(ntrip_runtime_state_t state);
 const char *ntrip_runtime_mock_mode_name(ntrip_runtime_mock_mode_t mode);
+const char *ntrip_runtime_selftest_state_name(ntrip_runtime_selftest_state_t state);
 
 #endif // ESP32_XBEE_NTRIP_RUNTIME_H

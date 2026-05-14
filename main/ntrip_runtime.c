@@ -68,6 +68,7 @@ typedef struct ntrip_runtime_slot {
 static SemaphoreHandle_t s_runtime_mutex = NULL;
 static TaskHandle_t s_supervisor_task = NULL;
 static TaskHandle_t s_fake_rtcm_task = NULL;
+static TaskHandle_t s_selftest_task = NULL;
 static bool s_runtime_initialized = false;
 static volatile int64_t s_last_rtcm_input_us = 0;
 static volatile bool s_fake_rtcm_enabled = false;
@@ -80,12 +81,23 @@ static uint32_t s_runtime_active_slot_count = 0;
 static bool s_runtime_safe_mode = false;
 static ntrip_runtime_slot_t s_runtime_slots[NTRIP_SLOT_COUNT];
 static stream_stats_handle_t s_runtime_stats[NTRIP_SLOT_COUNT];
+static ntrip_runtime_selftest_result_t s_selftest_result;
 static const char *S_RUNTIME_STREAM_NAMES[NTRIP_SLOT_COUNT] = {
     "ntrip_rt_0",
     "ntrip_rt_1",
     "ntrip_rt_2",
     "ntrip_rt_3",
     "ntrip_rt_4",
+};
+
+static const char *S_SELFTEST_SCENARIO_NAMES[] = {
+    "fake_rtcm_1_slot_connect_ok",
+    "fake_rtcm_2_slots_connect_ok",
+    "one_slot_auth_fail",
+    "one_slot_unreachable",
+    "one_slot_disconnect_after_packets",
+    "restart_runtime_during_fake_stream",
+    "capability_limit_check",
 };
 
 static void ntrip_runtime_lock(void)
@@ -96,6 +108,23 @@ static void ntrip_runtime_lock(void)
 static void ntrip_runtime_unlock(void)
 {
     xSemaphoreGive(s_runtime_mutex);
+}
+
+static void ntrip_runtime_selftest_reset_result_locked(void)
+{
+    memset(&s_selftest_result, 0, sizeof(s_selftest_result));
+    s_selftest_result.state = NTRIP_SELFTEST_IDLE;
+    s_selftest_result.scenario_count = sizeof(S_SELFTEST_SCENARIO_NAMES) / sizeof(S_SELFTEST_SCENARIO_NAMES[0]);
+}
+
+static void ntrip_runtime_selftest_fail_locked(const char *error)
+{
+    s_selftest_result.state = NTRIP_SELFTEST_FAILED;
+    s_selftest_result.completed = true;
+    s_selftest_result.pass = false;
+    if (error != NULL) {
+        snprintf(s_selftest_result.last_error, sizeof(s_selftest_result.last_error), "%s", error);
+    }
 }
 
 static void ntrip_runtime_set_state_locked(ntrip_runtime_slot_t *slot, ntrip_runtime_state_t state, const char *error)
@@ -143,6 +172,84 @@ static void ntrip_runtime_note_socket_closed(ntrip_runtime_slot_t *slot)
     ntrip_runtime_lock();
     destroy_socket(&slot->sock);
     ntrip_runtime_unlock();
+}
+
+static void ntrip_runtime_slot_test_config(size_t slot_index, bool enabled, ntrip_slot_config_t *config)
+{
+    memset(config, 0, sizeof(*config));
+    config->enabled = enabled;
+    config->last_known_enabled = enabled;
+    config->role = NTRIP_SLOT_ROLE_SERVER;
+    config->port = NTRIP_PORT_DEFAULT;
+    snprintf(config->name, sizeof(config->name), "Selftest Slot %u", (unsigned)slot_index);
+    snprintf(config->host, sizeof(config->host), "selftest-%u.local", (unsigned)slot_index);
+    snprintf(config->mountpoint, sizeof(config->mountpoint), "SELFTEST%u", (unsigned)slot_index);
+    snprintf(config->username, sizeof(config->username), "selftest");
+    snprintf(config->password, sizeof(config->password), "selftest");
+    snprintf(config->ntrip_version, sizeof(config->ntrip_version), "2.0");
+}
+
+static bool ntrip_runtime_wait_for_state(size_t slot_index, ntrip_runtime_state_t state, uint32_t timeout_ms)
+{
+    uint32_t waited_ms = 0;
+    while (waited_ms < timeout_ms) {
+        ntrip_runtime_snapshot_t snapshot;
+        if (ntrip_runtime_get_snapshot(slot_index, &snapshot) == ESP_OK && snapshot.state == state) {
+            return true;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(100));
+        waited_ms += 100;
+    }
+
+    return false;
+}
+
+static bool ntrip_runtime_wait_for_reconnects(size_t slot_index, uint32_t min_reconnects, uint32_t timeout_ms)
+{
+    uint32_t waited_ms = 0;
+    while (waited_ms < timeout_ms) {
+        ntrip_runtime_snapshot_t snapshot;
+        if (ntrip_runtime_get_snapshot(slot_index, &snapshot) == ESP_OK && snapshot.reconnect_count >= min_reconnects) {
+            return true;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(100));
+        waited_ms += 100;
+    }
+
+    return false;
+}
+
+static void ntrip_runtime_selftest_capture_slots(
+    ntrip_runtime_selftest_scenario_result_t *scenario,
+    const size_t *slot_indexes,
+    size_t slot_count)
+{
+    scenario->slot_count = slot_count > NTRIP_SLOT_COUNT ? NTRIP_SLOT_COUNT : slot_count;
+    for (size_t i = 0; i < scenario->slot_count; i++) {
+        size_t slot_index = slot_indexes[i];
+        ntrip_runtime_snapshot_t snapshot;
+        scenario->slots[i].slot_index = slot_index;
+        if (ntrip_runtime_get_snapshot(slot_index, &snapshot) != ESP_OK) {
+            snprintf(scenario->slots[i].state, sizeof(scenario->slots[i].state), "%s", "invalid");
+            snprintf(scenario->slots[i].last_error, sizeof(scenario->slots[i].last_error), "%s", "Snapshot read failed");
+            continue;
+        }
+
+        scenario->slots[i].bytes_sent = snapshot.bytes_sent;
+        scenario->slots[i].reconnect_count = snapshot.reconnect_count;
+        scenario->slots[i].dropped_packets = snapshot.dropped_rtcm_packets;
+        snprintf(scenario->slots[i].state, sizeof(scenario->slots[i].state), "%s", ntrip_runtime_state_name(snapshot.state));
+        snprintf(scenario->slots[i].last_error, sizeof(scenario->slots[i].last_error), "%s", snapshot.last_error);
+    }
+}
+
+static void ntrip_runtime_selftest_clear_mocks(void)
+{
+    for (size_t i = 0; i < NTRIP_SLOT_COUNT; i++) {
+        (void)ntrip_runtime_set_mock_mode(i, NTRIP_RUNTIME_MOCK_NONE, 0);
+    }
 }
 
 static int ntrip_runtime_current_backoff_ms(uint32_t reconnect_count)
@@ -499,6 +606,227 @@ static void ntrip_runtime_fake_rtcm_task(void *ctx)
     vTaskDelete(NULL);
 }
 
+static void ntrip_runtime_selftest_begin_scenario(
+    ntrip_runtime_selftest_scenario_result_t *scenario,
+    size_t scenario_index,
+    int64_t *started_us)
+{
+    memset(scenario, 0, sizeof(*scenario));
+    snprintf(scenario->name, sizeof(scenario->name), "%s", S_SELFTEST_SCENARIO_NAMES[scenario_index]);
+    *started_us = esp_timer_get_time();
+}
+
+static void ntrip_runtime_selftest_end_scenario(
+    ntrip_runtime_selftest_scenario_result_t *scenario,
+    int64_t started_us,
+    const size_t *slot_indexes,
+    size_t slot_count,
+    bool pass)
+{
+    ntrip_runtime_info_t info;
+    ntrip_runtime_get_info(&info);
+    scenario->pass = pass;
+    scenario->duration_ms = (uint32_t)((esp_timer_get_time() - started_us) / 1000);
+    scenario->heap_min_bytes = info.min_free_heap_bytes;
+    scenario->active_slot_count = info.active_slot_count;
+    ntrip_runtime_selftest_capture_slots(scenario, slot_indexes, slot_count);
+}
+
+static esp_err_t ntrip_runtime_selftest_apply_configs(
+    const ntrip_slot_config_t *configs,
+    size_t count,
+    bool restart_runtime)
+{
+    ESP_RETURN_ON_ERROR(ntrip_slots_set_all(configs, count), TAG, "selftest config apply failed");
+    if (restart_runtime) {
+        ntrip_runtime_restart_all();
+    }
+    vTaskDelay(pdMS_TO_TICKS(300));
+    return ESP_OK;
+}
+
+static bool ntrip_runtime_selftest_run_all(void)
+{
+    ntrip_slot_config_t original[NTRIP_SLOT_COUNT];
+    ntrip_slot_config_t configs[NTRIP_SLOT_COUNT];
+    bool overall_pass = true;
+
+    for (size_t i = 0; i < NTRIP_SLOT_COUNT; i++) {
+        if (ntrip_slots_get_config(i, &original[i]) != ESP_OK) {
+            ntrip_runtime_lock();
+            ntrip_runtime_selftest_fail_locked("Could not snapshot current NTRIP config");
+            ntrip_runtime_unlock();
+            return false;
+        }
+    }
+
+    ntrip_runtime_selftest_clear_mocks();
+    ntrip_runtime_fake_rtcm_stop();
+    vTaskDelay(pdMS_TO_TICKS(200));
+
+    for (size_t i = 0; i < NTRIP_SLOT_COUNT; i++) {
+        ntrip_runtime_slot_test_config(i, false, &configs[i]);
+    }
+
+    ESP_ERROR_CHECK_WITHOUT_ABORT(ntrip_runtime_fake_rtcm_start(10, 180));
+
+    for (size_t scenario_index = 0; scenario_index < (sizeof(S_SELFTEST_SCENARIO_NAMES) / sizeof(S_SELFTEST_SCENARIO_NAMES[0])); scenario_index++) {
+        int64_t started_us = 0;
+        bool scenario_pass = false;
+        size_t slot_indexes[NTRIP_SLOT_COUNT] = {0};
+        size_t slot_count = 0;
+
+        ntrip_runtime_selftest_begin_scenario(&s_selftest_result.scenarios[scenario_index], scenario_index, &started_us);
+        ntrip_runtime_selftest_clear_mocks();
+
+        for (size_t i = 0; i < NTRIP_SLOT_COUNT; i++) {
+            ntrip_runtime_slot_test_config(i, false, &configs[i]);
+        }
+
+        switch (scenario_index) {
+            case 0:
+                configs[0].enabled = true;
+                slot_indexes[0] = 0;
+                slot_count = 1;
+                ESP_ERROR_CHECK_WITHOUT_ABORT(ntrip_runtime_set_mock_mode(0, NTRIP_RUNTIME_MOCK_CONNECT_OK, 0));
+                if (ntrip_runtime_selftest_apply_configs(configs, NTRIP_SLOT_COUNT, true) == ESP_OK) {
+                    scenario_pass = ntrip_runtime_wait_for_state(0, NTRIP_RUNTIME_STATE_STREAMING, 3000);
+                    vTaskDelay(pdMS_TO_TICKS(1200));
+                }
+                break;
+            case 1:
+                configs[0].enabled = true;
+                configs[1].enabled = true;
+                slot_indexes[0] = 0;
+                slot_indexes[1] = 1;
+                slot_count = 2;
+                ESP_ERROR_CHECK_WITHOUT_ABORT(ntrip_runtime_set_mock_mode(0, NTRIP_RUNTIME_MOCK_CONNECT_OK, 0));
+                ESP_ERROR_CHECK_WITHOUT_ABORT(ntrip_runtime_set_mock_mode(1, NTRIP_RUNTIME_MOCK_CONNECT_OK, 0));
+                if (ntrip_runtime_selftest_apply_configs(configs, NTRIP_SLOT_COUNT, true) == ESP_OK) {
+                    scenario_pass =
+                        ntrip_runtime_wait_for_state(0, NTRIP_RUNTIME_STATE_STREAMING, 3000) &&
+                        ntrip_runtime_wait_for_state(1, NTRIP_RUNTIME_STATE_STREAMING, 3000);
+                    vTaskDelay(pdMS_TO_TICKS(1200));
+                }
+                break;
+            case 2:
+                configs[0].enabled = true;
+                slot_indexes[0] = 0;
+                slot_count = 1;
+                ESP_ERROR_CHECK_WITHOUT_ABORT(ntrip_runtime_set_mock_mode(0, NTRIP_RUNTIME_MOCK_AUTH_FAIL, 0));
+                if (ntrip_runtime_selftest_apply_configs(configs, NTRIP_SLOT_COUNT, true) == ESP_OK) {
+                    scenario_pass = ntrip_runtime_wait_for_reconnects(0, 1, 4000);
+                    vTaskDelay(pdMS_TO_TICKS(300));
+                }
+                break;
+            case 3:
+                configs[0].enabled = true;
+                slot_indexes[0] = 0;
+                slot_count = 1;
+                ESP_ERROR_CHECK_WITHOUT_ABORT(ntrip_runtime_set_mock_mode(0, NTRIP_RUNTIME_MOCK_UNREACHABLE, 0));
+                if (ntrip_runtime_selftest_apply_configs(configs, NTRIP_SLOT_COUNT, true) == ESP_OK) {
+                    scenario_pass = ntrip_runtime_wait_for_reconnects(0, 1, 4000);
+                    vTaskDelay(pdMS_TO_TICKS(300));
+                }
+                break;
+            case 4:
+                configs[0].enabled = true;
+                slot_indexes[0] = 0;
+                slot_count = 1;
+                ESP_ERROR_CHECK_WITHOUT_ABORT(ntrip_runtime_set_mock_mode(0, NTRIP_RUNTIME_MOCK_DISCONNECT_AFTER_PACKETS, 4));
+                if (ntrip_runtime_selftest_apply_configs(configs, NTRIP_SLOT_COUNT, true) == ESP_OK) {
+                    scenario_pass = ntrip_runtime_wait_for_reconnects(0, 1, 5000);
+                    vTaskDelay(pdMS_TO_TICKS(400));
+                }
+                break;
+            case 5:
+                configs[0].enabled = true;
+                slot_indexes[0] = 0;
+                slot_count = 1;
+                ESP_ERROR_CHECK_WITHOUT_ABORT(ntrip_runtime_set_mock_mode(0, NTRIP_RUNTIME_MOCK_CONNECT_OK, 0));
+                if (ntrip_runtime_selftest_apply_configs(configs, NTRIP_SLOT_COUNT, true) == ESP_OK) {
+                    bool was_streaming = ntrip_runtime_wait_for_state(0, NTRIP_RUNTIME_STATE_STREAMING, 3000);
+                    ntrip_runtime_restart_all();
+                    vTaskDelay(pdMS_TO_TICKS(600));
+                    scenario_pass = was_streaming && ntrip_runtime_wait_for_state(0, NTRIP_RUNTIME_STATE_STREAMING, 4000);
+                    vTaskDelay(pdMS_TO_TICKS(400));
+                }
+                break;
+            case 6: {
+                platform_capabilities_t capabilities;
+                capabilities_get(&capabilities);
+                for (size_t i = 0; i < NTRIP_SLOT_COUNT; i++) {
+                    configs[i].enabled = true;
+                    slot_indexes[i] = i;
+                }
+                slot_count = NTRIP_SLOT_COUNT;
+                for (size_t i = 0; i < NTRIP_SLOT_COUNT; i++) {
+                    ESP_ERROR_CHECK_WITHOUT_ABORT(ntrip_runtime_set_mock_mode(i, NTRIP_RUNTIME_MOCK_CONNECT_OK, 0));
+                }
+                if (ntrip_runtime_selftest_apply_configs(configs, NTRIP_SLOT_COUNT, true) == ESP_OK) {
+                    vTaskDelay(pdMS_TO_TICKS(1800));
+                    ntrip_runtime_info_t info;
+                    ntrip_runtime_get_info(&info);
+                    scenario_pass = info.active_slot_count <= capabilities.max_ntrip_slots;
+                }
+                break;
+            }
+            default:
+                break;
+        }
+
+        ntrip_runtime_selftest_end_scenario(
+            &s_selftest_result.scenarios[scenario_index],
+            started_us,
+            slot_indexes,
+            slot_count,
+            scenario_pass);
+
+        if (!scenario_pass) {
+            overall_pass = false;
+            if (s_selftest_result.last_error[0] == '\0') {
+                snprintf(
+                    s_selftest_result.last_error,
+                    sizeof(s_selftest_result.last_error),
+                    "Scenario failed: %s",
+                    s_selftest_result.scenarios[scenario_index].name);
+            }
+        }
+
+        ntrip_runtime_lock();
+        s_selftest_result.completed_scenarios = (uint32_t)(scenario_index + 1);
+        ntrip_runtime_unlock();
+    }
+
+    ntrip_runtime_selftest_clear_mocks();
+    ntrip_runtime_fake_rtcm_stop();
+    (void)ntrip_slots_set_all(original, NTRIP_SLOT_COUNT);
+    ntrip_runtime_restart_all();
+    vTaskDelay(pdMS_TO_TICKS(300));
+
+    return overall_pass;
+}
+
+static void ntrip_runtime_selftest_task(void *ctx)
+{
+    (void)ctx;
+    int64_t started_us = esp_timer_get_time();
+    bool pass = ntrip_runtime_selftest_run_all();
+
+    ntrip_runtime_lock();
+    s_selftest_result.state = pass ? NTRIP_SELFTEST_DONE : NTRIP_SELFTEST_FAILED;
+    s_selftest_result.completed = true;
+    s_selftest_result.pass = pass;
+    s_selftest_result.duration_ms = (uint32_t)((esp_timer_get_time() - started_us) / 1000);
+    if (!pass && s_selftest_result.last_error[0] == '\0') {
+        snprintf(s_selftest_result.last_error, sizeof(s_selftest_result.last_error), "%s", "Self-test failed");
+    }
+    s_selftest_task = NULL;
+    ntrip_runtime_unlock();
+
+    vTaskDelete(NULL);
+}
+
 static void ntrip_runtime_supervisor_task(void *ctx)
 {
     (void)ctx;
@@ -619,6 +947,10 @@ esp_err_t ntrip_runtime_init(void)
     if (s_runtime_mutex == NULL) {
         return ESP_ERR_NO_MEM;
     }
+
+    ntrip_runtime_lock();
+    ntrip_runtime_selftest_reset_result_locked();
+    ntrip_runtime_unlock();
 
     for (size_t i = 0; i < NTRIP_SLOT_COUNT; i++) {
         s_runtime_slots[i].index = i;
@@ -812,6 +1144,49 @@ void ntrip_runtime_get_info(ntrip_runtime_info_t *info)
     ntrip_runtime_unlock();
 }
 
+esp_err_t ntrip_runtime_selftest_start(void)
+{
+    if (!s_runtime_initialized) {
+        ESP_RETURN_ON_ERROR(ntrip_runtime_init(), TAG, "runtime init failed");
+    }
+
+    ntrip_runtime_lock();
+    if (s_selftest_task != NULL || s_selftest_result.state == NTRIP_SELFTEST_RUNNING) {
+        ntrip_runtime_unlock();
+        return ESP_ERR_INVALID_STATE;
+    }
+    ntrip_runtime_selftest_reset_result_locked();
+    s_selftest_result.state = NTRIP_SELFTEST_RUNNING;
+    ntrip_runtime_unlock();
+
+    if (xTaskCreate(
+            ntrip_runtime_selftest_task,
+            "ntrip_selftest",
+            8192,
+            NULL,
+            TASK_PRIORITY_INTERFACE,
+            &s_selftest_task) != pdPASS) {
+        ntrip_runtime_lock();
+        ntrip_runtime_selftest_fail_locked("Could not start self-test task");
+        s_selftest_task = NULL;
+        ntrip_runtime_unlock();
+        return ESP_ERR_NO_MEM;
+    }
+
+    return ESP_OK;
+}
+
+void ntrip_runtime_selftest_get_result(ntrip_runtime_selftest_result_t *result)
+{
+    if (result == NULL) {
+        return;
+    }
+
+    ntrip_runtime_lock();
+    memcpy(result, &s_selftest_result, sizeof(*result));
+    ntrip_runtime_unlock();
+}
+
 const char *ntrip_runtime_state_name(ntrip_runtime_state_t state)
 {
     switch (state) {
@@ -851,6 +1226,22 @@ const char *ntrip_runtime_mock_mode_name(ntrip_runtime_mock_mode_t mode)
             return "slow_socket";
         case NTRIP_RUNTIME_MOCK_UNREACHABLE:
             return "unreachable";
+        default:
+            return "unknown";
+    }
+}
+
+const char *ntrip_runtime_selftest_state_name(ntrip_runtime_selftest_state_t state)
+{
+    switch (state) {
+        case NTRIP_SELFTEST_IDLE:
+            return "idle";
+        case NTRIP_SELFTEST_RUNNING:
+            return "running";
+        case NTRIP_SELFTEST_DONE:
+            return "done";
+        case NTRIP_SELFTEST_FAILED:
+            return "failed";
         default:
             return "unknown";
     }

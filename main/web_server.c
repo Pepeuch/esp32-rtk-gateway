@@ -301,6 +301,43 @@ static void ntrip_runtime_info_json_fill(cJSON *root)
     cJSON_AddNumberToObject(runtime, "min_free_heap_bytes", info.min_free_heap_bytes);
 }
 
+static void ntrip_runtime_selftest_json_fill(cJSON *root)
+{
+    ntrip_runtime_selftest_result_t result;
+    ntrip_runtime_selftest_get_result(&result);
+
+    cJSON_AddStringToObject(root, "state", ntrip_runtime_selftest_state_name(result.state));
+    cJSON_AddBoolToObject(root, "completed", result.completed);
+    cJSON_AddBoolToObject(root, "pass", result.pass);
+    cJSON_AddNumberToObject(root, "scenario_count", result.scenario_count);
+    cJSON_AddNumberToObject(root, "completed_scenarios", result.completed_scenarios);
+    cJSON_AddNumberToObject(root, "duration_ms", result.duration_ms);
+    cJSON_AddStringToObject(root, "last_error", result.last_error);
+
+    cJSON *scenarios = cJSON_AddArrayToObject(root, "scenarios");
+    for (uint32_t i = 0; i < result.scenario_count && i < 8; i++) {
+        cJSON *scenario = cJSON_CreateObject();
+        cJSON_AddItemToArray(scenarios, scenario);
+        cJSON_AddStringToObject(scenario, "name", result.scenarios[i].name);
+        cJSON_AddBoolToObject(scenario, "pass", result.scenarios[i].pass);
+        cJSON_AddNumberToObject(scenario, "duration_ms", result.scenarios[i].duration_ms);
+        cJSON_AddNumberToObject(scenario, "heap_min_bytes", result.scenarios[i].heap_min_bytes);
+        cJSON_AddNumberToObject(scenario, "active_slot_count", result.scenarios[i].active_slot_count);
+
+        cJSON *slots = cJSON_AddArrayToObject(scenario, "slots");
+        for (size_t slot_index = 0; slot_index < result.scenarios[i].slot_count; slot_index++) {
+            cJSON *slot = cJSON_CreateObject();
+            cJSON_AddItemToArray(slots, slot);
+            cJSON_AddNumberToObject(slot, "slot_index", result.scenarios[i].slots[slot_index].slot_index);
+            cJSON_AddNumberToObject(slot, "bytes_sent", result.scenarios[i].slots[slot_index].bytes_sent);
+            cJSON_AddNumberToObject(slot, "reconnect_count", result.scenarios[i].slots[slot_index].reconnect_count);
+            cJSON_AddNumberToObject(slot, "dropped_packets", result.scenarios[i].slots[slot_index].dropped_packets);
+            cJSON_AddStringToObject(slot, "state", result.scenarios[i].slots[slot_index].state);
+            cJSON_AddStringToObject(slot, "last_error", result.scenarios[i].slots[slot_index].last_error);
+        }
+    }
+}
+
 static esp_err_t basic_auth(httpd_req_t *req) {
     int authorization_length = httpd_req_get_hdr_value_len(req, "Authorization") + 1;
     if (authorization_length == 0) goto _auth_required;
@@ -1146,6 +1183,36 @@ static esp_err_t ntrip_mock_post_handler(httpd_req_t *req)
     return json_response(req, response);
 }
 
+static esp_err_t ntrip_selftest_start_handler(httpd_req_t *req)
+{
+    if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
+
+    esp_err_t err = ntrip_runtime_selftest_start();
+    if (err == ESP_ERR_INVALID_STATE) {
+        httpd_resp_set_status(req, "409 Conflict");
+        httpd_resp_send(req, "Self-test already running", HTTPD_RESP_USE_STRLEN);
+        return ESP_FAIL;
+    }
+    if (err != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Could not start self-test");
+        return ESP_FAIL;
+    }
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "success", true);
+    cJSON_AddStringToObject(root, "state", "running");
+    return json_response(req, root);
+}
+
+static esp_err_t ntrip_selftest_result_handler(httpd_req_t *req)
+{
+    if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
+
+    cJSON *root = cJSON_CreateObject();
+    ntrip_runtime_selftest_json_fill(root);
+    return json_response(req, root);
+}
+
 static esp_err_t ntrip_enable_handler(httpd_req_t *req)
 {
     if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
@@ -1250,6 +1317,8 @@ static httpd_handle_t web_server_start(void)
         register_uri_handler(server, "/api/dev/fake-rtcm/start", HTTP_POST, fake_rtcm_start_handler);
         register_uri_handler(server, "/api/dev/fake-rtcm/stop", HTTP_POST, fake_rtcm_stop_handler);
         register_uri_handler(server, "/api/dev/ntrip/mock", HTTP_POST, ntrip_mock_post_handler);
+        register_uri_handler(server, "/api/dev/ntrip/selftest/start", HTTP_POST, ntrip_selftest_start_handler);
+        register_uri_handler(server, "/api/dev/ntrip/selftest/result", HTTP_GET, ntrip_selftest_result_handler);
 
         register_uri_handler(server, "/log", HTTP_GET, log_get_handler);
         register_uri_handler(server, "/core_dump", HTTP_GET, core_dump_get_handler);
