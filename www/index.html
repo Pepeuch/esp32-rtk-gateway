@@ -74,6 +74,11 @@
             color: #856404;
         }
 
+        .slot-badge.error {
+            background: #f8d7da;
+            color: #842029;
+        }
+
         .slot-badge.muted {
             background: #eceff3;
             color: #51606f;
@@ -337,9 +342,18 @@
             };
 
             var slotBadgeClass = function(status) {
-                if (status === 'configured') return 'ok';
-                if (status === 'hardware_limited' || status === 'stored_only') return 'warn';
+                if (status === 'streaming') return 'ok';
+                if (status === 'connecting' || status === 'authenticating' || status === 'reconnect_wait' || status === 'hardware_limited') return 'warn';
+                if (status === 'error') return 'error';
                 return 'muted';
+            };
+
+            var secondsToShort = function(seconds) {
+                seconds = parseInt(seconds || 0, 10);
+                const h = Math.floor(seconds / 3600);
+                const m = Math.floor((seconds % 3600) / 60);
+                const s = seconds % 60;
+                return [h, m, s].map(v => v < 10 ? '0' + v : '' + v).join(':');
             };
 
             var updateNtripSlotRuntime = function(slots) {
@@ -351,12 +365,15 @@
 
                     card.find('.slot-name').text(slot.name);
                     card.find('.slot-status')
-                        .removeClass('ok warn muted')
+                        .removeClass('ok warn error muted')
                         .addClass(slotBadgeClass(slot.status))
-                        .text(slot.status);
-                    card.find('.slot-reason').text(slot.disabled_reason || '');
+                        .text(slot.stale && slot.status === 'streaming' ? 'stale' : slot.status);
+                    card.find('.slot-reason').text(slot.disabled_reason || (slot.stale ? 'No recent RTCM activity' : ''));
                     card.find('.slot-bytes').text(humanDataSize(slot.bytes_sent));
+                    card.find('.slot-rate').text(humanDataSize(slot.bytes_per_sec) + '/s');
                     card.find('.slot-reconnects').text(slot.reconnect_count);
+                    card.find('.slot-uptime').text(secondsToShort(slot.uptime_seconds));
+                    card.find('.slot-http').text(slot.last_http_code || '-');
                     card.find('.slot-error').text(slot.last_error || 'None');
                     card.attr('data-has-password', slot.has_password ? '1' : '0');
                 });
@@ -448,7 +465,10 @@
 
                     const meta = $('<div>', {class: 'ntrip-slot-meta'});
                     meta.append($('<div>', {html: 'Bytes sent: <strong class="slot-bytes">' + humanDataSize(slot.bytes_sent) + '</strong>'}));
+                    meta.append($('<div>', {html: 'Rate: <strong class="slot-rate">' + humanDataSize(slot.bytes_per_sec || 0) + '/s</strong>'}));
                     meta.append($('<div>', {html: 'Reconnect count: <strong class="slot-reconnects">' + slot.reconnect_count + '</strong>'}));
+                    meta.append($('<div>', {html: 'Uptime: <strong class="slot-uptime">' + secondsToShort(slot.uptime_seconds || 0) + '</strong>'}));
+                    meta.append($('<div>', {html: 'Last HTTP code: <strong class="slot-http">' + (slot.last_http_code || '-') + '</strong>'}));
                     meta.append($('<div>', {html: 'Last error: <strong class="slot-error">' + (slot.last_error || 'None') + '</strong>'}));
 
                     body.append(row1, row2, row3, meta);
@@ -458,8 +478,18 @@
             };
 
             var loadNtripSlots = function() {
-                $.getJSON('api/ntrip').done(function(data) {
+                $.getJSON('api/ntrip/runtime').done(function(data) {
                     renderNtripSlots(data);
+                });
+            };
+
+            var refreshNtripRuntime = function() {
+                $.getJSON('api/ntrip/runtime').done(function(data) {
+                    if (data && data.slots) {
+                        updateNtripSlotRuntime(data.slots);
+                    }
+                }).always(function() {
+                    setTimeout(refreshNtripRuntime, 2500);
                 });
             };
 
@@ -568,6 +598,7 @@
             };
             statusUpdate();
             loadNtripSlots();
+            refreshNtripRuntime();
 
             ntripSlotsSaveButton.on('click', function() {
                 const slots = [];
@@ -601,12 +632,16 @@
                     contentType: 'application/json',
                     data: JSON.stringify({slots: slots})
                 }).done(function() {
-                    $('#restarting-modal').modal('show');
-                    setTimeout(function() {
-                        reloadOnStatus = true;
-                    }, 2500);
+                    loadNtripSlots();
                 }).always(function() {
                     ntripSlotsSaveButton.prop('disabled', false);
+                });
+            });
+            $('#restart-ntrip-runtime').on('click', function() {
+                const button = $(this);
+                button.prop('disabled', true);
+                $.post('api/ntrip/restart').always(function() {
+                    button.prop('disabled', false);
                 });
             });
 
@@ -741,10 +776,13 @@
         <div class="card mb-4">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <span>Persistent NTRIP Slots</span>
-                <button type="button" class="btn btn-sm btn-primary" id="save-ntrip-slots">Save / Restart</button>
+                <div>
+                    <button type="button" class="btn btn-sm btn-outline-secondary mr-2" id="restart-ntrip-runtime">Restart Runtime</button>
+                    <button type="button" class="btn btn-sm btn-primary" id="save-ntrip-slots">Save</button>
+                </div>
             </div>
             <div class="card-body">
-                <p class="small text-muted mb-3">This is the new 5-slot persistent NTRIP model. Legacy server A/B settings still remain below for backward compatibility and are synchronized to slots 0 and 1.</p>
+                <p class="small text-muted mb-3">This is the new 5-slot persistent NTRIP model with live runtime supervision. Legacy server A/B settings still remain below for backward compatibility and are synchronized to slots 0 and 1.</p>
                 <div id="ntrip-slot-editor"></div>
             </div>
         </div>

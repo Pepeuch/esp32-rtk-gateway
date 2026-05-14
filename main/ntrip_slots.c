@@ -9,6 +9,7 @@
 #include "esp_check.h"
 #include "esp_log.h"
 #include "interface/ntrip.h"
+#include "ntrip_runtime.h"
 #include "nvs.h"
 #include "stream_stats.h"
 
@@ -37,37 +38,37 @@ static const ntrip_runtime_descriptor_t NTRIP_RUNTIME_DESCRIPTORS[NTRIP_SLOT_COU
     {
         .slot_id = "slot0",
         .runtime_name = "NTRIP Server A",
-        .stream_name = "ntrip_server",
-        .init_fn = ntrip_server_init,
+        .stream_name = "ntrip_rt_0",
+        .init_fn = NULL,
         .implemented = true
     },
     {
         .slot_id = "slot1",
         .runtime_name = "NTRIP Server B",
-        .stream_name = "ntrip_server_2",
-        .init_fn = ntrip_server_2_init,
+        .stream_name = "ntrip_rt_1",
+        .init_fn = NULL,
         .implemented = true
     },
     {
         .slot_id = "slot2",
         .runtime_name = "NTRIP Server C",
-        .stream_name = NULL,
+        .stream_name = "ntrip_rt_2",
         .init_fn = NULL,
-        .implemented = false
+        .implemented = true
     },
     {
         .slot_id = "slot3",
         .runtime_name = "NTRIP Server D",
-        .stream_name = NULL,
+        .stream_name = "ntrip_rt_3",
         .init_fn = NULL,
-        .implemented = false
+        .implemented = true
     },
     {
         .slot_id = "slot4",
         .runtime_name = "NTRIP Server E",
-        .stream_name = NULL,
+        .stream_name = "ntrip_rt_4",
         .init_fn = NULL,
-        .implemented = false
+        .implemented = true
     }
 };
 
@@ -521,14 +522,8 @@ void ntrip_slots_get_status(size_t slot_index, ntrip_slot_status_t *status)
 
     const ntrip_slot_config_t *slot = &s_ntrip_store.slots[slot_index];
     const ntrip_runtime_descriptor_t *runtime = ntrip_runtime_descriptor(slot_index);
-    size_t max_allowed = ntrip_slots_max_allowed();
-    size_t enabled_seen = 0;
-
-    for (size_t i = 0; i <= slot_index; i++) {
-        if (s_ntrip_store.slots[i].enabled) {
-            enabled_seen++;
-        }
-    }
+    ntrip_runtime_snapshot_t runtime_snapshot;
+    bool have_runtime = ntrip_runtime_get_snapshot(slot_index, &runtime_snapshot) == ESP_OK;
 
     snprintf(status->slot_id, sizeof(status->slot_id), "%s", runtime->slot_id);
     snprintf(status->role, sizeof(status->role), "%s", "server");
@@ -544,54 +539,36 @@ void ntrip_slots_get_status(size_t slot_index, ntrip_slot_status_t *status)
     status->has_password = slot->password[0] != '\0';
     snprintf(status->password_masked, sizeof(status->password_masked), "%s",
              status->has_password ? "********" : "");
-    status->allowed_by_platform = !slot->enabled || enabled_seen <= max_allowed;
-    status->running = slot->enabled && status->allowed_by_platform && runtime->implemented;
-    status->bytes_sent = ntrip_slot_stream_total_out(runtime->stream_name);
+    status->bytes_sent = have_runtime ? runtime_snapshot.bytes_sent : ntrip_slot_stream_total_out(runtime->stream_name);
+    status->bytes_per_sec = have_runtime ? runtime_snapshot.bytes_per_sec : 0;
+    status->reconnect_count = have_runtime ? runtime_snapshot.reconnect_count : 0;
+    status->packets_sent = have_runtime ? runtime_snapshot.packets_sent : 0;
+    status->uptime_seconds = have_runtime ? runtime_snapshot.uptime_seconds : 0;
+    status->last_activity_ms = have_runtime ? runtime_snapshot.last_activity_ms : 0;
+    status->last_http_code = have_runtime ? runtime_snapshot.last_http_code : 0;
+    status->stale = have_runtime ? runtime_snapshot.stale : false;
 
-    if (!slot->enabled) {
+    if (have_runtime) {
+        status->running = runtime_snapshot.state == NTRIP_RUNTIME_STATE_STREAMING;
+        status->allowed_by_platform = runtime_snapshot.state != NTRIP_RUNTIME_STATE_HARDWARE_LIMITED;
+        snprintf(status->status, sizeof(status->status), "%s", ntrip_runtime_state_name(runtime_snapshot.state));
+        snprintf(status->last_error, sizeof(status->last_error), "%s", runtime_snapshot.last_error);
+        if (runtime_snapshot.state == NTRIP_RUNTIME_STATE_HARDWARE_LIMITED) {
+            snprintf(status->disabled_reason, sizeof(status->disabled_reason),
+                     "%s", runtime_snapshot.last_error[0] ? runtime_snapshot.last_error : "Disabled by hardware limits");
+        }
+    } else if (!slot->enabled) {
+        status->allowed_by_platform = true;
+        status->running = false;
         snprintf(status->status, sizeof(status->status), "%s", "disabled");
-    } else if (!status->allowed_by_platform) {
-        snprintf(status->status, sizeof(status->status), "%s", "hardware_limited");
-        snprintf(status->disabled_reason, sizeof(status->disabled_reason),
-                 "Platform allows %u slot(s) in current profile", (unsigned)max_allowed);
-    } else if (!runtime->implemented) {
-        snprintf(status->status, sizeof(status->status), "%s", "stored_only");
-        snprintf(status->disabled_reason, sizeof(status->disabled_reason),
-                 "Persisted and validated, runtime support for this slot is not wired yet");
     } else {
-        snprintf(status->status, sizeof(status->status), "%s", "configured");
+        status->allowed_by_platform = true;
+        status->running = false;
+        snprintf(status->status, sizeof(status->status), "%s", "disconnected");
     }
 }
 
 void ntrip_slots_start_allowed(void)
 {
-    if (ntrip_slots_ensure_loaded() != ESP_OK) {
-        ESP_LOGE(TAG, "Cannot start NTRIP slots: config unavailable");
-        return;
-    }
-
-    size_t max_allowed = ntrip_slots_max_allowed();
-    size_t enabled_seen = 0;
-
-    for (size_t i = 0; i < NTRIP_SLOT_COUNT; i++) {
-        const ntrip_slot_config_t *slot = &s_ntrip_store.slots[i];
-        const ntrip_runtime_descriptor_t *runtime = ntrip_runtime_descriptor(i);
-
-        if (!slot->enabled) {
-            continue;
-        }
-
-        enabled_seen++;
-        if (enabled_seen > max_allowed) {
-            ESP_LOGW(TAG, "Skipping %s: hardware limit reached (%u max)", slot->name, (unsigned)max_allowed);
-            continue;
-        }
-
-        if (!runtime->implemented || runtime->init_fn == NULL) {
-            ESP_LOGW(TAG, "Keeping %s persisted but not starting it: runtime support not implemented", slot->name);
-            continue;
-        }
-
-        runtime->init_fn();
-    }
+    ntrip_runtime_start();
 }

@@ -38,6 +38,7 @@
 #include "esp_task_wdt.h"
 #include "captive_portal.h"
 #include "capabilities.h"
+#include "ntrip_runtime.h"
 #include "ntrip_slots.h"
 
 #if CONFIG_IDF_TARGET_ESP32
@@ -269,7 +270,13 @@ static void ntrip_slots_json_fill(cJSON *ntrip)
         cJSON_AddBoolToObject(slot, "use_tls", slot_status.use_tls);
         cJSON_AddStringToObject(slot, "status", slot_status.status);
         cJSON_AddNumberToObject(slot, "bytes_sent", slot_status.bytes_sent);
+        cJSON_AddNumberToObject(slot, "bytes_per_sec", slot_status.bytes_per_sec);
+        cJSON_AddNumberToObject(slot, "packets_sent", slot_status.packets_sent);
         cJSON_AddNumberToObject(slot, "reconnect_count", slot_status.reconnect_count);
+        cJSON_AddNumberToObject(slot, "uptime_seconds", slot_status.uptime_seconds);
+        cJSON_AddNumberToObject(slot, "last_activity_ms", slot_status.last_activity_ms);
+        cJSON_AddNumberToObject(slot, "last_http_code", slot_status.last_http_code);
+        cJSON_AddBoolToObject(slot, "stale", slot_status.stale);
         cJSON_AddStringToObject(slot, "last_error", slot_status.last_error);
         cJSON_AddStringToObject(slot, "disabled_reason", slot_status.disabled_reason);
     }
@@ -858,6 +865,16 @@ static esp_err_t ntrip_get_handler(httpd_req_t *req)
     return json_response(req, root);
 }
 
+static esp_err_t ntrip_runtime_get_handler(httpd_req_t *req)
+{
+    if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
+
+    cJSON *root = cJSON_CreateObject();
+    capabilities_json_fill(cJSON_AddObjectToObject(root, "capabilities"));
+    ntrip_slots_json_fill(root);
+    return json_response(req, root);
+}
+
 static bool json_string_copy(cJSON *entry, char *out, size_t out_size)
 {
     if (entry == NULL || !cJSON_IsString(entry) || out == NULL || out_size == 0) {
@@ -959,12 +976,79 @@ static esp_err_t ntrip_post_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    config_restart();
+    ntrip_runtime_restart_all();
 
     cJSON *response = cJSON_CreateObject();
     cJSON_AddBoolToObject(response, "success", true);
-    cJSON_AddBoolToObject(response, "restart", true);
+    cJSON_AddBoolToObject(response, "restart", false);
     return json_response(req, response);
+}
+
+static int parse_slot_index_from_uri(const char *uri, const char *prefix)
+{
+    if (uri == NULL || prefix == NULL || strncmp(uri, prefix, strlen(prefix)) != 0) {
+        return -1;
+    }
+
+    const char *suffix = uri + strlen(prefix);
+    if (*suffix == '\0') {
+        return -1;
+    }
+
+    int index = atoi(suffix);
+    if (index < 0 || index >= NTRIP_SLOT_COUNT) {
+        return -1;
+    }
+
+    return index;
+}
+
+static esp_err_t ntrip_restart_handler(httpd_req_t *req)
+{
+    if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
+    ntrip_runtime_restart_all();
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "success", true);
+    return json_response(req, root);
+}
+
+static esp_err_t ntrip_enable_handler(httpd_req_t *req)
+{
+    if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
+    int slot_index = parse_slot_index_from_uri(req->uri, "/api/ntrip/enable/");
+    if (slot_index < 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid slot index");
+        return ESP_FAIL;
+    }
+
+    if (ntrip_runtime_slot_enable((size_t)slot_index, true, true) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Could not enable slot");
+        return ESP_FAIL;
+    }
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "success", true);
+    return json_response(req, root);
+}
+
+static esp_err_t ntrip_disable_handler(httpd_req_t *req)
+{
+    if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
+    int slot_index = parse_slot_index_from_uri(req->uri, "/api/ntrip/disable/");
+    if (slot_index < 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid slot index");
+        return ESP_FAIL;
+    }
+
+    if (ntrip_runtime_slot_enable((size_t)slot_index, false, true) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Could not disable slot");
+        return ESP_FAIL;
+    }
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "success", true);
+    return json_response(req, root);
 }
 
 static esp_err_t wifi_scan_get_handler(httpd_req_t *req) {
@@ -1026,6 +1110,10 @@ static httpd_handle_t web_server_start(void)
         register_uri_handler(server, "/api/capabilities", HTTP_GET, capabilities_get_handler);
         register_uri_handler(server, "/api/ntrip", HTTP_GET, ntrip_get_handler);
         register_uri_handler(server, "/api/ntrip", HTTP_POST, ntrip_post_handler);
+        register_uri_handler(server, "/api/ntrip/runtime", HTTP_GET, ntrip_runtime_get_handler);
+        register_uri_handler(server, "/api/ntrip/restart", HTTP_POST, ntrip_restart_handler);
+        register_uri_handler(server, "/api/ntrip/enable/*", HTTP_POST, ntrip_enable_handler);
+        register_uri_handler(server, "/api/ntrip/disable/*", HTTP_POST, ntrip_disable_handler);
 
         register_uri_handler(server, "/log", HTTP_GET, log_get_handler);
         register_uri_handler(server, "/core_dump", HTTP_GET, core_dump_get_handler);

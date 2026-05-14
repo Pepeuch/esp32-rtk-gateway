@@ -48,7 +48,13 @@ typedef struct ntrip_slot_status {
     bool implemented;
     bool use_tls;
     uint32_t bytes_sent;
+    uint32_t bytes_per_sec;
     uint32_t reconnect_count;
+    uint32_t packets_sent;
+    uint32_t uptime_seconds;
+    uint32_t last_activity_ms;
+    int last_http_code;
+    bool stale;
 } ntrip_slot_status_t;
 
 esp_err_t ntrip_slots_init(void);

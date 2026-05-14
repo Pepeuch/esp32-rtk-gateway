@@ -43,6 +43,7 @@
 #include "tasks.h"
 #include "network.h"
 #include "ntrip_slots.h"
+#include "ntrip_runtime.h"
 
 static const char *TAG = "MAIN";
 
@@ -88,6 +89,7 @@ void app_main(void)
     config_init();
     ntrip_slots_init();
     uart_init();
+    ntrip_runtime_init();
 
     esp_reset_reason_t reset_reason = esp_reset_reason();
 
