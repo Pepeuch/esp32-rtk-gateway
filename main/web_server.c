@@ -37,6 +37,8 @@
 #include "errno.h"
 #include "esp_task_wdt.h"
 #include "captive_portal.h"
+#include "capabilities.h"
+#include "ntrip_slots.h"
 
 #if CONFIG_IDF_TARGET_ESP32
 #include <esp32/rom/crc.h>
@@ -157,24 +159,80 @@ static char* get_path_from_uri(char *dest, const char *base_path, const char *ur
 }
 
 static esp_err_t json_response(httpd_req_t *req, cJSON *root) {
-    // Set mime type
     esp_err_t err = httpd_resp_set_type(req, "application/json");
-    if (err != ESP_OK) return err;
+    if (err != ESP_OK) {
+        cJSON_Delete(root);
+        return err;
+    }
 
-    // Convert to string
-    bool success = cJSON_PrintPreallocated(root, buffer, BUFFER_SIZE, false);
+    char *json = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
-    if (!success) {
-        ESP_LOGE(TAG, "Not enough space in buffer to output JSON");
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Not enough space in buffer to output JSON");
+    if (json == NULL) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Could not serialize JSON");
         return ESP_FAIL;
     }
 
-    // Send as response
-    err = httpd_resp_send(req, buffer, strlen(buffer));
-    if (err != ESP_OK) return err;
+    err = httpd_resp_send(req, json, strlen(json));
+    free(json);
+    if (err != ESP_OK) {
+        return err;
+    }
 
     return ESP_OK;
+}
+
+static void capabilities_json_fill(cJSON *cap)
+{
+    platform_capabilities_t capabilities;
+    capabilities_get(&capabilities);
+
+    cJSON_AddStringToObject(cap, "chip_family", capabilities.chip_family);
+    cJSON_AddStringToObject(cap, "network_profile", capabilities.network_profile);
+    cJSON_AddBoolToObject(cap, "is_esp32", capabilities.is_esp32);
+    cJSON_AddBoolToObject(cap, "is_esp32s3", capabilities.is_esp32s3);
+    cJSON_AddBoolToObject(cap, "psram_available", capabilities.psram_available);
+    cJSON_AddBoolToObject(cap, "ethernet_supported", capabilities.ethernet_supported);
+    cJSON_AddBoolToObject(cap, "ethernet_active", capabilities.ethernet_active);
+    cJSON_AddBoolToObject(cap, "wifi_only", capabilities.wifi_only);
+    cJSON_AddBoolToObject(cap, "advanced_diagnostics", capabilities.advanced_diagnostics);
+    cJSON_AddBoolToObject(cap, "safe_mode", capabilities.safe_mode);
+    cJSON_AddNumberToObject(cap, "max_ntrip_slots", capabilities.max_ntrip_slots);
+    cJSON_AddNumberToObject(cap, "configured_ntrip_slots", capabilities.configured_ntrip_slots);
+}
+
+static void ntrip_slots_json_fill(cJSON *ntrip)
+{
+    cJSON_AddNumberToObject(ntrip, "max_slots", ntrip_slots_max_allowed());
+    cJSON_AddNumberToObject(ntrip, "configured_slots", NTRIP_SLOT_COUNT);
+    cJSON_AddNumberToObject(ntrip, "requested_enabled_slots", ntrip_slots_requested_enabled());
+
+    cJSON *slots = cJSON_AddArrayToObject(ntrip, "slots");
+    for (size_t i = 0; i < NTRIP_SLOT_COUNT; i++) {
+        ntrip_slot_status_t slot_status;
+        ntrip_slots_get_status(i, &slot_status);
+
+        cJSON *slot = cJSON_CreateObject();
+        cJSON_AddItemToArray(slots, slot);
+
+        cJSON_AddNumberToObject(slot, "index", slot_status.slot_index);
+        cJSON_AddStringToObject(slot, "id", slot_status.slot_id);
+        cJSON_AddStringToObject(slot, "role", slot_status.role);
+        cJSON_AddStringToObject(slot, "name", slot_status.name);
+        cJSON_AddBoolToObject(slot, "implemented", slot_status.implemented);
+        cJSON_AddBoolToObject(slot, "enabled", slot_status.enabled);
+        cJSON_AddBoolToObject(slot, "running", slot_status.running);
+        cJSON_AddBoolToObject(slot, "allowed_by_platform", slot_status.allowed_by_platform);
+        cJSON_AddStringToObject(slot, "host", slot_status.host);
+        cJSON_AddNumberToObject(slot, "port", slot_status.port);
+        cJSON_AddStringToObject(slot, "mountpoint", slot_status.mountpoint);
+        cJSON_AddStringToObject(slot, "username", slot_status.username);
+        cJSON_AddStringToObject(slot, "ntrip_version", slot_status.ntrip_version);
+        cJSON_AddStringToObject(slot, "status", slot_status.status);
+        cJSON_AddNumberToObject(slot, "bytes_sent", slot_status.bytes_sent);
+        cJSON_AddNumberToObject(slot, "reconnect_count", slot_status.reconnect_count);
+        cJSON_AddStringToObject(slot, "last_error", slot_status.last_error);
+        cJSON_AddStringToObject(slot, "disabled_reason", slot_status.disabled_reason);
+    }
 }
 
 static esp_err_t basic_auth(httpd_req_t *req) {
@@ -735,6 +793,27 @@ static esp_err_t status_get_handler(httpd_req_t *req) {
         }
     }
 
+    capabilities_json_fill(cJSON_AddObjectToObject(root, "capabilities"));
+    ntrip_slots_json_fill(cJSON_AddObjectToObject(root, "ntrip"));
+
+    return json_response(req, root);
+}
+
+static esp_err_t capabilities_get_handler(httpd_req_t *req)
+{
+    if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
+
+    cJSON *root = cJSON_CreateObject();
+    capabilities_json_fill(root);
+    return json_response(req, root);
+}
+
+static esp_err_t ntrip_get_handler(httpd_req_t *req)
+{
+    if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
+
+    cJSON *root = cJSON_CreateObject();
+    ntrip_slots_json_fill(root);
     return json_response(req, root);
 }
 
@@ -791,6 +870,11 @@ static httpd_handle_t web_server_start(void)
         register_uri_handler(server, "/config", HTTP_GET, config_get_handler);
         register_uri_handler(server, "/config", HTTP_POST, config_post_handler);
         register_uri_handler(server, "/status", HTTP_GET, status_get_handler);
+        register_uri_handler(server, "/api/config", HTTP_GET, config_get_handler);
+        register_uri_handler(server, "/api/config", HTTP_POST, config_post_handler);
+        register_uri_handler(server, "/api/status", HTTP_GET, status_get_handler);
+        register_uri_handler(server, "/api/capabilities", HTTP_GET, capabilities_get_handler);
+        register_uri_handler(server, "/api/ntrip", HTTP_GET, ntrip_get_handler);
 
         register_uri_handler(server, "/log", HTTP_GET, log_get_handler);
         register_uri_handler(server, "/core_dump", HTTP_GET, core_dump_get_handler);

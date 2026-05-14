@@ -2,6 +2,7 @@
 #define ESP32_XBEE_CONFIG_H
 
 #include <stddef.h>
+#include <esp_err.h>
 
 typedef enum {
     CONFIG_ITEM_TYPE_BOOL = 0,

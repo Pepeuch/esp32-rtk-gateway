@@ -45,6 +45,15 @@
             max-width: 95vw;
             width: 300px;
         }
+
+        .capability-pill {
+            display: inline-block;
+            margin: 0 8px 8px 0;
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: #eef3f7;
+            font-size: 0.875rem;
+        }
     </style>
     <script>
         const releases_api_url = 'https://github.com/incarvr6/esp32-ntrip/releases/tag/0.0.1';
@@ -265,6 +274,8 @@
 
             var wifiApStatusText = form.find('.wifi-ap-status');
             var wifiStaStatusText = form.find('.wifi-sta-status');
+            var capabilitiesSummary = $('.capabilities-summary');
+            var ntripSlotsSummary = $('.ntrip-slots-summary');
 
             var streamStatsTexts = form.find('.stream-stats');
 
@@ -351,6 +362,45 @@
                             .append($('<a>', {text: wifi.sta.ip4, href: 'http://' + wifi.sta.ip4 + '/'}))
                             .appendText(" / ")
                             .append($('<span>', {class: 'text-' + wifiRssiColorClass(wifi.sta.rssi), text: wifi.sta.rssi + "dBm"}));
+                    }
+
+                    if (data.capabilities) {
+                        const cap = data.capabilities;
+                        capabilitiesSummary.empty()
+                            .append($('<span>', {class: 'capability-pill', text: cap.chip_family}))
+                            .append($('<span>', {class: 'capability-pill', text: cap.network_profile}))
+                            .append($('<span>', {class: 'capability-pill', text: cap.max_ntrip_slots + ' NTRIP slot(s) max'}))
+                            .append($('<span>', {class: 'capability-pill', text: cap.psram_available ? 'PSRAM' : 'No PSRAM'}))
+                            .append($('<span>', {class: 'capability-pill', text: cap.ethernet_active ? 'Ethernet active' : 'Wi-Fi only'}));
+                    }
+
+                    if (data.ntrip && Array.isArray(data.ntrip.slots)) {
+                        ntripSlotsSummary.empty();
+                        ntripSlotsSummary.append($('<div>', {
+                            class: 'small font-weight-bold mb-2',
+                            text: 'NTRIP slots'
+                        }));
+
+                        data.ntrip.slots.forEach(function(slot) {
+                            let text = (slot.index + 1) + '. ' + slot.name + ' - ' + slot.status;
+                            if (slot.disabled_reason) {
+                                text += ' (' + slot.disabled_reason + ')';
+                            }
+
+                            let color = 'text-muted';
+                            if (slot.running) {
+                                color = 'text-success';
+                            } else if (slot.enabled && !slot.allowed_by_platform) {
+                                color = 'text-warning';
+                            } else if (slot.enabled) {
+                                color = 'text-primary';
+                            }
+
+                            ntripSlotsSummary.append($('<div>', {
+                                class: 'small ' + color,
+                                text: text
+                            }));
+                        });
                     }
                 }).always(function() {
                     setTimeout(statusUpdate, 2500);
@@ -478,6 +528,13 @@
             <h2>ESP32 NTRIP Duo <a id="project-version" href="https://github.com/nebkat/esp32-xbee/releases" class="text-muted small"></a> <a id="prerelease-available" class="text-info small" style="display: none">(beta available)</a></h2>
 
             <p class="lead">Adjust the settings below and then click on "Submit". The device will restart with the new settings applied. If you have adjusted WiFi settings the device may be moved onto a new IP address, or require you to reconnect to its access point.</p>
+        </div>
+        <div class="card mb-3">
+            <div class="card-header">Platform Capabilities</div>
+            <div class="card-body py-3">
+                <div class="capabilities-summary small text-muted">Loading platform profile...</div>
+                <div class="ntrip-slots-summary mt-2"></div>
+            </div>
         </div>
         <form class="needs-validation" id="form" novalidate>
             <div class="row mb-1">
@@ -993,7 +1050,7 @@
                     <div class="card mb-3">
                         <div class="card-header">
                             NTRIP server B
-                            <small class="ntrip-server-2-stats stream-stats" data-stream="ntrip_server"></small>
+                            <small class="ntrip-server-2-stats stream-stats" data-stream="ntrip_server_2"></small>
                             <div class="custom-control custom-switch d-inline float-right">
                                 <input type="checkbox" name="ntr_srv2_active" value="1" class="custom-control-input" id="switch-ntrip-server-2">
                                 <label class="custom-control-label" for="switch-ntrip-server-2"></label>

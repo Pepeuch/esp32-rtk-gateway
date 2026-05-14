@@ -100,7 +100,7 @@ static void ntrip_server_task(void *ctx) {
     if (status_led_color.rgba != 0) status_led = status_led_add(status_led_color.rgba, STATUS_LED_FADE, 500, 2000, 0);
     if (status_led != NULL) status_led->active = false;
 
-    stream_stats = stream_stats_new("ntrip_server");
+    stream_stats = stream_stats_new("ntrip_server_2");
 
     retry_delay_handle_t delay_handle = retry_init(true, 5, 2000, 0);
 

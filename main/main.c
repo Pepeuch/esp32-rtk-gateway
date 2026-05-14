@@ -42,6 +42,7 @@
 #include "interface/socket_client.h"
 #include "tasks.h"
 #include "network.h"
+#include "ntrip_slots.h"
 
 static const char *TAG = "MAIN";
 
@@ -174,9 +175,7 @@ wait_for_network();
 
     web_server_init();
 
-    ntrip_server_init();
-    ntrip_server_2_init();
-
+    ntrip_slots_start_allowed();
     socket_server_init();
     socket_client_init();
 
@@ -236,6 +235,5 @@ static char *reset_reason_name(esp_reset_reason_t reason)
         case ESP_RST_SDIO:
             return "SDIO";
     }
-
-wait_for_network();
+    return "UNKNOWN";
 }

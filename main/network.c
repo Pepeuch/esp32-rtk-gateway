@@ -121,7 +121,6 @@ esp_netif_t *network_init() {
 
 
     if (start_result == ESP_OK) {
-        ethernet_active = true;
         ESP_LOGI(TAG, "Ethernet started successfully.");
         return global_netif;
     } else {
