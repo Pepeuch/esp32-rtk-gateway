@@ -643,6 +643,20 @@ static void gnss_diagnostics_json_fill(cJSON *root)
     cJSON_AddStringToObject(root, "state", diagnostics.detected ? "connected" : "idle");
     cJSON_AddStringToObject(root, "rtcm_state", gnss_rtcm_state_string(diagnostics.rtcm_alive, diagnostics.rtcm_stale));
     cJSON_AddBoolToObject(root, "gnss_data_available", diagnostics.detected);
+    cJSON_AddBoolToObject(root, "hp_position_valid", diagnostics.hp_position_valid);
+    cJSON_AddNumberToObject(root, "latitude_e9", (double)diagnostics.latitude_e9);
+    cJSON_AddNumberToObject(root, "longitude_e9", (double)diagnostics.longitude_e9);
+    cJSON_AddNumberToObject(root, "height_mm", diagnostics.height_mm);
+    cJSON_AddNumberToObject(root, "hmsl_mm", diagnostics.hmsl_mm);
+    cJSON_AddNumberToObject(root, "horizontal_accuracy_mm", diagnostics.horizontal_accuracy_mm);
+    cJSON_AddNumberToObject(root, "vertical_accuracy_mm", diagnostics.vertical_accuracy_mm);
+    cJSON_AddBoolToObject(root, "relpos_valid", diagnostics.relpos_valid);
+    cJSON_AddNumberToObject(root, "rel_north_mm", diagnostics.rel_north_mm);
+    cJSON_AddNumberToObject(root, "rel_east_mm", diagnostics.rel_east_mm);
+    cJSON_AddNumberToObject(root, "rel_down_mm", diagnostics.rel_down_mm);
+    cJSON_AddNumberToObject(root, "rel_length_mm", diagnostics.rel_length_mm);
+    cJSON_AddNumberToObject(root, "rel_heading_e5", diagnostics.rel_heading_e5);
+    cJSON_AddNumberToObject(root, "rel_accuracy_mm", diagnostics.rel_accuracy_mm);
 
     cJSON *constellations = cJSON_AddArrayToObject(root, "constellations");
     gnss_constellations_json_fill(constellations, &diagnostics);

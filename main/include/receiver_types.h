@@ -77,6 +77,20 @@ typedef struct receiver_status {
     bool command_busy;
     bool profile_pending;
     char last_command_status[32];
+    bool hp_position_valid;
+    int64_t latitude_e9;
+    int64_t longitude_e9;
+    int32_t height_mm;
+    int32_t hmsl_mm;
+    uint32_t horizontal_accuracy_mm;
+    uint32_t vertical_accuracy_mm;
+    bool relpos_valid;
+    int32_t rel_north_mm;
+    int32_t rel_east_mm;
+    int32_t rel_down_mm;
+    int32_t rel_length_mm;
+    int32_t rel_heading_e5;
+    uint32_t rel_accuracy_mm;
 } receiver_status_t;
 
 typedef struct receiver_satellite {
@@ -109,6 +123,20 @@ typedef struct receiver_diagnostics {
     uint32_t constellation_visible[RECEIVER_CONSTELLATION_COUNT];
     uint32_t constellation_cn0_mean[RECEIVER_CONSTELLATION_COUNT];
     uint32_t constellation_cn0_max[RECEIVER_CONSTELLATION_COUNT];
+    bool hp_position_valid;
+    int64_t latitude_e9;
+    int64_t longitude_e9;
+    int32_t height_mm;
+    int32_t hmsl_mm;
+    uint32_t horizontal_accuracy_mm;
+    uint32_t vertical_accuracy_mm;
+    bool relpos_valid;
+    int32_t rel_north_mm;
+    int32_t rel_east_mm;
+    int32_t rel_down_mm;
+    int32_t rel_length_mm;
+    int32_t rel_heading_e5;
+    uint32_t rel_accuracy_mm;
 } receiver_diagnostics_t;
 
 typedef struct receiver_base_status {

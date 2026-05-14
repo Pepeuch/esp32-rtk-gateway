@@ -343,6 +343,11 @@ static uint32_t receiver_u32_le(const uint8_t *data)
            ((uint32_t)data[3] << 24);
 }
 
+static int32_t receiver_i32_le(const uint8_t *data)
+{
+    return (int32_t)receiver_u32_le(data);
+}
+
 static uint32_t receiver_parse_decimal_centi(const char *text)
 {
     if (text == NULL || *text == '\0') {
@@ -833,6 +838,81 @@ static void receiver_parse_ubx_nav_sat_locked(const uint8_t *payload, uint16_t l
     }
 }
 
+static void receiver_parse_ubx_nav_hpposllh_locked(const uint8_t *payload, uint16_t length)
+{
+    if (payload == NULL || length < 36) {
+        s_receiver.status.parser_errors++;
+        return;
+    }
+
+    int32_t lon = receiver_i32_le(payload + 8);
+    int32_t lat = receiver_i32_le(payload + 12);
+    int32_t height = receiver_i32_le(payload + 16);
+    int32_t hmsl = receiver_i32_le(payload + 20);
+    int8_t lon_hp = (int8_t)payload[24];
+    int8_t lat_hp = (int8_t)payload[25];
+    int8_t height_hp = (int8_t)payload[26];
+    int8_t hmsl_hp = (int8_t)payload[27];
+    uint32_t h_acc_tenth_mm = receiver_u32_le(payload + 28);
+    uint32_t v_acc_tenth_mm = receiver_u32_le(payload + 32);
+
+    s_receiver.status.hp_position_valid = true;
+    s_receiver.status.longitude_e9 = ((int64_t)lon * 100LL) + (int64_t)lon_hp;
+    s_receiver.status.latitude_e9 = ((int64_t)lat * 100LL) + (int64_t)lat_hp;
+    s_receiver.status.height_mm = height + ((height_hp >= 5) ? 1 : ((height_hp <= -5) ? -1 : 0));
+    s_receiver.status.hmsl_mm = hmsl + ((hmsl_hp >= 5) ? 1 : ((hmsl_hp <= -5) ? -1 : 0));
+    s_receiver.status.horizontal_accuracy_mm = (h_acc_tenth_mm + 5u) / 10u;
+    s_receiver.status.vertical_accuracy_mm = (v_acc_tenth_mm + 5u) / 10u;
+}
+
+static void receiver_parse_ubx_nav_relposned_locked(const uint8_t *payload, uint16_t length)
+{
+    if (payload == NULL || length < 64) {
+        s_receiver.status.parser_errors++;
+        return;
+    }
+
+    int32_t rel_n = receiver_i32_le(payload + 8);
+    int32_t rel_e = receiver_i32_le(payload + 12);
+    int32_t rel_d = receiver_i32_le(payload + 16);
+    int32_t rel_len = receiver_i32_le(payload + 20);
+    int8_t rel_hp_n = (int8_t)payload[24];
+    int8_t rel_hp_e = (int8_t)payload[25];
+    int8_t rel_hp_d = (int8_t)payload[26];
+    int8_t rel_hp_len = (int8_t)payload[27];
+    uint32_t acc_n_tenth_mm = receiver_u32_le(payload + 28);
+    uint32_t acc_e_tenth_mm = receiver_u32_le(payload + 32);
+    uint32_t acc_d_tenth_mm = receiver_u32_le(payload + 36);
+    uint32_t rel_heading = receiver_u32_le(payload + 40);
+    uint32_t acc_len_tenth_mm = receiver_u32_le(payload + 44);
+    uint32_t flags = receiver_u32_le(payload + 60);
+    bool rel_valid = (flags & (1u << 2)) != 0;
+    uint8_t carr_soln = (uint8_t)((flags >> 3) & 0x03u);
+
+    s_receiver.status.relpos_valid = rel_valid;
+    s_receiver.status.rel_north_mm = rel_n + ((rel_hp_n >= 5) ? 1 : ((rel_hp_n <= -5) ? -1 : 0));
+    s_receiver.status.rel_east_mm = rel_e + ((rel_hp_e >= 5) ? 1 : ((rel_hp_e <= -5) ? -1 : 0));
+    s_receiver.status.rel_down_mm = rel_d + ((rel_hp_d >= 5) ? 1 : ((rel_hp_d <= -5) ? -1 : 0));
+    s_receiver.status.rel_length_mm = rel_len + ((rel_hp_len >= 5) ? 1 : ((rel_hp_len <= -5) ? -1 : 0));
+    s_receiver.status.rel_heading_e5 = (int32_t)rel_heading;
+
+    uint32_t worst_acc_tenth_mm = acc_n_tenth_mm;
+    if (acc_e_tenth_mm > worst_acc_tenth_mm) worst_acc_tenth_mm = acc_e_tenth_mm;
+    if (acc_d_tenth_mm > worst_acc_tenth_mm) worst_acc_tenth_mm = acc_d_tenth_mm;
+    if (acc_len_tenth_mm > worst_acc_tenth_mm) worst_acc_tenth_mm = acc_len_tenth_mm;
+    s_receiver.status.rel_accuracy_mm = (worst_acc_tenth_mm + 5u) / 10u;
+
+    if (rel_valid) {
+        if (carr_soln == 2) {
+            snprintf(s_receiver.status.fix_type, sizeof(s_receiver.status.fix_type), "%s", "rtk_fixed");
+            snprintf(s_receiver.status.rtk_status, sizeof(s_receiver.status.rtk_status), "%s", "fixed");
+        } else if (carr_soln == 1) {
+            snprintf(s_receiver.status.fix_type, sizeof(s_receiver.status.fix_type), "%s", "rtk_float");
+            snprintf(s_receiver.status.rtk_status, sizeof(s_receiver.status.rtk_status), "%s", "float");
+        }
+    }
+}
+
 static void receiver_parse_ubx_mon_ver_locked(const uint8_t *payload, uint16_t length)
 {
     if (payload == NULL || length < 40) {
@@ -870,8 +950,12 @@ static void receiver_parse_ubx_packet_locked(uint8_t message_class, uint8_t mess
 
     if (message_class == 0x01 && message_id == 0x07) {
         receiver_parse_ubx_nav_pvt_locked(payload, length);
+    } else if (message_class == 0x01 && message_id == 0x14) {
+        receiver_parse_ubx_nav_hpposllh_locked(payload, length);
     } else if (message_class == 0x01 && message_id == 0x35) {
         receiver_parse_ubx_nav_sat_locked(payload, length);
+    } else if (message_class == 0x01 && message_id == 0x3C) {
+        receiver_parse_ubx_nav_relposned_locked(payload, length);
     } else if (message_class == 0x0A && message_id == 0x04) {
         receiver_parse_ubx_mon_ver_locked(payload, length);
     }
@@ -1559,6 +1643,20 @@ esp_err_t receiver_get_diagnostics(receiver_diagnostics_t *diagnostics)
     diagnostics->satellites_used = s_receiver.status.satellites_used;
     diagnostics->cn0_mean = s_receiver.status.cn0_mean;
     diagnostics->cn0_max = s_receiver.status.cn0_max;
+    diagnostics->hp_position_valid = s_receiver.status.hp_position_valid;
+    diagnostics->latitude_e9 = s_receiver.status.latitude_e9;
+    diagnostics->longitude_e9 = s_receiver.status.longitude_e9;
+    diagnostics->height_mm = s_receiver.status.height_mm;
+    diagnostics->hmsl_mm = s_receiver.status.hmsl_mm;
+    diagnostics->horizontal_accuracy_mm = s_receiver.status.horizontal_accuracy_mm;
+    diagnostics->vertical_accuracy_mm = s_receiver.status.vertical_accuracy_mm;
+    diagnostics->relpos_valid = s_receiver.status.relpos_valid;
+    diagnostics->rel_north_mm = s_receiver.status.rel_north_mm;
+    diagnostics->rel_east_mm = s_receiver.status.rel_east_mm;
+    diagnostics->rel_down_mm = s_receiver.status.rel_down_mm;
+    diagnostics->rel_length_mm = s_receiver.status.rel_length_mm;
+    diagnostics->rel_heading_e5 = s_receiver.status.rel_heading_e5;
+    diagnostics->rel_accuracy_mm = s_receiver.status.rel_accuracy_mm;
 
     uint32_t constellation_cn0_samples[RECEIVER_CONSTELLATION_COUNT] = {0};
     for (size_t i = 0; i < RECEIVER_MAX_SATELLITES; i++) {
