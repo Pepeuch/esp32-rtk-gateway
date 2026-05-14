@@ -318,6 +318,14 @@
             var gnssRawConsole = $('#gnss-raw-console');
             var gnssBaseSummary = $('.gnss-base-summary');
             var gnssBaseStatus = $('.gnss-base-status');
+            var currentQosState = 'normal';
+            var nextGnssRefreshAt = 0;
+
+            var pollDelayForQos = function(state, normal, degraded, critical) {
+                if (state === 'critical') return critical;
+                if (state === 'degraded') return degraded;
+                return normal;
+            };
             var capabilitiesSummary = $('.capabilities-summary');
             var ntripSlotsSummary = $('.ntrip-slots-summary');
             var ntripRuntimeSummary = $('.ntrip-runtime-summary');
@@ -374,7 +382,11 @@
                     .append($('<span>', {class: 'capability-pill', text: humanDataSize(runtime.free_heap_bytes || 0) + ' free heap'}))
                     .append($('<span>', {class: 'capability-pill', text: humanDataSize(runtime.min_free_heap_bytes || 0) + ' min heap'}))
                     .append($('<span>', {class: 'capability-pill', text: runtime.fake_rtcm_enabled ? ('Fake RTCM ' + (runtime.fake_rtcm_rate_hz || 0) + 'Hz') : 'Fake RTCM off'}))
-                    .append($('<span>', {class: 'capability-pill', text: runtime.safe_mode ? 'Safe mode' : 'Normal mode'}));
+                    .append($('<span>', {class: 'capability-pill', text: runtime.safe_mode ? 'Safe mode' : 'Normal mode'}))
+                    .append($('<span>', {class: 'capability-pill', text: 'QoS ' + (runtime.qos_state || 'normal')}));
+                if (runtime.qos_reason && runtime.qos_reason !== 'normal') {
+                    ntripRuntimeSummary.append($('<span>', {class: 'capability-pill', text: runtime.qos_reason}));
+                }
             };
 
             var renderGnssSummary = function(gnss) {
@@ -745,10 +757,11 @@
                         updateNtripSlotRuntime(data.slots);
                     }
                     if (data && data.runtime) {
+                        currentQosState = data.runtime.qos_state || currentQosState;
                         renderNtripRuntimeSummary(data.runtime);
                     }
                 }).always(function() {
-                    setTimeout(refreshNtripRuntime, 2500);
+                    setTimeout(refreshNtripRuntime, pollDelayForQos(currentQosState, 2500, 5000, 9000));
                 });
             };
 
@@ -824,7 +837,14 @@
                     if (data.gnss) {
                         renderGnssSummary(data.gnss);
                     }
-                    refreshGnssViews();
+                    if (data.qos && data.qos.state) {
+                        currentQosState = data.qos.state;
+                    }
+                    var now = Date.now();
+                    if (now >= nextGnssRefreshAt) {
+                        refreshGnssViews();
+                        nextGnssRefreshAt = now + pollDelayForQos(currentQosState, 2500, 6000, 12000);
+                    }
 
                     if (data.ntrip && Array.isArray(data.ntrip.slots)) {
                         ntripSlotsSummary.empty();
@@ -857,7 +877,7 @@
                         updateNtripSlotRuntime(data.ntrip.slots);
                     }
                 }).always(function() {
-                    setTimeout(statusUpdate, 2500);
+                    setTimeout(statusUpdate, pollDelayForQos(currentQosState, 2500, 5000, 9000));
                 });
             };
             statusUpdate();

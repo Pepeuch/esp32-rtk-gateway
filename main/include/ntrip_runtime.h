@@ -19,6 +19,12 @@ typedef enum ntrip_runtime_state {
     NTRIP_RUNTIME_STATE_ERROR,
 } ntrip_runtime_state_t;
 
+typedef enum ntrip_runtime_qos_state {
+    NTRIP_RUNTIME_QOS_NORMAL = 0,
+    NTRIP_RUNTIME_QOS_DEGRADED,
+    NTRIP_RUNTIME_QOS_CRITICAL,
+} ntrip_runtime_qos_state_t;
+
 typedef enum ntrip_runtime_mock_mode {
     NTRIP_RUNTIME_MOCK_NONE = 0,
     NTRIP_RUNTIME_MOCK_CONNECT_OK,
@@ -66,6 +72,12 @@ typedef struct ntrip_runtime_info {
     uint32_t psram_total_bytes;
     uint32_t psram_free_bytes;
     uint32_t psram_min_free_bytes;
+    uint32_t active_socket_count;
+    uint32_t max_socket_count;
+    bool ethernet_ready;
+    bool wifi_ready;
+    ntrip_runtime_qos_state_t qos_state;
+    char qos_reason[96];
 } ntrip_runtime_info_t;
 
 typedef enum ntrip_runtime_selftest_state {
@@ -117,6 +129,8 @@ void ntrip_runtime_fake_rtcm_stop(void);
 esp_err_t ntrip_runtime_set_mock_mode(size_t slot_index, ntrip_runtime_mock_mode_t mode, uint32_t value);
 esp_err_t ntrip_runtime_selftest_start(void);
 void ntrip_runtime_selftest_get_result(ntrip_runtime_selftest_result_t *result);
+bool ntrip_runtime_qos_is_critical(void);
+const char *ntrip_runtime_qos_state_name(ntrip_runtime_qos_state_t state);
 const char *ntrip_runtime_state_name(ntrip_runtime_state_t state);
 const char *ntrip_runtime_mock_mode_name(ntrip_runtime_mock_mode_t mode);
 const char *ntrip_runtime_selftest_state_name(ntrip_runtime_selftest_state_t state);

@@ -18,8 +18,10 @@
 #include "freertos/stream_buffer.h"
 #include "freertos/task.h"
 #include "interface/ntrip.h"
+#include "lwip/sockets.h"
 #include "memory_policy.h"
 #include "network.h"
+#include "receiver.h"
 #include "stream_stats.h"
 #include "tasks.h"
 #include "uart.h"
@@ -38,6 +40,11 @@ static const char *TAG = "NTRIP_RUNTIME";
 #define NTRIP_FAKE_RTCM_RATE_HZ_DEFAULT 5
 #define NTRIP_MONITOR_LOG_INTERVAL_TICKS 10
 #define NTRIP_WDT_DELAY_SLICE_MS 100
+#define NTRIP_QOS_HEAP_DEGRADED_BYTES (96 * 1024)
+#define NTRIP_QOS_HEAP_CRITICAL_BYTES (64 * 1024)
+#define NTRIP_QOS_RINGBUFFER_DEGRADED_BYTES ((NTRIP_RTCM_BUFFER_SIZE * 3) / 4)
+#define NTRIP_QOS_RINGBUFFER_CRITICAL_BYTES ((NTRIP_RTCM_BUFFER_SIZE * 9) / 10)
+#define NTRIP_QOS_RECENT_DROP_WINDOW_US (15LL * 1000LL * 1000LL)
 
 typedef struct ntrip_runtime_slot {
     size_t index;
@@ -83,6 +90,14 @@ static uint32_t s_runtime_psram_total_bytes = 0;
 static uint32_t s_runtime_psram_free_bytes = 0;
 static uint32_t s_runtime_psram_min_free_bytes = 0;
 static uint32_t s_runtime_active_slot_count = 0;
+static uint32_t s_runtime_active_socket_count = 0;
+static uint32_t s_runtime_total_dropped_packets_seen = 0;
+static int64_t s_runtime_last_drop_us = 0;
+static bool s_runtime_ethernet_ready = false;
+static bool s_runtime_wifi_ready = false;
+static bool s_runtime_raw_console_enabled = true;
+static ntrip_runtime_qos_state_t s_runtime_qos_state = NTRIP_RUNTIME_QOS_NORMAL;
+static char s_runtime_qos_reason[96] = "normal";
 static bool s_runtime_safe_mode = false;
 static ntrip_runtime_slot_t s_runtime_slots[NTRIP_SLOT_COUNT];
 static stream_stats_handle_t s_runtime_stats[NTRIP_SLOT_COUNT];
@@ -207,6 +222,33 @@ static void ntrip_runtime_note_socket_closed(ntrip_runtime_slot_t *slot)
     ntrip_runtime_lock();
     destroy_socket(&slot->sock);
     ntrip_runtime_unlock();
+}
+
+static uint32_t ntrip_runtime_count_active_sockets(void)
+{
+    uint32_t active = 0;
+
+    for (int s = LWIP_SOCKET_OFFSET; s < LWIP_SOCKET_OFFSET + CONFIG_LWIP_MAX_SOCKETS; s++) {
+        int socktype = 0;
+        socklen_t socktype_len = sizeof(socktype);
+        if (getsockopt(s, SOL_SOCKET, SO_TYPE, &socktype, &socktype_len) == 0) {
+            active++;
+        }
+    }
+
+    return active;
+}
+
+static void ntrip_runtime_reason_append(char *buffer, size_t buffer_size, const char *token)
+{
+    if (buffer == NULL || buffer_size == 0 || token == NULL || token[0] == '\0') {
+        return;
+    }
+
+    if (buffer[0] != '\0') {
+        strlcat(buffer, ",", buffer_size);
+    }
+    strlcat(buffer, token, buffer_size);
 }
 
 static void ntrip_runtime_slot_test_config(size_t slot_index, bool enabled, ntrip_slot_config_t *config)
@@ -897,7 +939,16 @@ static void ntrip_runtime_supervisor_task(void *ctx)
         bool safe_mode = memory.heap_free_bytes < (48 * 1024);
         size_t allowed_started = 0;
         size_t active_slot_count = 0;
+        uint32_t max_ringbuffer_used = 0;
+        uint32_t max_ringbuffer_high_water = 0;
+        uint32_t total_dropped_packets = 0;
+        uint32_t active_socket_count = ntrip_runtime_count_active_sockets();
+        wifi_sta_status_t sta_status = {0};
+        wifi_ap_status_t ap_status = {0};
+        int64_t now_us = esp_timer_get_time();
 
+        wifi_sta_status(&sta_status);
+        wifi_ap_status(&ap_status);
         capabilities_get(&capabilities);
 
         for (size_t i = 0; i < NTRIP_SLOT_COUNT; i++) {
@@ -913,8 +964,11 @@ static void ntrip_runtime_supervisor_task(void *ctx)
 
             ntrip_runtime_lock();
             ntrip_runtime_slot_t *slot = &s_runtime_slots[i];
+            uint32_t ringbuffer_used = 0;
+            uint32_t ringbuffer_free = 0;
             slot->should_run = allow_slot;
             ntrip_runtime_update_ringbuffer_high_water_locked(slot);
+            ntrip_runtime_ringbuffer_usage_locked(slot, &ringbuffer_used, &ringbuffer_free);
 
             if (!config.enabled) {
                 slot->stop_requested = true;
@@ -942,6 +996,14 @@ static void ntrip_runtime_supervisor_task(void *ctx)
                 active_slot_count++;
             }
 
+            if (ringbuffer_used > max_ringbuffer_used) {
+                max_ringbuffer_used = ringbuffer_used;
+            }
+            if (slot->ringbuffer_high_water > max_ringbuffer_high_water) {
+                max_ringbuffer_high_water = slot->ringbuffer_high_water;
+            }
+            total_dropped_packets += slot->dropped_rtcm_packets;
+
             if (slot->bytes_sent >= slot->last_rate_bytes_sent) {
                 slot->bytes_per_sec = slot->bytes_sent - slot->last_rate_bytes_sent;
             } else {
@@ -957,24 +1019,69 @@ static void ntrip_runtime_supervisor_task(void *ctx)
             ntrip_runtime_unlock();
         }
 
+        bool recent_drop = false;
+        bool heap_critical = memory.heap_free_bytes < NTRIP_QOS_HEAP_CRITICAL_BYTES;
+        bool heap_degraded = memory.heap_free_bytes < NTRIP_QOS_HEAP_DEGRADED_BYTES;
+        bool sockets_critical = active_socket_count >= (CONFIG_LWIP_MAX_SOCKETS - 1);
+        bool sockets_degraded = active_socket_count >= (CONFIG_LWIP_MAX_SOCKETS - 2);
+        bool ringbuffer_critical = max_ringbuffer_used >= NTRIP_QOS_RINGBUFFER_CRITICAL_BYTES ||
+                                   max_ringbuffer_high_water >= NTRIP_QOS_RINGBUFFER_CRITICAL_BYTES;
+        bool ringbuffer_degraded = max_ringbuffer_used >= NTRIP_QOS_RINGBUFFER_DEGRADED_BYTES ||
+                                   max_ringbuffer_high_water >= NTRIP_QOS_RINGBUFFER_DEGRADED_BYTES;
+
         ntrip_runtime_lock();
         s_runtime_active_slot_count = (uint32_t)active_slot_count;
+        s_runtime_active_socket_count = active_socket_count;
         s_runtime_free_heap_bytes = (uint32_t)memory.heap_free_bytes;
         s_runtime_min_free_heap_bytes = (uint32_t)memory.heap_min_free_bytes;
         s_runtime_psram_total_bytes = (uint32_t)memory.psram_total_bytes;
         s_runtime_psram_free_bytes = (uint32_t)memory.psram_free_bytes;
         s_runtime_psram_min_free_bytes = (uint32_t)memory.psram_min_free_bytes;
         s_runtime_safe_mode = safe_mode;
+        s_runtime_ethernet_ready = capabilities.ethernet_active;
+        s_runtime_wifi_ready = sta_status.connected || ap_status.active;
+        if (total_dropped_packets > s_runtime_total_dropped_packets_seen) {
+            s_runtime_total_dropped_packets_seen = total_dropped_packets;
+            s_runtime_last_drop_us = now_us;
+        }
+        recent_drop = s_runtime_last_drop_us > 0 && (now_us - s_runtime_last_drop_us) <= NTRIP_QOS_RECENT_DROP_WINDOW_US;
+        s_runtime_qos_state = NTRIP_RUNTIME_QOS_NORMAL;
+        snprintf(s_runtime_qos_reason, sizeof(s_runtime_qos_reason), "%s", "normal");
+        if (safe_mode || heap_critical || sockets_critical || ringbuffer_critical || recent_drop) {
+            s_runtime_qos_state = NTRIP_RUNTIME_QOS_CRITICAL;
+            s_runtime_qos_reason[0] = '\0';
+            if (safe_mode || heap_critical) ntrip_runtime_reason_append(s_runtime_qos_reason, sizeof(s_runtime_qos_reason), "heap_low");
+            if (sockets_critical) ntrip_runtime_reason_append(s_runtime_qos_reason, sizeof(s_runtime_qos_reason), "sockets_high");
+            if (ringbuffer_critical) ntrip_runtime_reason_append(s_runtime_qos_reason, sizeof(s_runtime_qos_reason), "ringbuffer_high");
+            if (recent_drop) ntrip_runtime_reason_append(s_runtime_qos_reason, sizeof(s_runtime_qos_reason), "dropped_packets");
+        } else if (heap_degraded || sockets_degraded || ringbuffer_degraded) {
+            s_runtime_qos_state = NTRIP_RUNTIME_QOS_DEGRADED;
+            s_runtime_qos_reason[0] = '\0';
+            if (heap_degraded) ntrip_runtime_reason_append(s_runtime_qos_reason, sizeof(s_runtime_qos_reason), "heap_low");
+            if (sockets_degraded) ntrip_runtime_reason_append(s_runtime_qos_reason, sizeof(s_runtime_qos_reason), "sockets_high");
+            if (ringbuffer_degraded) ntrip_runtime_reason_append(s_runtime_qos_reason, sizeof(s_runtime_qos_reason), "ringbuffer_high");
+        }
+        if (s_runtime_qos_state == NTRIP_RUNTIME_QOS_CRITICAL) {
+            s_fake_rtcm_stop_requested = true;
+            s_runtime_raw_console_enabled = false;
+        } else {
+            s_runtime_raw_console_enabled = true;
+        }
         ntrip_runtime_unlock();
+        receiver_set_raw_console_enabled(!safe_mode && s_runtime_raw_console_enabled);
 
         log_tick++;
         if ((log_tick % NTRIP_MONITOR_LOG_INTERVAL_TICKS) == 0) {
             ESP_LOGI(
                 TAG,
-                "runtime heap free=%" PRIu32 " min=%" PRIu32 " active_slots=%u fake_rtcm=%s",
+                "runtime heap free=%" PRIu32 " min=%" PRIu32 " sockets=%" PRIu32 "/%u active_slots=%u qos=%s reason=%s fake_rtcm=%s",
                 s_runtime_free_heap_bytes,
                 s_runtime_min_free_heap_bytes,
+                s_runtime_active_socket_count,
+                CONFIG_LWIP_MAX_SOCKETS,
                 (unsigned)s_runtime_active_slot_count,
+                ntrip_runtime_qos_state_name(s_runtime_qos_state),
+                s_runtime_qos_reason,
                 s_fake_rtcm_enabled ? "on" : "off"
             );
             for (size_t i = 0; i < NTRIP_SLOT_COUNT; i++) {
@@ -1066,6 +1173,10 @@ esp_err_t ntrip_runtime_fake_rtcm_start(uint32_t rate_hz, uint32_t packet_size)
 {
     if (!s_runtime_initialized) {
         ESP_RETURN_ON_ERROR(ntrip_runtime_init(), TAG, "runtime init failed");
+    }
+
+    if (ntrip_runtime_qos_is_critical()) {
+        return ESP_ERR_INVALID_STATE;
     }
 
     if (rate_hz == 0) {
@@ -1230,6 +1341,12 @@ void ntrip_runtime_get_info(ntrip_runtime_info_t *info)
     info->psram_total_bytes = s_runtime_psram_total_bytes;
     info->psram_free_bytes = s_runtime_psram_free_bytes;
     info->psram_min_free_bytes = s_runtime_psram_min_free_bytes;
+    info->active_socket_count = s_runtime_active_socket_count;
+    info->max_socket_count = CONFIG_LWIP_MAX_SOCKETS;
+    info->ethernet_ready = s_runtime_ethernet_ready;
+    info->wifi_ready = s_runtime_wifi_ready;
+    info->qos_state = s_runtime_qos_state;
+    snprintf(info->qos_reason, sizeof(info->qos_reason), "%s", s_runtime_qos_reason);
     ntrip_runtime_unlock();
 }
 
@@ -1240,6 +1357,10 @@ esp_err_t ntrip_runtime_selftest_start(void)
     }
 
     ntrip_runtime_lock();
+    if (s_runtime_qos_state == NTRIP_RUNTIME_QOS_CRITICAL) {
+        ntrip_runtime_unlock();
+        return ESP_ERR_INVALID_STATE;
+    }
     if (s_selftest_task != NULL || s_selftest_result.state == NTRIP_SELFTEST_RUNNING) {
         ntrip_runtime_unlock();
         return ESP_ERR_INVALID_STATE;
@@ -1274,6 +1395,30 @@ void ntrip_runtime_selftest_get_result(ntrip_runtime_selftest_result_t *result)
     ntrip_runtime_lock();
     memcpy(result, &s_selftest_result, sizeof(*result));
     ntrip_runtime_unlock();
+}
+
+bool ntrip_runtime_qos_is_critical(void)
+{
+    bool critical;
+
+    ntrip_runtime_lock();
+    critical = s_runtime_qos_state == NTRIP_RUNTIME_QOS_CRITICAL;
+    ntrip_runtime_unlock();
+    return critical;
+}
+
+const char *ntrip_runtime_qos_state_name(ntrip_runtime_qos_state_t state)
+{
+    switch (state) {
+        case NTRIP_RUNTIME_QOS_NORMAL:
+            return "normal";
+        case NTRIP_RUNTIME_QOS_DEGRADED:
+            return "degraded";
+        case NTRIP_RUNTIME_QOS_CRITICAL:
+            return "critical";
+        default:
+            return "unknown";
+    }
 }
 
 const char *ntrip_runtime_state_name(ntrip_runtime_state_t state)

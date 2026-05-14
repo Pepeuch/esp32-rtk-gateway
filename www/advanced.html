@@ -31,6 +31,13 @@
             var rawConsole = $('#gnss-raw-console');
             var ntripRuntime = $('.ntrip-runtime');
             var selftestStatus = $('.selftest-status');
+            var currentQosState = 'normal';
+
+            var pollDelayForQos = function(state) {
+                if (state === 'critical') return 12000;
+                if (state === 'degraded') return 8000;
+                return 4000;
+            };
 
             var appendPill = function(container, text) {
                 container.append($('<span>', {class: 'capability-pill', text: text}));
@@ -103,6 +110,10 @@
                     appendPill(ntripRuntime, (data.runtime.active_slot_count || 0) + ' active slots');
                     appendPill(ntripRuntime, humanDataSize(data.runtime.free_heap_bytes || 0) + ' free heap');
                     appendPill(ntripRuntime, data.runtime.fake_rtcm_enabled ? 'Fake RTCM on' : 'Fake RTCM off');
+                    appendPill(ntripRuntime, 'QoS ' + (data.runtime.qos_state || 'normal'));
+                    if (data.runtime.qos_reason && data.runtime.qos_reason !== 'normal') {
+                        appendPill(ntripRuntime, data.runtime.qos_reason);
+                    }
                 }
 
                 data.slots.forEach(function(slot) {
@@ -114,19 +125,40 @@
             };
 
             var refreshAdvanced = function() {
-                $.getJSON('api/gnss/diagnostics').done(renderDiagnostics);
-                $.getJSON('api/gnss/satellites').done(renderSatellites);
-                $.getJSON('api/gnss/receiver/raw').done(function(data) {
-                    rawConsole.val(data && data.raw ? data.raw : '');
-                });
-                $.getJSON('api/ntrip/runtime').done(renderRuntime).always(function() {
-                    setTimeout(refreshAdvanced, 4000);
+                $.getJSON('api/ntrip/runtime').done(function(data) {
+                    if (data && data.runtime && data.runtime.qos_state) {
+                        currentQosState = data.runtime.qos_state;
+                    }
+                    renderRuntime(data);
+
+                    $.getJSON('api/gnss/diagnostics').done(renderDiagnostics);
+                    $.getJSON('api/gnss/satellites').done(renderSatellites);
+
+                    if (currentQosState === 'critical') {
+                        rawConsole.val('Raw console disabled while QoS is critical');
+                        $('#fake-rtcm-start, #selftest-start').prop('disabled', true);
+                    } else {
+                        $('#fake-rtcm-start, #selftest-start').prop('disabled', false);
+                        $.getJSON('api/gnss/receiver/raw').done(function(data) {
+                            rawConsole.val(data && data.raw ? data.raw : '');
+                        }).fail(function() {
+                            rawConsole.val('Raw console unavailable');
+                        });
+                    }
+                }).always(function() {
+                    setTimeout(refreshAdvanced, pollDelayForQos(currentQosState));
                 });
             };
 
             var refreshSelftest = function() {
+                if (currentQosState === 'critical') {
+                    selftestStatus.text('Self-test result polling paused while QoS is critical');
+                    return;
+                }
                 $.getJSON('api/dev/ntrip/selftest/result').done(function(data) {
                     selftestStatus.text(JSON.stringify(data || {}, null, 2));
+                }).fail(function() {
+                    selftestStatus.text('Self-test result unavailable');
                 });
             };
 

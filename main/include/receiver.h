@@ -24,6 +24,7 @@ receiver_profile_t receiver_profile_from_name(const char *name);
 esp_err_t receiver_apply_profile(receiver_profile_t profile, bool persist);
 esp_err_t receiver_queue_command(const char *command, const char *expect);
 esp_err_t receiver_get_raw_output(char *buffer, size_t buffer_size, size_t *out_length);
+void receiver_set_raw_console_enabled(bool enabled);
 esp_err_t receiver_get_base_status(receiver_base_status_t *status);
 esp_err_t receiver_base_start_survey(uint32_t duration_s, uint32_t accuracy_mm, bool rtcm_output, bool persist);
 esp_err_t receiver_base_stop_survey(bool persist);

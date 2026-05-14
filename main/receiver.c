@@ -81,6 +81,7 @@ typedef struct receiver_context {
     size_t raw_buffer_size;
     size_t raw_length;
     bool raw_buffer_psram;
+    bool raw_console_enabled;
     bool command_busy;
     bool expect_matched;
     char expect_token[RECEIVER_EXPECT_MAX_LEN];
@@ -377,7 +378,7 @@ static uint32_t receiver_parse_decimal_centi(const char *text)
 
 static void receiver_raw_append_locked(const char *prefix, const char *text)
 {
-    if (text == NULL || s_receiver.raw_buffer == NULL || s_receiver.raw_buffer_size < 2) {
+    if (text == NULL || !s_receiver.raw_console_enabled || s_receiver.raw_buffer == NULL || s_receiver.raw_buffer_size < 2) {
         return;
     }
 
@@ -1536,6 +1537,7 @@ esp_err_t receiver_init(void)
     s_receiver.raw_buffer_size = raw_buffer_size;
     s_receiver.raw_length = 0;
     s_receiver.raw_buffer_psram = raw_buffer_psram;
+    s_receiver.raw_console_enabled = true;
     s_receiver.configured_type = receiver_configured_type();
     s_receiver.detected_type = RECEIVER_TYPE_UNKNOWN;
     s_receiver.configured_mode = receiver_configured_mode();
@@ -1721,6 +1723,22 @@ esp_err_t receiver_get_diagnostics(receiver_diagnostics_t *diagnostics)
 
     receiver_unlock();
     return ESP_OK;
+}
+
+void receiver_set_raw_console_enabled(bool enabled)
+{
+    if (!s_receiver.initialized) {
+        return;
+    }
+
+    receiver_lock();
+    s_receiver.raw_console_enabled = enabled;
+    if (!enabled && s_receiver.raw_buffer != NULL && s_receiver.raw_buffer_size > 0) {
+        s_receiver.raw_length = 0;
+        s_receiver.raw_buffer[0] = '\0';
+        s_receiver.status.raw_buffer_used = 0;
+    }
+    receiver_unlock();
 }
 
 esp_err_t receiver_get_raw_output(char *buffer, size_t buffer_size, size_t *out_length)

@@ -130,7 +130,9 @@
             appendPill(gnssSummary, gnss.rtcm_alive && !gnss.rtcm_stale ? 'RTCM alive' : (gnss.rtcm_stale ? 'RTCM stale' : 'RTCM idle'));
         };
 
-        const renderCapabilities = (cap) => {
+        const pollDelayForQos = (state) => state === 'critical' ? 10000 : (state === 'degraded' ? 6000 : 3000);
+
+        const renderCapabilities = (cap, qos) => {
             clearNode(capabilitiesSummary);
             if (!cap) return setMutedText(capabilitiesSummary, 'Capabilities unavailable');
             appendPill(capabilitiesSummary, cap.chip_family || 'unknown');
@@ -138,6 +140,9 @@
             appendPill(capabilitiesSummary, (cap.max_ntrip_slots || 0) + ' NTRIP slots');
             appendPill(capabilitiesSummary, cap.psram_available ? 'PSRAM' : 'No PSRAM');
             appendPill(capabilitiesSummary, cap.ethernet_active ? 'Ethernet active' : 'Wi-Fi only');
+            if (qos && qos.state) {
+                appendPill(capabilitiesSummary, 'QoS ' + qos.state + (qos.reason && qos.reason !== 'normal' ? ' (' + qos.reason + ')' : ''));
+            }
         };
 
         const renderBase = (base) => {
@@ -166,26 +171,28 @@
         };
 
         const poll = async () => {
+            let qosState = 'normal';
             try {
                 const response = await fetch('/status');
                 const data = await response.json();
+                qosState = data && data.qos && data.qos.state ? data.qos.state : 'normal';
                 footerUptime.textContent = secondsToHHMMSS(data.uptime || 0);
                 if (data.heap && data.heap.total) footerHeap.textContent = Math.round((data.heap.free || 0) / data.heap.total * 100) + '% free';
                 else footerHeap.textContent = 'n/a';
-                renderCapabilities(data.capabilities);
+                renderCapabilities(data.capabilities, data.qos);
                 renderWifi(data.wifi);
                 renderGnss(data.gnss);
                 renderNtrip(data.ntrip);
             } catch (error) {
                 setMutedText(capabilitiesSummary, 'Status unavailable');
-            } finally {
-                setTimeout(poll, 3000);
             }
             try {
                 const response = await fetch('/api/gnss/base/status');
                 renderBase(await response.json());
             } catch (error) {
                 setMutedText(baseSummary, 'Base status unavailable');
+            } finally {
+                setTimeout(poll, pollDelayForQos(qosState));
             }
         };
 

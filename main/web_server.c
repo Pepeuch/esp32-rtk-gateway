@@ -76,8 +76,62 @@ static bool json_bool_value(cJSON *entry, bool default_value);
 static uint32_t json_u32_value(cJSON *entry, uint32_t default_value);
 static int32_t json_i32_value(cJSON *entry, int32_t default_value);
 static int32_t json_scaled_e7_value(cJSON *entry, int32_t default_value);
+static esp_err_t json_response(httpd_req_t *req, cJSON *root);
+static void qos_json_fill(cJSON *root, const ntrip_runtime_info_t *info);
+static bool qos_reject_optional_request(httpd_req_t *req, const char *feature);
 static void memory_json_fill(cJSON *root);
 static void buffer_summary_json_fill(cJSON *root);
+
+static void qos_json_fill(cJSON *root, const ntrip_runtime_info_t *info)
+{
+    if (root == NULL || info == NULL) {
+        return;
+    }
+
+    cJSON *qos = cJSON_AddObjectToObject(root, "qos");
+    if (qos == NULL) {
+        return;
+    }
+
+    cJSON_AddStringToObject(qos, "state", ntrip_runtime_qos_state_name(info->qos_state));
+    cJSON_AddStringToObject(qos, "reason", info->qos_reason[0] != '\0' ? info->qos_reason : "normal");
+    cJSON_AddNumberToObject(qos, "active_socket_count", info->active_socket_count);
+    cJSON_AddNumberToObject(qos, "max_socket_count", info->max_socket_count);
+    cJSON_AddBoolToObject(qos, "ethernet_ready", info->ethernet_ready);
+    cJSON_AddBoolToObject(qos, "wifi_ready", info->wifi_ready);
+}
+
+static bool qos_reject_optional_request(httpd_req_t *req, const char *feature)
+{
+    if (req == NULL) {
+        return true;
+    }
+
+    ntrip_runtime_info_t info;
+    ntrip_runtime_get_info(&info);
+    if (info.qos_state != NTRIP_RUNTIME_QOS_CRITICAL) {
+        return false;
+    }
+
+    cJSON *root = cJSON_CreateObject();
+    if (root == NULL) {
+        ESP_LOGE(TAG, "Could not allocate QoS rejection response for %s", feature == NULL ? "optional" : feature);
+        httpd_resp_set_status(req, "503 Service Unavailable");
+        httpd_resp_send(req, "QoS critical", HTTPD_RESP_USE_STRLEN);
+        return true;
+    }
+
+    httpd_resp_set_status(req, "503 Service Unavailable");
+    cJSON_AddBoolToObject(root, "success", false);
+    cJSON_AddStringToObject(root, "error", "qos_critical");
+    cJSON_AddStringToObject(root, "feature", feature == NULL ? "optional" : feature);
+    cJSON_AddStringToObject(root, "qos_state", ntrip_runtime_qos_state_name(info.qos_state));
+    cJSON_AddStringToObject(root, "reason", info.qos_reason[0] != '\0' ? info.qos_reason : "critical");
+    if (json_response(req, root) != ESP_OK) {
+        ESP_LOGE(TAG, "Could not send QoS rejection response for %s", feature == NULL ? "optional" : feature);
+    }
+    return true;
+}
 
 enum auth_method {
     AUTH_METHOD_OPEN = 0,
@@ -415,6 +469,12 @@ static void ntrip_runtime_info_json_fill(cJSON *root)
     cJSON_AddNumberToObject(runtime, "total_ringbuffer_used", info.total_ringbuffer_used);
     cJSON_AddNumberToObject(runtime, "total_ringbuffer_high_water", info.total_ringbuffer_high_water);
     cJSON_AddNumberToObject(runtime, "total_dropped_rtcm_packets", info.total_dropped_rtcm_packets);
+    cJSON_AddNumberToObject(runtime, "active_socket_count", info.active_socket_count);
+    cJSON_AddNumberToObject(runtime, "max_socket_count", info.max_socket_count);
+    cJSON_AddBoolToObject(runtime, "ethernet_ready", info.ethernet_ready);
+    cJSON_AddBoolToObject(runtime, "wifi_ready", info.wifi_ready);
+    cJSON_AddStringToObject(runtime, "qos_state", ntrip_runtime_qos_state_name(info.qos_state));
+    cJSON_AddStringToObject(runtime, "qos_reason", info.qos_reason);
 }
 
 static void ntrip_runtime_selftest_json_fill(cJSON *root, const ntrip_runtime_selftest_result_t *result)
@@ -1324,8 +1384,12 @@ static esp_err_t status_get_handler(httpd_req_t *req) {
         cJSON_AddNumberToObject(rate, "out", values.rate_out);
     }
 
+    ntrip_runtime_info_t runtime_info;
+    ntrip_runtime_get_info(&runtime_info);
+
     // Sockets
     cJSON *sockets = cJSON_AddArrayToObject(root, "sockets");
+    uint32_t active_socket_count = 0;
     for (int s = LWIP_SOCKET_OFFSET; s < LWIP_SOCKET_OFFSET + CONFIG_LWIP_MAX_SOCKETS; s++) {
         int err;
 
@@ -1333,6 +1397,8 @@ static esp_err_t status_get_handler(httpd_req_t *req) {
         socklen_t socktype_len = sizeof(socktype);
         err = getsockopt(s, SOL_SOCKET, SO_TYPE, &socktype, &socktype_len);
         if (err < 0) continue;
+
+        active_socket_count++;
 
         cJSON *socket = cJSON_CreateObject();
 
@@ -1389,6 +1455,10 @@ static esp_err_t status_get_handler(httpd_req_t *req) {
             cJSON_AddStringToObject(sta, "ip6", ip);
         }
     }
+
+    cJSON_AddNumberToObject(root, "active_socket_count", active_socket_count);
+    cJSON_AddNumberToObject(root, "max_socket_count", CONFIG_LWIP_MAX_SOCKETS);
+    qos_json_fill(root, &runtime_info);
 
     capabilities_json_fill(cJSON_AddObjectToObject(root, "capabilities"));
     ntrip_slots_json_fill(cJSON_AddObjectToObject(root, "ntrip"));
@@ -1705,6 +1775,7 @@ static esp_err_t gnss_command_post_handler(httpd_req_t *req)
 static esp_err_t gnss_raw_get_handler(httpd_req_t *req)
 {
     if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
+    if (qos_reject_optional_request(req, "gnss_raw_console")) return ESP_FAIL;
 
     cJSON *root = cJSON_CreateObject();
     gnss_raw_json_fill(root);
@@ -1910,6 +1981,7 @@ static esp_err_t ntrip_restart_handler(httpd_req_t *req)
 static esp_err_t fake_rtcm_start_handler(httpd_req_t *req)
 {
     if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
+    if (qos_reject_optional_request(req, "fake_rtcm")) return ESP_FAIL;
 
     uint32_t rate_hz = 5;
     uint32_t packet_size = 180;
@@ -1927,7 +1999,12 @@ static esp_err_t fake_rtcm_start_handler(httpd_req_t *req)
         }
     }
 
-    if (ntrip_runtime_fake_rtcm_start(rate_hz, packet_size) != ESP_OK) {
+    esp_err_t fake_err = ntrip_runtime_fake_rtcm_start(rate_hz, packet_size);
+    if (fake_err == ESP_ERR_INVALID_STATE) {
+        qos_reject_optional_request(req, "fake_rtcm");
+        return ESP_FAIL;
+    }
+    if (fake_err != ESP_OK) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Could not start fake RTCM");
         return ESP_FAIL;
     }
@@ -1952,6 +2029,7 @@ static esp_err_t fake_rtcm_stop_handler(httpd_req_t *req)
 static esp_err_t ntrip_mock_post_handler(httpd_req_t *req)
 {
     if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
+    if (qos_reject_optional_request(req, "ntrip_mock")) return ESP_FAIL;
 
     char *request_body = NULL;
     if (request_body_alloc(req, &request_body) != ESP_OK) {
@@ -1993,9 +2071,14 @@ static esp_err_t ntrip_mock_post_handler(httpd_req_t *req)
 static esp_err_t ntrip_selftest_start_handler(httpd_req_t *req)
 {
     if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
+    if (qos_reject_optional_request(req, "ntrip_selftest")) return ESP_FAIL;
 
     esp_err_t err = ntrip_runtime_selftest_start();
     if (err == ESP_ERR_INVALID_STATE) {
+        if (ntrip_runtime_qos_is_critical()) {
+            qos_reject_optional_request(req, "ntrip_selftest");
+            return ESP_FAIL;
+        }
         httpd_resp_set_status(req, "409 Conflict");
         httpd_resp_send(req, "Self-test already running", HTTPD_RESP_USE_STRLEN);
         return ESP_FAIL;
