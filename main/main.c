@@ -44,6 +44,7 @@
 #include "network.h"
 #include "ntrip_slots.h"
 #include "ntrip_runtime.h"
+#include "receiver.h"
 
 static const char *TAG = "MAIN";
 
@@ -149,6 +150,7 @@ void app_main(void)
 
     ntrip_slots_init();
     uart_init();
+    ESP_ERROR_CHECK(receiver_init());
     ESP_ERROR_CHECK(ntrip_runtime_init());
 
     if (netif != NULL) {

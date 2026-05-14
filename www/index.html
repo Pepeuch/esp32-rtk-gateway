@@ -308,6 +308,7 @@
 
             var wifiApStatusText = form.find('.wifi-ap-status');
             var wifiStaStatusText = form.find('.wifi-sta-status');
+            var gnssSummary = $('.gnss-summary');
             var capabilitiesSummary = $('.capabilities-summary');
             var ntripSlotsSummary = $('.ntrip-slots-summary');
             var ntripRuntimeSummary = $('.ntrip-runtime-summary');
@@ -365,6 +366,26 @@
                     .append($('<span>', {class: 'capability-pill', text: humanDataSize(runtime.min_free_heap_bytes || 0) + ' min heap'}))
                     .append($('<span>', {class: 'capability-pill', text: runtime.fake_rtcm_enabled ? ('Fake RTCM ' + (runtime.fake_rtcm_rate_hz || 0) + 'Hz') : 'Fake RTCM off'}))
                     .append($('<span>', {class: 'capability-pill', text: runtime.safe_mode ? 'Safe mode' : 'Normal mode'}));
+            };
+
+            var renderGnssSummary = function(gnss) {
+                if (!gnssSummary.length || !gnss) return;
+                gnssSummary.empty();
+
+                if (!gnss.detected) {
+                    gnssSummary
+                        .append($('<div>', {class: 'small font-weight-bold mb-2', text: 'GNSS receiver'}))
+                        .append($('<div>', {class: 'small text-muted', text: 'Not connected'}));
+                    return;
+                }
+
+                gnssSummary
+                    .append($('<span>', {class: 'capability-pill', text: gnss.receiver_type || 'unknown'}))
+                    .append($('<span>', {class: 'capability-pill', text: gnss.model || 'unknown model'}))
+                    .append($('<span>', {class: 'capability-pill', text: gnss.fix_type || 'unknown fix'}))
+                    .append($('<span>', {class: 'capability-pill', text: (gnss.satellites_used || 0) + ' used / ' + (gnss.satellites_visible || 0) + ' visible'}))
+                    .append($('<span>', {class: 'capability-pill', text: 'RTK ' + (gnss.rtk_status || 'unknown')}))
+                    .append($('<span>', {class: 'capability-pill', text: 'CN0 ' + (gnss.cn0_mean || 0) + '/' + (gnss.cn0_max || 0)}));
             };
 
             var updateNtripSlotRuntime = function(slots) {
@@ -603,6 +624,10 @@
                             .append($('<span>', {class: 'capability-pill', text: cap.ethernet_active ? 'Ethernet active' : 'Wi-Fi only'}));
                     }
 
+                    if (data.gnss) {
+                        renderGnssSummary(data.gnss);
+                    }
+
                     if (data.ntrip && Array.isArray(data.ntrip.slots)) {
                         ntripSlotsSummary.empty();
                         ntripSlotsSummary.append($('<div>', {
@@ -704,6 +729,21 @@
                 const button = $(this);
                 button.prop('disabled', true);
                 $.post('api/dev/fake-rtcm/stop').always(function() {
+                    button.prop('disabled', false);
+                });
+            });
+            $('#gnss-detect').on('click', function() {
+                const button = $(this);
+                button.prop('disabled', true);
+                $.ajax({
+                    url: 'api/gnss/detect',
+                    method: 'POST',
+                    dataType: 'json'
+                }).done(function(data) {
+                    if (data) {
+                        renderGnssSummary(data);
+                    }
+                }).always(function() {
                     button.prop('disabled', false);
                 });
             });
@@ -851,6 +891,15 @@
             <div class="card-body py-3">
                 <div class="capabilities-summary small text-muted">Loading platform profile...</div>
                 <div class="ntrip-slots-summary mt-2"></div>
+            </div>
+        </div>
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>GNSS Receiver</span>
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="gnss-detect">Detect</button>
+            </div>
+            <div class="card-body py-3">
+                <div class="gnss-summary small text-muted">Loading GNSS status...</div>
             </div>
         </div>
         <div class="card mb-4">

@@ -40,6 +40,7 @@
 #include "capabilities.h"
 #include "ntrip_runtime.h"
 #include "ntrip_slots.h"
+#include "receiver.h"
 
 #if CONFIG_IDF_TARGET_ESP32
 #include <esp32/rom/crc.h>
@@ -397,6 +398,48 @@ static void ntrip_runtime_selftest_json_fill(cJSON *root, const ntrip_runtime_se
             cJSON_AddStringToObject(slot, "last_error", result->scenarios[i].slots[slot_index].last_error);
         }
     }
+}
+
+static void gnss_status_json_fill(cJSON *root)
+{
+    receiver_status_t status;
+    if (receiver_get_status(&status) != ESP_OK) {
+        cJSON_AddBoolToObject(root, "success", false);
+        cJSON_AddStringToObject(root, "state", "error");
+        cJSON_AddStringToObject(root, "error", "receiver_status_unavailable");
+        return;
+    }
+
+    cJSON_AddBoolToObject(root, "success", true);
+    cJSON_AddBoolToObject(root, "detected", status.detected);
+    cJSON_AddStringToObject(root, "receiver_type", receiver_type_name(status.receiver_type));
+    cJSON_AddStringToObject(root, "model", status.model);
+    cJSON_AddStringToObject(root, "firmware", status.firmware);
+    cJSON_AddStringToObject(root, "mode", status.mode);
+    cJSON_AddStringToObject(root, "fix_type", status.fix_type);
+    cJSON_AddStringToObject(root, "rtk_status", status.rtk_status);
+    cJSON_AddNumberToObject(root, "satellites_visible", status.satellites_visible);
+    cJSON_AddNumberToObject(root, "satellites_used", status.satellites_used);
+    cJSON_AddNumberToObject(root, "cn0_mean", status.cn0_mean);
+    cJSON_AddNumberToObject(root, "cn0_max", status.cn0_max);
+    cJSON_AddNumberToObject(root, "diff_age", status.diff_age);
+    cJSON_AddStringToObject(root, "base_id", status.base_id);
+    cJSON_AddBoolToObject(root, "rtcm_alive", status.rtcm_alive);
+    cJSON_AddNumberToObject(root, "last_message_ms", status.last_message_ms == UINT32_MAX ? 0 : status.last_message_ms);
+    cJSON_AddNumberToObject(root, "parser_errors", status.parser_errors);
+}
+
+static void gnss_capabilities_json_fill(cJSON *root)
+{
+    cJSON_AddBoolToObject(root, "success", true);
+    cJSON_AddBoolToObject(root, "observe_only", true);
+    cJSON_AddBoolToObject(root, "shared_uart", true);
+
+    cJSON *types = cJSON_AddArrayToObject(root, "supported_receiver_types");
+    cJSON_AddItemToArray(types, cJSON_CreateString(receiver_type_name(RECEIVER_TYPE_AUTO)));
+    cJSON_AddItemToArray(types, cJSON_CreateString(receiver_type_name(RECEIVER_TYPE_UNICORE_N4)));
+    cJSON_AddItemToArray(types, cJSON_CreateString(receiver_type_name(RECEIVER_TYPE_UBLOX)));
+    cJSON_AddItemToArray(types, cJSON_CreateString(receiver_type_name(RECEIVER_TYPE_UNKNOWN)));
 }
 
 static esp_err_t basic_auth(httpd_req_t *req) {
@@ -959,6 +1002,7 @@ static esp_err_t status_get_handler(httpd_req_t *req) {
 
     capabilities_json_fill(cJSON_AddObjectToObject(root, "capabilities"));
     ntrip_slots_json_fill(cJSON_AddObjectToObject(root, "ntrip"));
+    gnss_status_json_fill(cJSON_AddObjectToObject(root, "gnss"));
 
     return json_response(req, root);
 }
@@ -990,6 +1034,34 @@ static esp_err_t ntrip_runtime_get_handler(httpd_req_t *req)
     capabilities_json_fill(cJSON_AddObjectToObject(root, "capabilities"));
     ntrip_slots_json_fill(root);
     ntrip_runtime_info_json_fill(root);
+    return json_response(req, root);
+}
+
+static esp_err_t gnss_status_get_handler(httpd_req_t *req)
+{
+    if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
+
+    cJSON *root = cJSON_CreateObject();
+    gnss_status_json_fill(root);
+    return json_response(req, root);
+}
+
+static esp_err_t gnss_capabilities_get_handler(httpd_req_t *req)
+{
+    if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
+
+    cJSON *root = cJSON_CreateObject();
+    gnss_capabilities_json_fill(root);
+    return json_response(req, root);
+}
+
+static esp_err_t gnss_detect_post_handler(httpd_req_t *req)
+{
+    if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
+    receiver_detect();
+
+    cJSON *root = cJSON_CreateObject();
+    gnss_status_json_fill(root);
     return json_response(req, root);
 }
 
@@ -1416,6 +1488,9 @@ static httpd_handle_t web_server_start(void)
         register_uri_handler(server, "/api/config", HTTP_POST, config_post_handler);
         register_uri_handler(server, "/api/status", HTTP_GET, status_get_handler);
         register_uri_handler(server, "/api/capabilities", HTTP_GET, capabilities_get_handler);
+        register_uri_handler(server, "/api/gnss/status", HTTP_GET, gnss_status_get_handler);
+        register_uri_handler(server, "/api/gnss/capabilities", HTTP_GET, gnss_capabilities_get_handler);
+        register_uri_handler(server, "/api/gnss/detect", HTTP_POST, gnss_detect_post_handler);
         register_uri_handler(server, "/api/ntrip", HTTP_GET, ntrip_get_handler);
         register_uri_handler(server, "/api/ntrip", HTTP_POST, ntrip_post_handler);
         register_uri_handler(server, "/api/ntrip/runtime", HTTP_GET, ntrip_runtime_get_handler);

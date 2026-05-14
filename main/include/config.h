@@ -129,6 +129,12 @@ typedef struct config_item {
 #define KEY_CONFIG_UART_FLOW_CTRL_CTS "uart_fc_cts"
 #define KEY_CONFIG_UART_LOG_FORWARD "uart_log_fwd"
 
+// Receiver
+#define KEY_CONFIG_RECEIVER_TYPE "rcv_type"
+#define KEY_CONFIG_RECEIVER_BAUD "rcv_baud"
+#define KEY_CONFIG_RECEIVER_UART_PORT "rcv_uart"
+#define KEY_CONFIG_RECEIVER_MODE "rcv_mode"
+
 // WiFi
 #define KEY_CONFIG_WIFI_AP_ACTIVE "w_ap_active"
 #define KEY_CONFIG_WIFI_AP_COLOR "w_ap_color"

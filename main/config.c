@@ -292,6 +292,25 @@ const config_item_t CONFIG_ITEMS[] = {
                 .def.bool1 = false
         },
 
+        // Receiver
+        {
+                .key = KEY_CONFIG_RECEIVER_TYPE,
+                .type = CONFIG_ITEM_TYPE_INT8,
+                .def.int8 = 0
+        }, {
+                .key = KEY_CONFIG_RECEIVER_BAUD,
+                .type = CONFIG_ITEM_TYPE_UINT32,
+                .def.uint32 = 115200
+        }, {
+                .key = KEY_CONFIG_RECEIVER_UART_PORT,
+                .type = CONFIG_ITEM_TYPE_UINT8,
+                .def.uint8 = UART_NUM_0
+        }, {
+                .key = KEY_CONFIG_RECEIVER_MODE,
+                .type = CONFIG_ITEM_TYPE_INT8,
+                .def.int8 = 0
+        },
+
         // WiFi
         {
                 .key = KEY_CONFIG_WIFI_AP_ACTIVE,
