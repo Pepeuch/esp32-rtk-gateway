@@ -87,9 +87,9 @@ void app_main(void)
     stream_stats_init();
 
     config_init();
-    ntrip_slots_init();
-    uart_init();
-    ntrip_runtime_init();
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, &got_ip_event_handler, NULL));
 
     esp_reset_reason_t reset_reason = esp_reset_reason();
 
@@ -112,10 +112,6 @@ void app_main(void)
     ESP_LOGI(TAG, "║ Upgraded to v5.2.3 & ETH01: dr. Kónya Sándor ║");
     ESP_LOGI(TAG, "║ Source: https://github.com/nebkat/esp32-xbee ║");
     ESP_LOGI(TAG, "╚══════════════════════════════════════════════╝");
-
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, &got_ip_event_handler, NULL));
 
     vTaskDelay(pdMS_TO_TICKS(2500));
 
@@ -150,6 +146,10 @@ void app_main(void)
     bool wifi_ready = false;
 
     netif = network_init();
+
+    ntrip_slots_init();
+    uart_init();
+    ESP_ERROR_CHECK(ntrip_runtime_init());
 
     if (netif != NULL) {
         ESP_LOGI(TAG, "Waiting up to 3000 ms for Ethernet...");

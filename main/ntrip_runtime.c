@@ -19,6 +19,7 @@
 #include "freertos/stream_buffer.h"
 #include "freertos/task.h"
 #include "interface/ntrip.h"
+#include "network.h"
 #include "stream_stats.h"
 #include "tasks.h"
 #include "uart.h"
@@ -36,6 +37,7 @@ static const char *TAG = "NTRIP_RUNTIME";
 #define NTRIP_FAKE_RTCM_PACKET_MAX 512
 #define NTRIP_FAKE_RTCM_RATE_HZ_DEFAULT 5
 #define NTRIP_MONITOR_LOG_INTERVAL_TICKS 10
+#define NTRIP_WDT_DELAY_SLICE_MS 100
 
 typedef struct ntrip_runtime_slot {
     size_t index;
@@ -99,6 +101,8 @@ static const char *S_SELFTEST_SCENARIO_NAMES[] = {
     "restart_runtime_during_fake_stream",
     "capability_limit_check",
 };
+
+static bool ntrip_runtime_should_stop(ntrip_runtime_slot_t *slot);
 
 static void ntrip_runtime_lock(void)
 {
@@ -262,6 +266,45 @@ static int ntrip_runtime_current_backoff_ms(uint32_t reconnect_count)
     return (int)(backoff + (esp_random() % 500));
 }
 
+static void ntrip_runtime_delay_with_wdt(uint32_t total_ms)
+{
+    uint32_t remaining_ms = total_ms;
+    while (remaining_ms > 0) {
+        uint32_t delay_ms = remaining_ms > NTRIP_WDT_DELAY_SLICE_MS ? NTRIP_WDT_DELAY_SLICE_MS : remaining_ms;
+        vTaskDelay(pdMS_TO_TICKS(delay_ms));
+        remaining_ms -= delay_ms;
+    }
+}
+
+static void ntrip_runtime_backoff_wait(ntrip_runtime_slot_t *slot, uint32_t total_ms)
+{
+    uint32_t remaining_ms = total_ms;
+    while (remaining_ms > 0 && !ntrip_runtime_should_stop(slot)) {
+        uint32_t delay_ms = remaining_ms > NTRIP_WDT_DELAY_SLICE_MS ? NTRIP_WDT_DELAY_SLICE_MS : remaining_ms;
+        vTaskDelay(pdMS_TO_TICKS(delay_ms));
+        remaining_ms -= delay_ms;
+    }
+}
+
+static void ntrip_runtime_wait_for_ip_with_wdt(void)
+{
+    while (true) {
+        if (network_is_ethernet()) {
+            if (network_is_ethernet_ready()) {
+                return;
+            }
+        } else {
+            wifi_sta_status_t status;
+            wifi_sta_status(&status);
+            if (status.connected && status.ip4_addr.addr != 0) {
+                return;
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(NTRIP_WDT_DELAY_SLICE_MS));
+    }
+}
+
 static void ntrip_runtime_fanout_rtcm(const void *buffer, size_t length)
 {
     s_last_rtcm_input_us = esp_timer_get_time();
@@ -408,7 +451,7 @@ static int ntrip_runtime_slot_write(ntrip_runtime_slot_t *slot, const uint8_t *b
 {
     if (slot->mock_mode == NTRIP_RUNTIME_MOCK_SLOW_SOCKET) {
         uint32_t slow_ms = slot->mock_mode_value > 0 ? slot->mock_mode_value : 250;
-        vTaskDelay(pdMS_TO_TICKS(slow_ms));
+        ntrip_runtime_delay_with_wdt(slow_ms);
         return (int)length;
     }
 
@@ -443,8 +486,6 @@ static void ntrip_runtime_slot_task(void *ctx)
     ntrip_slot_config_t config;
     uint8_t rtcm_buffer[512];
 
-    esp_task_wdt_add(NULL);
-
     ntrip_runtime_lock();
     slot->task_running = true;
     slot->stop_requested = false;
@@ -464,15 +505,13 @@ static void ntrip_runtime_slot_task(void *ctx)
     ntrip_runtime_unlock();
 
     while (!ntrip_runtime_should_stop(slot)) {
-        esp_task_wdt_reset();
-
         if (ntrip_slots_get_config(slot->index, &config) != ESP_OK) {
             ntrip_runtime_set_state(slot, NTRIP_RUNTIME_STATE_ERROR, "Config read failed");
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
 
-        wait_for_ip();
+        ntrip_runtime_wait_for_ip_with_wdt();
 
         if (ntrip_runtime_connect_and_auth(slot, &config) != ESP_OK) {
             ntrip_runtime_note_socket_closed(slot);
@@ -482,16 +521,11 @@ static void ntrip_runtime_slot_task(void *ctx)
             ntrip_runtime_unlock();
 
             int backoff_ms = ntrip_runtime_current_backoff_ms(slot->reconnect_count);
-            for (int waited = 0; waited < backoff_ms && !ntrip_runtime_should_stop(slot); waited += 250) {
-                esp_task_wdt_reset();
-                vTaskDelay(pdMS_TO_TICKS(250));
-            }
+            ntrip_runtime_backoff_wait(slot, (uint32_t)backoff_ms);
             continue;
         }
 
         while (!ntrip_runtime_should_stop(slot)) {
-            esp_task_wdt_reset();
-
             size_t received = xStreamBufferReceive(slot->rtcm_buffer, rtcm_buffer, sizeof(rtcm_buffer), pdMS_TO_TICKS(500));
             if (received == 0) {
                 int64_t last_input_us = s_last_rtcm_input_us;
@@ -530,10 +564,7 @@ static void ntrip_runtime_slot_task(void *ctx)
 
         if (!ntrip_runtime_should_stop(slot)) {
             int backoff_ms = ntrip_runtime_current_backoff_ms(slot->reconnect_count);
-            for (int waited = 0; waited < backoff_ms && !ntrip_runtime_should_stop(slot); waited += 250) {
-                esp_task_wdt_reset();
-                vTaskDelay(pdMS_TO_TICKS(250));
-            }
+            ntrip_runtime_backoff_wait(slot, (uint32_t)backoff_ms);
         }
     }
 
@@ -547,7 +578,6 @@ static void ntrip_runtime_slot_task(void *ctx)
     slot->task_handle = NULL;
     ntrip_runtime_unlock();
 
-    esp_task_wdt_delete(NULL);
     vTaskDelete(NULL);
 }
 
@@ -556,8 +586,6 @@ static void ntrip_runtime_fake_rtcm_task(void *ctx)
     (void)ctx;
     uint32_t sequence = 0;
     uint8_t packet[NTRIP_FAKE_RTCM_PACKET_MAX];
-
-    esp_task_wdt_add(NULL);
 
     while (!s_fake_rtcm_stop_requested) {
         uint32_t packet_size;
@@ -587,7 +615,6 @@ static void ntrip_runtime_fake_rtcm_task(void *ctx)
         sequence++;
 
         ntrip_runtime_fanout_rtcm(packet, packet_size);
-        esp_task_wdt_reset();
 
         uint32_t interval_ms = rate_hz > 0 ? 1000 / rate_hz : (1000 / NTRIP_FAKE_RTCM_RATE_HZ_DEFAULT);
         if (interval_ms == 0) {
@@ -602,7 +629,6 @@ static void ntrip_runtime_fake_rtcm_task(void *ctx)
     s_fake_rtcm_task = NULL;
     ntrip_runtime_unlock();
 
-    esp_task_wdt_delete(NULL);
     vTaskDelete(NULL);
 }
 
@@ -830,7 +856,6 @@ static void ntrip_runtime_selftest_task(void *ctx)
 static void ntrip_runtime_supervisor_task(void *ctx)
 {
     (void)ctx;
-    esp_task_wdt_add(NULL);
 
     uint32_t log_tick = 0;
 
@@ -932,7 +957,6 @@ static void ntrip_runtime_supervisor_task(void *ctx)
             }
         }
 
-        esp_task_wdt_reset();
         vTaskDelay(pdMS_TO_TICKS(NTRIP_SUPERVISOR_INTERVAL_MS));
     }
 }
@@ -964,7 +988,10 @@ esp_err_t ntrip_runtime_init(void)
         s_runtime_stats[i] = stream_stats_new(S_RUNTIME_STREAM_NAMES[i]);
     }
 
-    uart_register_read_handler(ntrip_runtime_uart_handler);
+    ESP_RETURN_ON_ERROR(
+        uart_register_read_handler(ntrip_runtime_uart_handler),
+        TAG,
+        "could not register UART read handler");
     xTaskCreate(
         ntrip_runtime_supervisor_task,
         "ntrip_runtime_supervisor",

@@ -28,24 +28,142 @@
 #include "tasks.h"
 
 static const char *TAG = "UART";
+static const size_t UART_MAX_EVENT_HANDLERS = 16;
 
 ESP_EVENT_DEFINE_BASE(UART_EVENT_READ);
 ESP_EVENT_DEFINE_BASE(UART_EVENT_WRITE);
 
-void uart_register_read_handler(esp_event_handler_t event_handler) {
-    ESP_ERROR_CHECK(esp_event_handler_register(UART_EVENT_READ, ESP_EVENT_ANY_ID, event_handler, NULL));
+static esp_event_handler_t s_read_handlers[16];
+static esp_event_handler_t s_write_handlers[16];
+static size_t s_read_handler_count = 0;
+static size_t s_write_handler_count = 0;
+
+static bool uart_event_handler_registered(
+    esp_event_handler_t event_handler,
+    esp_event_handler_t *handlers,
+    size_t handler_count)
+{
+    for (size_t i = 0; i < handler_count; i++) {
+        if (handlers[i] == event_handler) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
-void uart_unregister_read_handler(esp_event_handler_t event_handler) {
-    ESP_ERROR_CHECK(esp_event_handler_unregister(UART_EVENT_READ, ESP_EVENT_ANY_ID, event_handler));
+static esp_err_t uart_event_handler_add(
+    esp_event_base_t base,
+    esp_event_handler_t event_handler,
+    esp_event_handler_t *handlers,
+    size_t *handler_count,
+    const char *label)
+{
+    if (event_handler == NULL || handlers == NULL || handler_count == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (uart_event_handler_registered(event_handler, handlers, *handler_count)) {
+        ESP_LOGW(TAG, "%s handler already registered, skipping duplicate", label);
+        return ESP_OK;
+    }
+
+    if (*handler_count >= UART_MAX_EVENT_HANDLERS) {
+        ESP_LOGE(TAG, "No room left for %s event handler", label);
+        return ESP_ERR_NO_MEM;
+    }
+
+    esp_err_t err = esp_event_handler_register(base, ESP_EVENT_ANY_ID, event_handler, NULL);
+    if (err == ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "%s handler registration failed: default event loop is not ready", label);
+        return err;
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "%s handler registration failed: %s", label, esp_err_to_name(err));
+        return err;
+    }
+
+    handlers[*handler_count] = event_handler;
+    (*handler_count)++;
+    return ESP_OK;
 }
 
-void uart_register_write_handler(esp_event_handler_t event_handler) {
-    ESP_ERROR_CHECK(esp_event_handler_register(UART_EVENT_WRITE, ESP_EVENT_ANY_ID, event_handler, NULL));
+static esp_err_t uart_event_handler_remove(
+    esp_event_base_t base,
+    esp_event_handler_t event_handler,
+    esp_event_handler_t *handlers,
+    size_t *handler_count,
+    const char *label)
+{
+    if (event_handler == NULL || handlers == NULL || handler_count == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    size_t found_index = UART_MAX_EVENT_HANDLERS;
+    for (size_t i = 0; i < *handler_count; i++) {
+        if (handlers[i] == event_handler) {
+            found_index = i;
+            break;
+        }
+    }
+
+    if (found_index == UART_MAX_EVENT_HANDLERS) {
+        ESP_LOGW(TAG, "%s handler was not registered", label);
+        return ESP_OK;
+    }
+
+    esp_err_t err = esp_event_handler_unregister(base, ESP_EVENT_ANY_ID, event_handler);
+    if (err == ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "%s handler unregister failed: default event loop is not ready", label);
+        return err;
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "%s handler unregister failed: %s", label, esp_err_to_name(err));
+        return err;
+    }
+
+    for (size_t i = found_index + 1; i < *handler_count; i++) {
+        handlers[i - 1] = handlers[i];
+    }
+    (*handler_count)--;
+    handlers[*handler_count] = NULL;
+    return ESP_OK;
 }
 
-void uart_unregister_write_handler(esp_event_handler_t event_handler) {
-    ESP_ERROR_CHECK(esp_event_handler_unregister(UART_EVENT_WRITE, ESP_EVENT_ANY_ID, event_handler));
+esp_err_t uart_register_read_handler(esp_event_handler_t event_handler) {
+    return uart_event_handler_add(
+        UART_EVENT_READ,
+        event_handler,
+        s_read_handlers,
+        &s_read_handler_count,
+        "UART read");
+}
+
+esp_err_t uart_unregister_read_handler(esp_event_handler_t event_handler) {
+    return uart_event_handler_remove(
+        UART_EVENT_READ,
+        event_handler,
+        s_read_handlers,
+        &s_read_handler_count,
+        "UART read");
+}
+
+esp_err_t uart_register_write_handler(esp_event_handler_t event_handler) {
+    return uart_event_handler_add(
+        UART_EVENT_WRITE,
+        event_handler,
+        s_write_handlers,
+        &s_write_handler_count,
+        "UART write");
+}
+
+esp_err_t uart_unregister_write_handler(esp_event_handler_t event_handler) {
+    return uart_event_handler_remove(
+        UART_EVENT_WRITE,
+        event_handler,
+        s_write_handlers,
+        &s_write_handler_count,
+        "UART write");
 }
 
 static int uart_port = -1;

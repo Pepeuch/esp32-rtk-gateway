@@ -63,6 +63,7 @@ static esp_err_t captive_404_handler(httpd_req_t *req, httpd_err_code_t err)
 #define WWW_PARTITION_PATH "/www"
 #define WWW_PARTITION_LABEL "www"
 #define BUFFER_SIZE 2048
+#define WEB_MAX_URI_HANDLERS 40
 
 static const char *TAG = "WEB";
 
@@ -180,6 +181,47 @@ static esp_err_t json_response(httpd_req_t *req, cJSON *root) {
     }
 
     return ESP_OK;
+}
+
+static esp_err_t json_response_chunked(httpd_req_t *req, cJSON *root)
+{
+    esp_err_t err = httpd_resp_set_type(req, "application/json");
+    if (err != ESP_OK) {
+        cJSON_Delete(root);
+        return err;
+    }
+
+    char *json = cJSON_PrintBuffered(root, 1024, false);
+    cJSON_Delete(root);
+    if (json == NULL) {
+        ESP_LOGE(TAG, "Could not serialize chunked JSON response");
+        cJSON *error = cJSON_CreateObject();
+        if (error == NULL) {
+            return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "JSON serialization failed");
+        }
+        cJSON_AddBoolToObject(error, "success", false);
+        cJSON_AddStringToObject(error, "error", "serialization_failed");
+        return json_response(req, error);
+    }
+
+    size_t length = strlen(json);
+    for (size_t offset = 0; offset < length; offset += 1024) {
+        size_t chunk_length = length - offset;
+        if (chunk_length > 1024) {
+            chunk_length = 1024;
+        }
+
+        err = httpd_resp_send_chunk(req, json + offset, chunk_length);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Chunked JSON send failed at offset %u: %s", (unsigned)offset, esp_err_to_name(err));
+            free(json);
+            httpd_resp_send_chunk(req, NULL, 0);
+            return err;
+        }
+    }
+
+    free(json);
+    return httpd_resp_send_chunk(req, NULL, 0);
 }
 
 static esp_err_t request_body_alloc(httpd_req_t *req, char **out_body)
@@ -301,39 +343,58 @@ static void ntrip_runtime_info_json_fill(cJSON *root)
     cJSON_AddNumberToObject(runtime, "min_free_heap_bytes", info.min_free_heap_bytes);
 }
 
-static void ntrip_runtime_selftest_json_fill(cJSON *root)
+static void ntrip_runtime_selftest_json_fill(cJSON *root, const ntrip_runtime_selftest_result_t *result)
 {
-    ntrip_runtime_selftest_result_t result;
-    ntrip_runtime_selftest_get_result(&result);
+    if (root == NULL || result == NULL) {
+        return;
+    }
 
-    cJSON_AddStringToObject(root, "state", ntrip_runtime_selftest_state_name(result.state));
-    cJSON_AddBoolToObject(root, "completed", result.completed);
-    cJSON_AddBoolToObject(root, "pass", result.pass);
-    cJSON_AddNumberToObject(root, "scenario_count", result.scenario_count);
-    cJSON_AddNumberToObject(root, "completed_scenarios", result.completed_scenarios);
-    cJSON_AddNumberToObject(root, "duration_ms", result.duration_ms);
-    cJSON_AddStringToObject(root, "last_error", result.last_error);
+    cJSON_AddStringToObject(root, "state", ntrip_runtime_selftest_state_name(result->state));
+    cJSON_AddBoolToObject(root, "completed", result->completed);
+    cJSON_AddBoolToObject(root, "pass", result->pass);
+    cJSON_AddNumberToObject(root, "scenario_count", result->scenario_count);
+    cJSON_AddNumberToObject(root, "completed_scenarios", result->completed_scenarios);
+    cJSON_AddNumberToObject(root, "duration_ms", result->duration_ms);
+    cJSON_AddStringToObject(root, "last_error", result->last_error);
 
     cJSON *scenarios = cJSON_AddArrayToObject(root, "scenarios");
-    for (uint32_t i = 0; i < result.scenario_count && i < 8; i++) {
+    uint32_t scenario_count = result->scenario_count;
+    if (scenario_count > 8) {
+        scenario_count = 8;
+    }
+
+    for (uint32_t i = 0; i < scenario_count; i++) {
         cJSON *scenario = cJSON_CreateObject();
+        if (scenario == NULL) {
+            ESP_LOGE(TAG, "Could not allocate self-test scenario JSON object");
+            break;
+        }
         cJSON_AddItemToArray(scenarios, scenario);
-        cJSON_AddStringToObject(scenario, "name", result.scenarios[i].name);
-        cJSON_AddBoolToObject(scenario, "pass", result.scenarios[i].pass);
-        cJSON_AddNumberToObject(scenario, "duration_ms", result.scenarios[i].duration_ms);
-        cJSON_AddNumberToObject(scenario, "heap_min_bytes", result.scenarios[i].heap_min_bytes);
-        cJSON_AddNumberToObject(scenario, "active_slot_count", result.scenarios[i].active_slot_count);
+        cJSON_AddStringToObject(scenario, "name", result->scenarios[i].name);
+        cJSON_AddBoolToObject(scenario, "pass", result->scenarios[i].pass);
+        cJSON_AddNumberToObject(scenario, "duration_ms", result->scenarios[i].duration_ms);
+        cJSON_AddNumberToObject(scenario, "heap_min_bytes", result->scenarios[i].heap_min_bytes);
+        cJSON_AddNumberToObject(scenario, "active_slot_count", result->scenarios[i].active_slot_count);
 
         cJSON *slots = cJSON_AddArrayToObject(scenario, "slots");
-        for (size_t slot_index = 0; slot_index < result.scenarios[i].slot_count; slot_index++) {
+        size_t slot_count = result->scenarios[i].slot_count;
+        if (slot_count > NTRIP_SLOT_COUNT) {
+            slot_count = NTRIP_SLOT_COUNT;
+        }
+
+        for (size_t slot_index = 0; slot_index < slot_count; slot_index++) {
             cJSON *slot = cJSON_CreateObject();
+            if (slot == NULL) {
+                ESP_LOGE(TAG, "Could not allocate self-test slot JSON object");
+                break;
+            }
             cJSON_AddItemToArray(slots, slot);
-            cJSON_AddNumberToObject(slot, "slot_index", result.scenarios[i].slots[slot_index].slot_index);
-            cJSON_AddNumberToObject(slot, "bytes_sent", result.scenarios[i].slots[slot_index].bytes_sent);
-            cJSON_AddNumberToObject(slot, "reconnect_count", result.scenarios[i].slots[slot_index].reconnect_count);
-            cJSON_AddNumberToObject(slot, "dropped_packets", result.scenarios[i].slots[slot_index].dropped_packets);
-            cJSON_AddStringToObject(slot, "state", result.scenarios[i].slots[slot_index].state);
-            cJSON_AddStringToObject(slot, "last_error", result.scenarios[i].slots[slot_index].last_error);
+            cJSON_AddNumberToObject(slot, "slot_index", result->scenarios[i].slots[slot_index].slot_index);
+            cJSON_AddNumberToObject(slot, "bytes_sent", result->scenarios[i].slots[slot_index].bytes_sent);
+            cJSON_AddNumberToObject(slot, "reconnect_count", result->scenarios[i].slots[slot_index].reconnect_count);
+            cJSON_AddNumberToObject(slot, "dropped_packets", result->scenarios[i].slots[slot_index].dropped_packets);
+            cJSON_AddStringToObject(slot, "state", result->scenarios[i].slots[slot_index].state);
+            cJSON_AddStringToObject(slot, "last_error", result->scenarios[i].slots[slot_index].last_error);
         }
     }
 }
@@ -1208,9 +1269,47 @@ static esp_err_t ntrip_selftest_result_handler(httpd_req_t *req)
 {
     if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
 
+    ntrip_runtime_selftest_result_t *result = calloc(1, sizeof(*result));
+    if (result == NULL) {
+        ESP_LOGE(TAG, "Out of memory allocating self-test result buffer");
+        cJSON *root = cJSON_CreateObject();
+        if (root == NULL) {
+            return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+        }
+        cJSON_AddBoolToObject(root, "success", false);
+        cJSON_AddStringToObject(root, "error", "out_of_memory");
+        return json_response(req, root);
+    }
+
+    ntrip_runtime_selftest_get_result(result);
+
     cJSON *root = cJSON_CreateObject();
-    ntrip_runtime_selftest_json_fill(root);
-    return json_response(req, root);
+    if (root == NULL) {
+        ESP_LOGE(TAG, "Could not allocate self-test JSON root");
+        free(result);
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+    }
+
+    cJSON_AddBoolToObject(root, "success", true);
+
+    if (result->state == NTRIP_SELFTEST_RUNNING) {
+        cJSON_AddStringToObject(root, "state", "running");
+        cJSON_AddNumberToObject(root, "scenario_count", result->scenario_count);
+        cJSON_AddNumberToObject(root, "completed_scenarios", result->completed_scenarios);
+        cJSON_AddNumberToObject(root, "duration_ms", result->duration_ms);
+        free(result);
+        return json_response(req, root);
+    }
+
+    if (result->state == NTRIP_SELFTEST_IDLE && !result->completed) {
+        cJSON_AddStringToObject(root, "state", "idle");
+        free(result);
+        return json_response(req, root);
+    }
+
+    ntrip_runtime_selftest_json_fill(root, result);
+    free(result);
+    return json_response_chunked(req, root);
 }
 
 static esp_err_t ntrip_enable_handler(httpd_req_t *req)
@@ -1281,6 +1380,15 @@ static esp_err_t register_uri_handler(httpd_handle_t server, const char *path, h
     return httpd_register_uri_handler(server, &uri_config_get);
 }
 
+static void register_uri_handler_optional(httpd_handle_t server, const char *path, httpd_method_t method,
+                                          esp_err_t (*handler)(httpd_req_t *r))
+{
+    esp_err_t err = register_uri_handler(server, path, method, handler);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Optional endpoint registration failed for %s: %s", path, esp_err_to_name(err));
+    }
+}
+
 static httpd_handle_t web_server_start(void)
 {
     config_get_primitive(CONF_ITEM(KEY_CONFIG_ADMIN_AUTH), &auth_method);
@@ -1296,7 +1404,7 @@ static httpd_handle_t web_server_start(void)
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.uri_match_fn = httpd_uri_match_wildcard;
-    config.max_uri_handlers = 20;
+    config.max_uri_handlers = WEB_MAX_URI_HANDLERS;
 
     // Start the httpd server
     ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);
@@ -1314,11 +1422,11 @@ static httpd_handle_t web_server_start(void)
         register_uri_handler(server, "/api/ntrip/restart", HTTP_POST, ntrip_restart_handler);
         register_uri_handler(server, "/api/ntrip/enable/*", HTTP_POST, ntrip_enable_handler);
         register_uri_handler(server, "/api/ntrip/disable/*", HTTP_POST, ntrip_disable_handler);
-        register_uri_handler(server, "/api/dev/fake-rtcm/start", HTTP_POST, fake_rtcm_start_handler);
-        register_uri_handler(server, "/api/dev/fake-rtcm/stop", HTTP_POST, fake_rtcm_stop_handler);
-        register_uri_handler(server, "/api/dev/ntrip/mock", HTTP_POST, ntrip_mock_post_handler);
-        register_uri_handler(server, "/api/dev/ntrip/selftest/start", HTTP_POST, ntrip_selftest_start_handler);
-        register_uri_handler(server, "/api/dev/ntrip/selftest/result", HTTP_GET, ntrip_selftest_result_handler);
+        register_uri_handler_optional(server, "/api/dev/fake-rtcm/start", HTTP_POST, fake_rtcm_start_handler);
+        register_uri_handler_optional(server, "/api/dev/fake-rtcm/stop", HTTP_POST, fake_rtcm_stop_handler);
+        register_uri_handler_optional(server, "/api/dev/ntrip/mock", HTTP_POST, ntrip_mock_post_handler);
+        register_uri_handler_optional(server, "/api/dev/ntrip/selftest/start", HTTP_POST, ntrip_selftest_start_handler);
+        register_uri_handler_optional(server, "/api/dev/ntrip/selftest/result", HTTP_GET, ntrip_selftest_result_handler);
 
         register_uri_handler(server, "/log", HTTP_GET, log_get_handler);
         register_uri_handler(server, "/core_dump", HTTP_GET, core_dump_get_handler);

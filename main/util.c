@@ -139,7 +139,7 @@ int connect_socket(char *host, int port, int socktype) {
 
     // Read/write timeouts
     struct timeval timeout;
-    timeout.tv_sec = 10;
+    timeout.tv_sec = 2;
     timeout.tv_usec = 0;
     err = setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout));
     if (err != 0) goto _opts_error;
