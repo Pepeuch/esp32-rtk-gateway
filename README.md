@@ -192,6 +192,28 @@ Current focus:
 - Ethernet/Wi-Fi presets
 - Automatic configuration generation
 
+## PR11 - Web UI split and lightweight dashboard
+/dashboard
+- état GNSS
+- fix / RTK
+- satellites
+- CN0
+- NTRIP runtime
+- résumé réseau
+
+/config
+- Wi-Fi / Ethernet
+- GNSS profile
+- NTRIP slots
+- base / rover mode
+
+/advanced
+- logs
+- raw GNSS console
+- self-tests
+- fake RTCM
+- commandes manuelles
+- diagnostics profonds
 ---
 
 # Future Features

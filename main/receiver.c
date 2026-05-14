@@ -67,6 +67,8 @@ typedef struct receiver_context {
     bool command_busy;
     bool expect_matched;
     char expect_token[RECEIVER_EXPECT_MAX_LEN];
+    bool survey_active;
+    int64_t survey_started_us;
 } receiver_context_t;
 
 static receiver_context_t s_receiver = {0};
@@ -151,6 +153,22 @@ const char *receiver_profile_name(receiver_profile_t profile)
     return "none";
 }
 
+const char *receiver_base_mode_name(receiver_base_mode_t mode)
+{
+    switch (mode) {
+        case RECEIVER_BASE_MODE_ROVER:
+            return "rover";
+        case RECEIVER_BASE_MODE_FIXED:
+            return "base_fixed";
+        case RECEIVER_BASE_MODE_SURVEY:
+            return "base_survey";
+        case RECEIVER_BASE_MODE_DIAGNOSTICS:
+            return "diagnostics";
+        default:
+            return "rover";
+    }
+}
+
 receiver_profile_t receiver_profile_from_name(const char *name)
 {
     if (name == NULL || *name == '\0') {
@@ -220,6 +238,37 @@ static receiver_profile_t receiver_configured_profile(void)
         default:
             return RECEIVER_PROFILE_NONE;
     }
+}
+
+static receiver_base_mode_t receiver_configured_base_mode(void)
+{
+    int8_t value = config_get_i8(CONF_ITEM(KEY_CONFIG_BASE_MODE));
+    switch (value) {
+        case RECEIVER_BASE_MODE_FIXED:
+            return RECEIVER_BASE_MODE_FIXED;
+        case RECEIVER_BASE_MODE_SURVEY:
+            return RECEIVER_BASE_MODE_SURVEY;
+        case RECEIVER_BASE_MODE_DIAGNOSTICS:
+            return RECEIVER_BASE_MODE_DIAGNOSTICS;
+        case RECEIVER_BASE_MODE_ROVER:
+        default:
+            return RECEIVER_BASE_MODE_ROVER;
+    }
+}
+
+static esp_err_t receiver_store_base_config(receiver_base_mode_t mode, int32_t latitude_e7, int32_t longitude_e7,
+                                            int32_t altitude_mm, uint32_t duration_s, uint32_t accuracy_mm,
+                                            bool rtcm_output)
+{
+    esp_err_t err = config_set_i8(KEY_CONFIG_BASE_MODE, (int8_t)mode);
+    if (err != ESP_OK) return err;
+    if ((err = config_set_i32(KEY_CONFIG_BASE_LAT_E7, latitude_e7)) != ESP_OK) return err;
+    if ((err = config_set_i32(KEY_CONFIG_BASE_LON_E7, longitude_e7)) != ESP_OK) return err;
+    if ((err = config_set_i32(KEY_CONFIG_BASE_ALT_MM, altitude_mm)) != ESP_OK) return err;
+    if ((err = config_set_u32(KEY_CONFIG_BASE_SURVEY_DURATION, duration_s)) != ESP_OK) return err;
+    if ((err = config_set_u32(KEY_CONFIG_BASE_SURVEY_ACCURACY_MM, accuracy_mm)) != ESP_OK) return err;
+    if ((err = config_set_bool1(KEY_CONFIG_BASE_RTCM_OUTPUT, rtcm_output)) != ESP_OK) return err;
+    return config_commit();
 }
 
 static bool receiver_parse_u32(const char *text, uint32_t *out_value)
@@ -896,11 +945,17 @@ static esp_err_t receiver_unicore_apply_profile(receiver_profile_t profile)
     char *signal_mask = NULL;
     uint8_t nmea_rate = config_get_u8(CONF_ITEM(KEY_CONFIG_RECEIVER_NMEA_RATE));
     bool rtcm_output = config_get_bool1(CONF_ITEM(KEY_CONFIG_RECEIVER_RTCM_OUTPUT));
+    bool base_rtcm_output = config_get_bool1(CONF_ITEM(KEY_CONFIG_BASE_RTCM_OUTPUT));
     uint16_t rtk_timeout = config_get_u16(CONF_ITEM(KEY_CONFIG_RECEIVER_RTK_TIMEOUT));
     uint16_t dgps_timeout = config_get_u16(CONF_ITEM(KEY_CONFIG_RECEIVER_DGPS_TIMEOUT));
     uint32_t constellation_mask = config_get_u32(CONF_ITEM(KEY_CONFIG_RECEIVER_CONSTELLATION_MASK));
     bool agnss_enable = config_get_bool1(CONF_ITEM(KEY_CONFIG_RECEIVER_AGNSS_ENABLE));
     uint32_t baudrate = config_get_u32(CONF_ITEM(KEY_CONFIG_RECEIVER_BAUD));
+    uint32_t survey_duration = config_get_u32(CONF_ITEM(KEY_CONFIG_BASE_SURVEY_DURATION));
+    uint32_t survey_accuracy_mm = config_get_u32(CONF_ITEM(KEY_CONFIG_BASE_SURVEY_ACCURACY_MM));
+    int32_t base_latitude_e7 = config_get_i32(CONF_ITEM(KEY_CONFIG_BASE_LAT_E7));
+    int32_t base_longitude_e7 = config_get_i32(CONF_ITEM(KEY_CONFIG_BASE_LON_E7));
+    int32_t base_altitude_mm = config_get_i32(CONF_ITEM(KEY_CONFIG_BASE_ALT_MM));
     (void)config_get_str_blob_alloc(CONF_ITEM(KEY_CONFIG_RECEIVER_SIGNAL_MASK), (void **)&signal_mask);
 
     if (receiver_unicore_send("UNLOGALL", NULL) != ESP_OK) goto fail;
@@ -939,13 +994,22 @@ static esp_err_t receiver_unicore_apply_profile(receiver_profile_t profile)
             break;
         case RECEIVER_PROFILE_BASE_FIXED:
             if (receiver_queue_formatted(NULL, "MODE BASE\r\n") != ESP_OK) goto fail;
-            if (receiver_queue_formatted(NULL, "FIX POSITION HOLD\r\n") != ESP_OK) goto fail;
-            if (receiver_queue_formatted(NULL, "RTCMOUTPUT ON\r\n") != ESP_OK) goto fail;
+            if (base_latitude_e7 != 0 || base_longitude_e7 != 0 || base_altitude_mm != 0) {
+                if (receiver_queue_formatted(NULL, "FIX POSITION %.7f %.7f %.3f\r\n",
+                                             (double)base_latitude_e7 / 10000000.0,
+                                             (double)base_longitude_e7 / 10000000.0,
+                                             (double)base_altitude_mm / 1000.0) != ESP_OK) goto fail;
+            } else {
+                if (receiver_queue_formatted(NULL, "FIX POSITION HOLD\r\n") != ESP_OK) goto fail;
+            }
+            if (receiver_queue_formatted(NULL, "RTCMOUTPUT %s\r\n", base_rtcm_output ? "ON" : "OFF") != ESP_OK) goto fail;
             break;
         case RECEIVER_PROFILE_BASE_SURVEY:
             if (receiver_queue_formatted(NULL, "MODE BASE\r\n") != ESP_OK) goto fail;
-            if (receiver_queue_formatted(NULL, "SURVEY START\r\n") != ESP_OK) goto fail;
-            if (receiver_queue_formatted(NULL, "RTCMOUTPUT ON\r\n") != ESP_OK) goto fail;
+            if (receiver_queue_formatted(NULL, "SURVEY START %u %u\r\n",
+                                         (unsigned)survey_duration,
+                                         (unsigned)survey_accuracy_mm) != ESP_OK) goto fail;
+            if (receiver_queue_formatted(NULL, "RTCMOUTPUT %s\r\n", base_rtcm_output ? "ON" : "OFF") != ESP_OK) goto fail;
             break;
         case RECEIVER_PROFILE_NONE:
         default:
@@ -958,6 +1022,8 @@ static esp_err_t receiver_unicore_apply_profile(receiver_profile_t profile)
     receiver_lock();
     s_receiver.applied_profile = profile;
     s_receiver.auto_apply_queued = false;
+    s_receiver.survey_active = profile == RECEIVER_PROFILE_BASE_SURVEY;
+    s_receiver.survey_started_us = s_receiver.survey_active ? esp_timer_get_time() : 0;
     snprintf(s_receiver.status.last_command_status, sizeof(s_receiver.status.last_command_status), "%s", "profile_queued");
     receiver_unlock();
     return ESP_OK;
@@ -1236,6 +1302,154 @@ esp_err_t receiver_get_raw_output(char *buffer, size_t buffer_size, size_t *out_
     return ESP_OK;
 }
 
+esp_err_t receiver_get_base_status(receiver_base_status_t *status)
+{
+    if (status == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    receiver_poll();
+    memset(status, 0, sizeof(*status));
+
+    receiver_lock();
+    status->detected = s_receiver.status.detected;
+    status->receiver_type = s_receiver.status.receiver_type;
+    status->configured_mode = receiver_configured_base_mode();
+    snprintf(status->configured_mode_name, sizeof(status->configured_mode_name), "%s",
+             receiver_base_mode_name(status->configured_mode));
+    snprintf(status->active_profile, sizeof(status->active_profile), "%s", s_receiver.status.profile);
+    snprintf(status->receiver_mode, sizeof(status->receiver_mode), "%s", s_receiver.status.mode);
+    status->latitude_e7 = config_get_i32(CONF_ITEM(KEY_CONFIG_BASE_LAT_E7));
+    status->longitude_e7 = config_get_i32(CONF_ITEM(KEY_CONFIG_BASE_LON_E7));
+    status->altitude_mm = config_get_i32(CONF_ITEM(KEY_CONFIG_BASE_ALT_MM));
+    status->survey_duration_target_s = config_get_u32(CONF_ITEM(KEY_CONFIG_BASE_SURVEY_DURATION));
+    status->survey_accuracy_target_mm = config_get_u32(CONF_ITEM(KEY_CONFIG_BASE_SURVEY_ACCURACY_MM));
+    status->rtcm_output = config_get_bool1(CONF_ITEM(KEY_CONFIG_BASE_RTCM_OUTPUT));
+    status->has_fixed_position = status->latitude_e7 != 0 || status->longitude_e7 != 0 || status->altitude_mm != 0;
+    status->survey_running = s_receiver.survey_active;
+    if (s_receiver.survey_active && s_receiver.survey_started_us > 0) {
+        int64_t now_us = esp_timer_get_time();
+        status->survey_elapsed_s = (uint32_t)((now_us - s_receiver.survey_started_us) / 1000000);
+        if (status->survey_duration_target_s > 0) {
+            uint32_t progress = (status->survey_elapsed_s * 100U) / status->survey_duration_target_s;
+            status->survey_progress_percent = progress > 100U ? 100U : progress;
+        }
+    }
+    snprintf(status->last_action_status, sizeof(status->last_action_status), "%s", s_receiver.status.last_command_status);
+
+    if (!status->detected) {
+        snprintf(status->disabled_reason, sizeof(status->disabled_reason), "%s", "No GNSS receiver detected");
+    } else if (status->receiver_type != RECEIVER_TYPE_UNICORE_N4) {
+        snprintf(status->disabled_reason, sizeof(status->disabled_reason), "%s", "Advanced base workflow is Unicore-first");
+    }
+    receiver_unlock();
+    return ESP_OK;
+}
+
+esp_err_t receiver_base_start_survey(uint32_t duration_s, uint32_t accuracy_mm, bool rtcm_output, bool persist)
+{
+    if (duration_s == 0) {
+        duration_s = config_get_u32(CONF_ITEM(KEY_CONFIG_BASE_SURVEY_DURATION));
+    }
+    if (accuracy_mm == 0) {
+        accuracy_mm = config_get_u32(CONF_ITEM(KEY_CONFIG_BASE_SURVEY_ACCURACY_MM));
+    }
+
+    if (persist) {
+        esp_err_t err = receiver_store_base_config(RECEIVER_BASE_MODE_SURVEY,
+                                                   config_get_i32(CONF_ITEM(KEY_CONFIG_BASE_LAT_E7)),
+                                                   config_get_i32(CONF_ITEM(KEY_CONFIG_BASE_LON_E7)),
+                                                   config_get_i32(CONF_ITEM(KEY_CONFIG_BASE_ALT_MM)),
+                                                   duration_s, accuracy_mm, rtcm_output);
+        if (err != ESP_OK) {
+            return err;
+        }
+    } else {
+        config_set_u32(KEY_CONFIG_BASE_SURVEY_DURATION, duration_s);
+        config_set_u32(KEY_CONFIG_BASE_SURVEY_ACCURACY_MM, accuracy_mm);
+        config_set_bool1(KEY_CONFIG_BASE_RTCM_OUTPUT, rtcm_output);
+        config_set_i8(KEY_CONFIG_BASE_MODE, (int8_t)RECEIVER_BASE_MODE_SURVEY);
+    }
+
+    receiver_lock();
+    s_receiver.survey_active = true;
+    s_receiver.survey_started_us = esp_timer_get_time();
+    receiver_unlock();
+
+    return receiver_apply_profile(RECEIVER_PROFILE_BASE_SURVEY, persist);
+}
+
+esp_err_t receiver_base_stop_survey(bool persist)
+{
+    if (persist) {
+        esp_err_t err = receiver_store_base_config(RECEIVER_BASE_MODE_DIAGNOSTICS,
+                                                   config_get_i32(CONF_ITEM(KEY_CONFIG_BASE_LAT_E7)),
+                                                   config_get_i32(CONF_ITEM(KEY_CONFIG_BASE_LON_E7)),
+                                                   config_get_i32(CONF_ITEM(KEY_CONFIG_BASE_ALT_MM)),
+                                                   config_get_u32(CONF_ITEM(KEY_CONFIG_BASE_SURVEY_DURATION)),
+                                                   config_get_u32(CONF_ITEM(KEY_CONFIG_BASE_SURVEY_ACCURACY_MM)),
+                                                   config_get_bool1(CONF_ITEM(KEY_CONFIG_BASE_RTCM_OUTPUT)));
+        if (err != ESP_OK) {
+            return err;
+        }
+    }
+
+    receiver_lock();
+    s_receiver.survey_active = false;
+    s_receiver.survey_started_us = 0;
+    receiver_unlock();
+
+    receiver_queue_command("SURVEY STOP\r\n", NULL);
+    return receiver_apply_profile(RECEIVER_PROFILE_DIAGNOSTICS_ONLY, persist);
+}
+
+esp_err_t receiver_base_apply_fixed(int32_t latitude_e7, int32_t longitude_e7, int32_t altitude_mm,
+                                    bool rtcm_output, bool persist)
+{
+    if (persist) {
+        esp_err_t err = receiver_store_base_config(RECEIVER_BASE_MODE_FIXED, latitude_e7, longitude_e7, altitude_mm,
+                                                   config_get_u32(CONF_ITEM(KEY_CONFIG_BASE_SURVEY_DURATION)),
+                                                   config_get_u32(CONF_ITEM(KEY_CONFIG_BASE_SURVEY_ACCURACY_MM)),
+                                                   rtcm_output);
+        if (err != ESP_OK) {
+            return err;
+        }
+    } else {
+        config_set_i32(KEY_CONFIG_BASE_LAT_E7, latitude_e7);
+        config_set_i32(KEY_CONFIG_BASE_LON_E7, longitude_e7);
+        config_set_i32(KEY_CONFIG_BASE_ALT_MM, altitude_mm);
+        config_set_bool1(KEY_CONFIG_BASE_RTCM_OUTPUT, rtcm_output);
+        config_set_i8(KEY_CONFIG_BASE_MODE, (int8_t)RECEIVER_BASE_MODE_FIXED);
+    }
+
+    receiver_lock();
+    s_receiver.survey_active = false;
+    s_receiver.survey_started_us = 0;
+    receiver_unlock();
+
+    return receiver_apply_profile(RECEIVER_PROFILE_BASE_FIXED, persist);
+}
+
+esp_err_t receiver_base_clear(bool persist)
+{
+    if (persist) {
+        esp_err_t err = receiver_store_base_config(RECEIVER_BASE_MODE_ROVER, 0, 0, 0,
+                                                   config_get_u32(CONF_ITEM(KEY_CONFIG_BASE_SURVEY_DURATION)),
+                                                   config_get_u32(CONF_ITEM(KEY_CONFIG_BASE_SURVEY_ACCURACY_MM)),
+                                                   config_get_bool1(CONF_ITEM(KEY_CONFIG_BASE_RTCM_OUTPUT)));
+        if (err != ESP_OK) {
+            return err;
+        }
+    }
+
+    receiver_lock();
+    s_receiver.survey_active = false;
+    s_receiver.survey_started_us = 0;
+    receiver_unlock();
+
+    return receiver_apply_profile(RECEIVER_PROFILE_DIAGNOSTICS_ONLY, persist);
+}
+
 esp_err_t receiver_queue_command(const char *command, const char *expect)
 {
     if (command == NULL || *command == '\0') {
@@ -1270,6 +1484,10 @@ esp_err_t receiver_apply_profile(receiver_profile_t profile, bool persist)
     s_receiver.configured_profile = profile;
     s_receiver.applied_profile = RECEIVER_PROFILE_NONE;
     s_receiver.auto_apply_queued = false;
+    if (profile != RECEIVER_PROFILE_BASE_SURVEY) {
+        s_receiver.survey_active = false;
+        s_receiver.survey_started_us = 0;
+    }
     snprintf(s_receiver.status.profile, sizeof(s_receiver.status.profile), "%s", receiver_profile_name(profile));
     receiver_unlock();
 

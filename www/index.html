@@ -316,6 +316,8 @@
             var gnssProfileStatus = $('.gnss-profile-status');
             var gnssProfileSelect = $('#gnss-profile');
             var gnssRawConsole = $('#gnss-raw-console');
+            var gnssBaseSummary = $('.gnss-base-summary');
+            var gnssBaseStatus = $('.gnss-base-status');
             var capabilitiesSummary = $('.capabilities-summary');
             var ntripSlotsSummary = $('.ntrip-slots-summary');
             var ntripRuntimeSummary = $('.ntrip-runtime-summary');
@@ -487,12 +489,58 @@
                 gnssSatelliteStatus.text((payload.total_visible || satellites.length) + ' visible, ' + (payload.total_used || 0) + ' used');
             };
 
+            var renderGnssBaseStatus = function(base) {
+                if (!gnssBaseSummary.length || !gnssBaseStatus.length) return;
+                gnssBaseSummary.empty();
+                gnssBaseStatus.empty();
+
+                var disabled = !base || !base.detected;
+                $('#base-start-survey, #base-stop-survey, #base-apply-fixed, #base-clear')
+                    .prop('disabled', disabled);
+
+                if (!base || !base.detected) {
+                    gnssBaseSummary.append($('<div>', {class: 'small text-muted', text: 'No GNSS receiver detected'}));
+                    gnssBaseStatus.text(base && base.disabled_reason ? base.disabled_reason : 'Base controls are disabled until a receiver is connected.');
+                    return;
+                }
+
+                gnssBaseSummary
+                    .append($('<span>', {class: 'capability-pill', text: 'Mode ' + (base.configured_mode || 'rover')}))
+                    .append($('<span>', {class: 'capability-pill', text: 'Profile ' + (base.active_profile || 'none')}))
+                    .append($('<span>', {class: 'capability-pill', text: 'RTCM ' + (base.rtcm_output ? 'on' : 'off')}))
+                    .append($('<span>', {class: 'capability-pill', text: 'Survey ' + (base.survey_running ? 'running' : 'idle')}))
+                    .append($('<span>', {class: 'capability-pill', text: 'Target ' + (base.survey_duration_target_s || 0) + 's / ' + (base.survey_accuracy_target_mm || 0) + 'mm'}));
+
+                if (base.has_fixed_position) {
+                    gnssBaseSummary
+                        .append($('<span>', {class: 'capability-pill', text: 'Lat ' + ((base.latitude_e7 || 0) / 10000000).toFixed(7)}))
+                        .append($('<span>', {class: 'capability-pill', text: 'Lon ' + ((base.longitude_e7 || 0) / 10000000).toFixed(7)}))
+                        .append($('<span>', {class: 'capability-pill', text: 'Alt ' + ((base.altitude_mm || 0) / 1000).toFixed(3) + 'm'}));
+                }
+
+                if (base.survey_running) {
+                    gnssBaseStatus.text('Survey running: ' + (base.survey_elapsed_s || 0) + 's elapsed, ' + (base.survey_progress_percent || 0) + '% complete.');
+                } else {
+                    gnssBaseStatus.text(base.last_action_status || 'Idle');
+                }
+
+                $('#base-latitude').val(((base.latitude_e7 || 0) / 10000000).toFixed(7));
+                $('#base-longitude').val(((base.longitude_e7 || 0) / 10000000).toFixed(7));
+                $('#base-altitude-mm').val(base.altitude_mm || 0);
+                $('#base-survey-duration').val(base.survey_duration_target_s || 300);
+                $('#base-survey-accuracy').val(base.survey_accuracy_target_mm || 5000);
+                $('#base-rtcm-output').prop('checked', !!base.rtcm_output);
+            };
+
             var refreshGnssViews = function() {
                 $.getJSON('api/gnss/diagnostics').done(function(data) {
                     renderGnssDiagnostics(data);
                 });
                 $.getJSON('api/gnss/satellites').done(function(data) {
                     renderGnssSatellites(data);
+                });
+                $.getJSON('api/gnss/base/status').done(function(data) {
+                    renderGnssBaseStatus(data);
                 });
                 $.getJSON('api/gnss/receiver/raw').done(function(data) {
                     if (!data) return;
@@ -531,6 +579,9 @@
                     $('#gnss-signal-mask').val(data.signal_mask || '');
                     $('#gnss-rtcm-output').prop('checked', !!data.rtcm_output);
                     $('#gnss-agnss-enable').prop('checked', !!data.agnss_enable);
+                    $('#base-survey-duration').val(data.base_survey_duration_s || 300);
+                    $('#base-survey-accuracy').val(data.base_survey_accuracy_mm || 5000);
+                    $('#base-rtcm-output').prop('checked', !!data.base_rtcm_output);
                 });
             };
 
@@ -941,6 +992,65 @@
                     button.prop('disabled', false);
                 });
             });
+            $('#base-start-survey').on('click', function() {
+                const button = $(this);
+                button.prop('disabled', true);
+                $.ajax({
+                    url: 'api/gnss/base/start-survey',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({
+                        duration_s: parseInt($('#base-survey-duration').val() || '300', 10),
+                        accuracy_mm: parseInt($('#base-survey-accuracy').val() || '5000', 10),
+                        rtcm_output: $('#base-rtcm-output').is(':checked')
+                    })
+                }).done(function() {
+                    refreshGnssViews();
+                    loadGnssProfiles();
+                }).always(function() {
+                    button.prop('disabled', false);
+                });
+            });
+            $('#base-stop-survey').on('click', function() {
+                const button = $(this);
+                button.prop('disabled', true);
+                $.post('api/gnss/base/stop-survey').done(function() {
+                    refreshGnssViews();
+                    loadGnssProfiles();
+                }).always(function() {
+                    button.prop('disabled', false);
+                });
+            });
+            $('#base-apply-fixed').on('click', function() {
+                const button = $(this);
+                button.prop('disabled', true);
+                $.ajax({
+                    url: 'api/gnss/base/apply-fixed',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({
+                        latitude: parseFloat($('#base-latitude').val() || '0'),
+                        longitude: parseFloat($('#base-longitude').val() || '0'),
+                        altitude_mm: parseInt($('#base-altitude-mm').val() || '0', 10),
+                        rtcm_output: $('#base-rtcm-output').is(':checked')
+                    })
+                }).done(function() {
+                    refreshGnssViews();
+                    loadGnssProfiles();
+                }).always(function() {
+                    button.prop('disabled', false);
+                });
+            });
+            $('#base-clear').on('click', function() {
+                const button = $(this);
+                button.prop('disabled', true);
+                $.post('api/gnss/base/clear').done(function() {
+                    refreshGnssViews();
+                    loadGnssProfiles();
+                }).always(function() {
+                    button.prop('disabled', false);
+                });
+            });
             ntripSlotsEditor.on('click', '.slot-apply-mock', function() {
                 const button = $(this);
                 const card = button.closest('.ntrip-slot-card');
@@ -1172,6 +1282,49 @@
                     <div class="input-group-append">
                         <button type="button" class="btn btn-outline-secondary" id="gnss-command-send">Send</button>
                     </div>
+                </div>
+            </div>
+        </div>
+        <div class="card mb-3">
+            <div class="card-header">Base Station</div>
+            <div class="card-body py-3">
+                <div class="gnss-base-summary small text-muted">Loading base station status...</div>
+                <div class="gnss-base-status small text-muted mt-2"></div>
+                <div class="form-row mt-3">
+                    <div class="col-md-4">
+                        <label>Latitude</label>
+                        <input type="number" class="form-control" id="base-latitude" value="0" step="0.0000001">
+                    </div>
+                    <div class="col-md-4">
+                        <label>Longitude</label>
+                        <input type="number" class="form-control" id="base-longitude" value="0" step="0.0000001">
+                    </div>
+                    <div class="col-md-4">
+                        <label>Altitude (mm)</label>
+                        <input type="number" class="form-control" id="base-altitude-mm" value="0" step="1">
+                    </div>
+                </div>
+                <div class="form-row mt-2">
+                    <div class="col-md-4">
+                        <label>Survey duration (s)</label>
+                        <input type="number" class="form-control" id="base-survey-duration" value="300" min="30" step="30">
+                    </div>
+                    <div class="col-md-4">
+                        <label>Survey accuracy (mm)</label>
+                        <input type="number" class="form-control" id="base-survey-accuracy" value="5000" min="100" step="100">
+                    </div>
+                    <div class="col-md-4 d-flex align-items-end">
+                        <div class="custom-control custom-switch">
+                            <input type="checkbox" class="custom-control-input" id="base-rtcm-output" checked>
+                            <label class="custom-control-label" for="base-rtcm-output">RTCM output</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="mt-3">
+                    <button type="button" class="btn btn-sm btn-primary" id="base-start-survey">Start Survey</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary ml-2" id="base-stop-survey">Stop Survey</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary ml-2" id="base-apply-fixed">Apply Fixed</button>
+                    <button type="button" class="btn btn-sm btn-outline-danger ml-2" id="base-clear">Clear</button>
                 </div>
             </div>
         </div>

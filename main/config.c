@@ -341,6 +341,34 @@ const config_item_t CONFIG_ITEMS[] = {
                 .key = KEY_CONFIG_RECEIVER_AGNSS_ENABLE,
                 .type = CONFIG_ITEM_TYPE_BOOL,
                 .def.bool1 = false
+        }, {
+                .key = KEY_CONFIG_BASE_MODE,
+                .type = CONFIG_ITEM_TYPE_INT8,
+                .def.int8 = 0
+        }, {
+                .key = KEY_CONFIG_BASE_LAT_E7,
+                .type = CONFIG_ITEM_TYPE_INT32,
+                .def.int32 = 0
+        }, {
+                .key = KEY_CONFIG_BASE_LON_E7,
+                .type = CONFIG_ITEM_TYPE_INT32,
+                .def.int32 = 0
+        }, {
+                .key = KEY_CONFIG_BASE_ALT_MM,
+                .type = CONFIG_ITEM_TYPE_INT32,
+                .def.int32 = 0
+        }, {
+                .key = KEY_CONFIG_BASE_SURVEY_DURATION,
+                .type = CONFIG_ITEM_TYPE_UINT32,
+                .def.uint32 = 300
+        }, {
+                .key = KEY_CONFIG_BASE_SURVEY_ACCURACY_MM,
+                .type = CONFIG_ITEM_TYPE_UINT32,
+                .def.uint32 = 5000
+        }, {
+                .key = KEY_CONFIG_BASE_RTCM_OUTPUT,
+                .type = CONFIG_ITEM_TYPE_BOOL,
+                .def.bool1 = true
         },
 
         // WiFi

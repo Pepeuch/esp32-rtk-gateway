@@ -142,6 +142,13 @@ typedef struct config_item {
 #define KEY_CONFIG_RECEIVER_CONSTELLATION_MASK "rcv_const_mask"
 #define KEY_CONFIG_RECEIVER_SIGNAL_MASK "rcv_sig_mask"
 #define KEY_CONFIG_RECEIVER_AGNSS_ENABLE "rcv_agnss"
+#define KEY_CONFIG_BASE_MODE "base_mode"
+#define KEY_CONFIG_BASE_LAT_E7 "base_lat_e7"
+#define KEY_CONFIG_BASE_LON_E7 "base_lon_e7"
+#define KEY_CONFIG_BASE_ALT_MM "base_alt_mm"
+#define KEY_CONFIG_BASE_SURVEY_DURATION "base_svy_dur"
+#define KEY_CONFIG_BASE_SURVEY_ACCURACY_MM "base_svy_acc"
+#define KEY_CONFIG_BASE_RTCM_OUTPUT "base_rtcm"
 
 // WiFi
 #define KEY_CONFIG_WIFI_AP_ACTIVE "w_ap_active"

@@ -38,6 +38,13 @@ typedef enum receiver_profile {
     RECEIVER_PROFILE_BASE_SURVEY,
 } receiver_profile_t;
 
+typedef enum receiver_base_mode {
+    RECEIVER_BASE_MODE_ROVER = 0,
+    RECEIVER_BASE_MODE_FIXED,
+    RECEIVER_BASE_MODE_SURVEY,
+    RECEIVER_BASE_MODE_DIAGNOSTICS,
+} receiver_base_mode_t;
+
 #define RECEIVER_MAX_SATELLITES 64
 
 typedef struct receiver_status {
@@ -104,9 +111,31 @@ typedef struct receiver_diagnostics {
     uint32_t constellation_cn0_max[RECEIVER_CONSTELLATION_COUNT];
 } receiver_diagnostics_t;
 
+typedef struct receiver_base_status {
+    bool detected;
+    bool has_fixed_position;
+    bool survey_running;
+    receiver_type_t receiver_type;
+    receiver_base_mode_t configured_mode;
+    char configured_mode_name[20];
+    char active_profile[24];
+    char receiver_mode[16];
+    int32_t latitude_e7;
+    int32_t longitude_e7;
+    int32_t altitude_mm;
+    uint32_t survey_duration_target_s;
+    uint32_t survey_accuracy_target_mm;
+    uint32_t survey_elapsed_s;
+    uint32_t survey_progress_percent;
+    bool rtcm_output;
+    char last_action_status[32];
+    char disabled_reason[48];
+} receiver_base_status_t;
+
 const char *receiver_type_name(receiver_type_t type);
 const char *receiver_mode_name(receiver_mode_t mode);
 const char *receiver_constellation_name(receiver_constellation_t constellation);
 const char *receiver_profile_name(receiver_profile_t profile);
+const char *receiver_base_mode_name(receiver_base_mode_t mode);
 
 #endif // ESP32_XBEE_RECEIVER_TYPES_H
