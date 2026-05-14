@@ -1,222 +1,195 @@
 <html>
 <head>
     <title>ESP32 RTK Gateway Dashboard</title>
-    <script src="jquery-3.4.1.min.js"></script>
-    <script src="bs-4.3.1.bundle.min.js"></script>
-    <link rel="stylesheet" href="bs-4.3.1.min.css">
     <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
-        body {
-            background: #f7f9fb;
-        }
-
-        .capability-pill {
-            display: inline-block;
-            margin: 0 8px 8px 0;
-            padding: 4px 10px;
-            border-radius: 999px;
-            background: #eef3f7;
-            font-size: 0.875rem;
-        }
-
-        .mono {
-            font-family: monospace;
-        }
+        :root { color-scheme: light; }
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f7f9fb; color: #24303c; }
+        .wrap { max-width: 1100px; margin: 0 auto; padding: 20px; }
+        .topbar { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 20px; flex-wrap: wrap; }
+        .title { margin: 0; font-size: 1.9rem; }
+        .subtitle { color: #6b7785; margin-top: 4px; }
+        .nav { display: flex; gap: 8px; flex-wrap: wrap; }
+        .nav a { text-decoration: none; color: #1d4f6a; border: 1px solid #c8d7e1; background: #fff; padding: 8px 12px; border-radius: 999px; font-size: 0.95rem; }
+        .nav a.active { background: #1d4f6a; color: #fff; border-color: #1d4f6a; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+        .card { background: #fff; border: 1px solid #e3e8ee; border-radius: 14px; box-shadow: 0 4px 18px rgba(30, 55, 90, 0.05); }
+        .card h3 { margin: 0; padding: 14px 16px; font-size: 1rem; border-bottom: 1px solid #eef2f5; }
+        .card .body { padding: 16px; min-height: 88px; }
+        .pills { display: flex; flex-wrap: wrap; gap: 8px; }
+        .pill { display: inline-block; padding: 6px 10px; border-radius: 999px; background: #eef3f7; font-size: 0.88rem; }
+        .small-list { display: grid; gap: 8px; font-size: 0.92rem; color: #425160; }
+        .muted { color: #6b7785; }
+        footer { margin-top: 20px; color: #6b7785; font-size: 0.9rem; }
+        .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
     </style>
-    <script>
-        $(function() {
-            var capabilitiesSummary = $('.capabilities-summary');
-            var wifiSummary = $('.wifi-summary');
-            var gnssSummary = $('.gnss-summary');
-            var baseSummary = $('.base-summary');
-            var ntripSummary = $('.ntrip-summary');
-            var footerUptime = $('.footer-uptime');
-            var footerHeap = $('.footer-heap');
-
-            var secondsToHHMMSS = function(seconds) {
-                seconds = parseInt(seconds || 0, 10);
-                var hours = Math.floor(seconds / 3600);
-                var minutes = Math.floor(seconds / 60) % 60;
-                var secs = seconds % 60;
-                return [hours, minutes, secs].map(function(v) {
-                    return v < 10 ? '0' + v : '' + v;
-                }).join(':');
-            };
-
-            var appendPill = function(container, text) {
-                container.append($('<span>', {class: 'capability-pill', text: text}));
-            };
-
-            var renderWifi = function(wifi) {
-                wifiSummary.empty();
-                if (!wifi) {
-                    wifiSummary.text('No network status available');
-                    return;
-                }
-
-                if (wifi.ap && wifi.ap.active) {
-                    appendPill(wifiSummary, 'AP ' + (wifi.ap.ssid || 'unnamed'));
-                    appendPill(wifiSummary, wifi.ap.ip4 || 'no AP IP');
-                    appendPill(wifiSummary, (wifi.ap.devices || 0) + ' AP client(s)');
-                } else {
-                    appendPill(wifiSummary, 'AP disabled');
-                }
-
-                if (wifi.sta && wifi.sta.active) {
-                    appendPill(wifiSummary, wifi.sta.connected ? 'STA connected' : 'STA not connected');
-                    appendPill(wifiSummary, wifi.sta.ssid || 'no SSID');
-                    if (wifi.sta.ip4) {
-                        appendPill(wifiSummary, wifi.sta.ip4);
-                    }
-                    if (typeof wifi.sta.rssi === 'number') {
-                        appendPill(wifiSummary, wifi.sta.rssi + ' dBm');
-                    }
-                } else {
-                    appendPill(wifiSummary, 'STA disabled');
-                }
-            };
-
-            var renderGnss = function(gnss) {
-                gnssSummary.empty();
-                if (!gnss || !gnss.detected) {
-                    gnssSummary.text('No GNSS data');
-                    return;
-                }
-
-                appendPill(gnssSummary, gnss.receiver_type || 'unknown');
-                appendPill(gnssSummary, gnss.model || 'unknown model');
-                appendPill(gnssSummary, gnss.fix_type || 'unknown fix');
-                appendPill(gnssSummary, 'RTK ' + (gnss.rtk_status || 'unknown'));
-                appendPill(gnssSummary, (gnss.satellites_used || 0) + ' used / ' + (gnss.satellites_visible || 0) + ' visible');
-                appendPill(gnssSummary, 'CN0 ' + (gnss.cn0_mean || 0) + '/' + (gnss.cn0_max || 0));
-                appendPill(gnssSummary, gnss.rtcm_alive && !gnss.rtcm_stale ? 'RTCM alive' : (gnss.rtcm_stale ? 'RTCM stale' : 'RTCM idle'));
-            };
-
-            var renderCapabilities = function(cap) {
-                capabilitiesSummary.empty();
-                if (!cap) {
-                    capabilitiesSummary.text('Capabilities unavailable');
-                    return;
-                }
-
-                appendPill(capabilitiesSummary, cap.chip_family || 'unknown');
-                appendPill(capabilitiesSummary, cap.network_profile || 'unknown network');
-                appendPill(capabilitiesSummary, (cap.max_ntrip_slots || 0) + ' NTRIP slots');
-                appendPill(capabilitiesSummary, cap.psram_available ? 'PSRAM' : 'No PSRAM');
-                appendPill(capabilitiesSummary, cap.ethernet_active ? 'Ethernet active' : 'Wi-Fi only');
-            };
-
-            var renderBase = function(base) {
-                baseSummary.empty();
-                if (!base || !base.detected) {
-                    baseSummary.text('No base station data');
-                    return;
-                }
-
-                appendPill(baseSummary, 'Mode ' + (base.configured_mode || 'rover'));
-                appendPill(baseSummary, 'Profile ' + (base.active_profile || 'none'));
-                appendPill(baseSummary, 'RTCM ' + (base.rtcm_output ? 'on' : 'off'));
-                appendPill(baseSummary, base.survey_running ? ('Survey ' + (base.survey_progress_percent || 0) + '%') : 'Survey idle');
-                if (base.has_fixed_position) {
-                    appendPill(baseSummary, 'Lat ' + ((base.latitude_e7 || 0) / 10000000).toFixed(7));
-                    appendPill(baseSummary, 'Lon ' + ((base.longitude_e7 || 0) / 10000000).toFixed(7));
-                }
-            };
-
-            var renderNtrip = function(ntrip) {
-                ntripSummary.empty();
-                if (!ntrip || !Array.isArray(ntrip.slots)) {
-                    ntripSummary.text('NTRIP runtime unavailable');
-                    return;
-                }
-
-                ntrip.slots.forEach(function(slot) {
-                    var text = (slot.index + 1) + '. ' + (slot.name || 'slot') + ' - ' + (slot.status || 'unknown');
-                    if (slot.disabled_reason) {
-                        text += ' (' + slot.disabled_reason + ')';
-                    }
-                    ntripSummary.append($('<div>', {class: 'small mb-1', text: text}));
-                });
-            };
-
-            var poll = function() {
-                $.getJSON('status').done(function(data) {
-                    if (!data) {
-                        return;
-                    }
-
-                    footerUptime.text(secondsToHHMMSS(data.uptime || 0));
-                    if (data.heap && data.heap.total) {
-                        footerHeap.text(Math.round((data.heap.free || 0) / data.heap.total * 100) + '% free');
-                    } else {
-                        footerHeap.text('n/a');
-                    }
-
-                    renderCapabilities(data.capabilities);
-                    renderWifi(data.wifi);
-                    renderGnss(data.gnss);
-                    renderNtrip(data.ntrip);
-                }).always(function() {
-                    setTimeout(poll, 3000);
-                });
-
-                $.getJSON('api/gnss/base/status').done(function(data) {
-                    renderBase(data);
-                });
-            };
-
-            poll();
-        });
-    </script>
 </head>
 <body>
-    <div class="container py-4">
-        <div class="d-flex justify-content-between align-items-center mb-4">
+    <div class="wrap">
+        <div class="topbar">
             <div>
-                <h2 class="mb-1">ESP32 RTK Gateway</h2>
-                <div class="text-muted">Lightweight live dashboard</div>
+                <h1 class="title">ESP32 RTK Gateway</h1>
+                <div class="subtitle">Lightweight live dashboard</div>
             </div>
-            <div>
-                <a class="btn btn-outline-secondary btn-sm" href="/dashboard.html">Dashboard</a>
-                <a class="btn btn-outline-info btn-sm" href="/setup.html">Setup</a>
-                <a class="btn btn-outline-primary btn-sm" href="/config.html">Config</a>
-                <a class="btn btn-outline-dark btn-sm" href="/advanced.html">Advanced</a>
-                <a class="btn btn-outline-secondary btn-sm" href="/log.html">Logs</a>
-            </div>
+            <nav class="nav">
+                <a class="active" href="/dashboard.html">Dashboard</a>
+                <a href="/setup.html">Setup</a>
+                <a href="/config.html">Config</a>
+                <a href="/advanced.html">Advanced</a>
+                <a href="/log.html">Logs</a>
+            </nav>
         </div>
-
-        <div class="row">
-            <div class="col-lg-6">
-                <div class="card mb-3">
-                    <div class="card-header">Platform</div>
-                    <div class="card-body capabilities-summary small text-muted">Loading platform profile...</div>
-                </div>
-                <div class="card mb-3">
-                    <div class="card-header">Network</div>
-                    <div class="card-body wifi-summary small text-muted">Loading network status...</div>
-                </div>
-                <div class="card mb-3">
-                    <div class="card-header">NTRIP</div>
-                    <div class="card-body ntrip-summary small text-muted">Loading NTRIP runtime...</div>
-                </div>
-            </div>
-            <div class="col-lg-6">
-                <div class="card mb-3">
-                    <div class="card-header">GNSS</div>
-                    <div class="card-body gnss-summary small text-muted">Loading GNSS status...</div>
-                </div>
-                <div class="card mb-3">
-                    <div class="card-header">Base Station</div>
-                    <div class="card-body base-summary small text-muted">Loading base status...</div>
-                </div>
-            </div>
+        <div class="grid">
+            <section class="card">
+                <h3>Platform</h3>
+                <div class="body"><div class="pills capabilities-summary"><span class="muted">Loading platform profile...</span></div></div>
+            </section>
+            <section class="card">
+                <h3>Network</h3>
+                <div class="body"><div class="pills wifi-summary"><span class="muted">Loading network status...</span></div></div>
+            </section>
+            <section class="card">
+                <h3>GNSS</h3>
+                <div class="body"><div class="pills gnss-summary"><span class="muted">Loading GNSS status...</span></div></div>
+            </section>
+            <section class="card">
+                <h3>Base Station</h3>
+                <div class="body"><div class="pills base-summary"><span class="muted">Loading base status...</span></div></div>
+            </section>
+            <section class="card" style="grid-column: 1 / -1;">
+                <h3>NTRIP</h3>
+                <div class="body"><div class="small-list ntrip-summary"><span class="muted">Loading NTRIP runtime...</span></div></div>
+            </section>
         </div>
-
-        <footer class="pt-3 text-muted small">
+        <footer>
             Uptime: <span class="footer-uptime mono">00:00:00</span>
-            <span class="mx-2">|</span>
+            <span> | </span>
             Heap: <span class="footer-heap mono">n/a</span>
         </footer>
     </div>
+    <script>
+        const el = (selector) => document.querySelector(selector);
+        const capabilitiesSummary = el('.capabilities-summary');
+        const wifiSummary = el('.wifi-summary');
+        const gnssSummary = el('.gnss-summary');
+        const baseSummary = el('.base-summary');
+        const ntripSummary = el('.ntrip-summary');
+        const footerUptime = el('.footer-uptime');
+        const footerHeap = el('.footer-heap');
+
+        const secondsToHHMMSS = (seconds) => {
+            seconds = parseInt(seconds || 0, 10);
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor(seconds / 60) % 60;
+            const secs = seconds % 60;
+            return [hours, minutes, secs].map((v) => v < 10 ? '0' + v : '' + v).join(':');
+        };
+
+        const clearNode = (node) => { while (node.firstChild) node.removeChild(node.firstChild); };
+        const appendPill = (container, text) => {
+            const span = document.createElement('span');
+            span.className = 'pill';
+            span.textContent = text;
+            container.appendChild(span);
+        };
+        const setMutedText = (container, text) => {
+            clearNode(container);
+            const span = document.createElement('span');
+            span.className = 'muted';
+            span.textContent = text;
+            container.appendChild(span);
+        };
+
+        const renderWifi = (wifi) => {
+            clearNode(wifiSummary);
+            if (!wifi) return setMutedText(wifiSummary, 'No network status available');
+            if (wifi.ap && wifi.ap.active) {
+                appendPill(wifiSummary, 'AP ' + (wifi.ap.ssid || 'unnamed'));
+                appendPill(wifiSummary, wifi.ap.ip4 || 'no AP IP');
+                appendPill(wifiSummary, (wifi.ap.devices || 0) + ' AP client(s)');
+            } else appendPill(wifiSummary, 'AP disabled');
+            if (wifi.sta && wifi.sta.active) {
+                appendPill(wifiSummary, wifi.sta.connected ? 'STA connected' : 'STA not connected');
+                appendPill(wifiSummary, wifi.sta.ssid || 'no SSID');
+                if (wifi.sta.ip4) appendPill(wifiSummary, wifi.sta.ip4);
+                if (typeof wifi.sta.rssi === 'number') appendPill(wifiSummary, wifi.sta.rssi + ' dBm');
+            } else appendPill(wifiSummary, 'STA disabled');
+        };
+
+        const renderGnss = (gnss) => {
+            clearNode(gnssSummary);
+            if (!gnss || !gnss.detected) return setMutedText(gnssSummary, 'No GNSS data');
+            appendPill(gnssSummary, gnss.receiver_type || 'unknown');
+            appendPill(gnssSummary, gnss.model || 'unknown model');
+            appendPill(gnssSummary, gnss.fix_type || 'unknown fix');
+            appendPill(gnssSummary, 'RTK ' + (gnss.rtk_status || 'unknown'));
+            appendPill(gnssSummary, (gnss.satellites_used || 0) + ' used / ' + (gnss.satellites_visible || 0) + ' visible');
+            appendPill(gnssSummary, 'CN0 ' + (gnss.cn0_mean || 0) + '/' + (gnss.cn0_max || 0));
+            appendPill(gnssSummary, gnss.rtcm_alive && !gnss.rtcm_stale ? 'RTCM alive' : (gnss.rtcm_stale ? 'RTCM stale' : 'RTCM idle'));
+        };
+
+        const renderCapabilities = (cap) => {
+            clearNode(capabilitiesSummary);
+            if (!cap) return setMutedText(capabilitiesSummary, 'Capabilities unavailable');
+            appendPill(capabilitiesSummary, cap.chip_family || 'unknown');
+            appendPill(capabilitiesSummary, cap.network_profile || 'unknown network');
+            appendPill(capabilitiesSummary, (cap.max_ntrip_slots || 0) + ' NTRIP slots');
+            appendPill(capabilitiesSummary, cap.psram_available ? 'PSRAM' : 'No PSRAM');
+            appendPill(capabilitiesSummary, cap.ethernet_active ? 'Ethernet active' : 'Wi-Fi only');
+        };
+
+        const renderBase = (base) => {
+            clearNode(baseSummary);
+            if (!base || !base.detected) return setMutedText(baseSummary, 'No base station data');
+            appendPill(baseSummary, 'Mode ' + (base.configured_mode || 'rover'));
+            appendPill(baseSummary, 'Profile ' + (base.active_profile || 'none'));
+            appendPill(baseSummary, 'RTCM ' + (base.rtcm_output ? 'on' : 'off'));
+            appendPill(baseSummary, base.survey_running ? ('Survey ' + (base.survey_progress_percent || 0) + '%') : 'Survey idle');
+            if (base.has_fixed_position) {
+                appendPill(baseSummary, 'Lat ' + ((base.latitude_e7 || 0) / 10000000).toFixed(7));
+                appendPill(baseSummary, 'Lon ' + ((base.longitude_e7 || 0) / 10000000).toFixed(7));
+            }
+        };
+
+        const renderNtrip = (ntrip) => {
+            clearNode(ntripSummary);
+            if (!ntrip || !Array.isArray(ntrip.slots)) return setMutedText(ntripSummary, 'NTRIP runtime unavailable');
+            ntrip.slots.forEach((slot) => {
+                const row = document.createElement('div');
+                let text = (slot.index + 1) + '. ' + (slot.name || 'slot') + ' - ' + (slot.status || 'unknown');
+                if (slot.disabled_reason) text += ' (' + slot.disabled_reason + ')';
+                row.textContent = text;
+                ntripSummary.appendChild(row);
+            });
+        };
+
+        const poll = async () => {
+            try {
+                const response = await fetch('/status');
+                const data = await response.json();
+                footerUptime.textContent = secondsToHHMMSS(data.uptime || 0);
+                if (data.heap && data.heap.total) footerHeap.textContent = Math.round((data.heap.free || 0) / data.heap.total * 100) + '% free';
+                else footerHeap.textContent = 'n/a';
+                renderCapabilities(data.capabilities);
+                renderWifi(data.wifi);
+                renderGnss(data.gnss);
+                renderNtrip(data.ntrip);
+            } catch (error) {
+                setMutedText(capabilitiesSummary, 'Status unavailable');
+            } finally {
+                setTimeout(poll, 3000);
+            }
+            try {
+                const response = await fetch('/api/gnss/base/status');
+                renderBase(await response.json());
+            } catch (error) {
+                setMutedText(baseSummary, 'Base status unavailable');
+            }
+        };
+
+        poll();
+    </script>
 </body>
 </html>
