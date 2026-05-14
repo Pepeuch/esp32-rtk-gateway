@@ -1,121 +1,121 @@
-# ESP32 RTK Gateway / RTK Gateway
+# ESP32 RTK Gateway
 
-ESP32-based multi-network RTK/NTRIP gateway firmware supporting Ethernet, Wi-Fi, GNSS diagnostics, receiver management and future multi-radio extensions.
+ESP32 RTK Gateway is a modular embedded RTK/NTRIP platform for ESP32-class hardware. It combines a supervised multi-slot NTRIP runtime, GNSS receiver abstraction, live diagnostics, hardware-aware capabilities, and a lightweight built-in web UI designed for real devices with tight memory and socket budgets.
 
-Originally based on the ESP32 NTRIP DUO project by Nebojša Cvetković and later updated for ESP-IDF v5.x by dr. Kónya Sándor.
+Originally based on the ESP32 NTRIP DUO project by Nebojša Cvetković and later updated for ESP-IDF v5.x by dr. Kónya Sándor. This codebase keeps that lineage while evolving into a broader RTK/GNSS gateway platform.
 
----
+## What It Is
 
-# Features
+The current firmware is focused on four things:
 
-## Network Runtime
-- Modular network stack
-- Ethernet / Wi-Fi separation
-- Dynamic network state manager
-- Captive portal support
-- Improved reconnect handling
-- Runtime diagnostics
-- Improved logging/debugging
-- Better runtime stability
+- reliable RTCM transport over Wi-Fi and Ethernet
+- GNSS receiver visibility and diagnostics without requiring a host PC
+- portable hardware support across multiple ESP32 families and Ethernet backends
+- safe runtime behavior under memory, socket, and reconnect pressure
 
-## NTRIP Runtime
-- Modular NTRIP runtime
-- Multi-slot runtime supervision
-- Slot state machine
-- Runtime statistics API
-- Fake RTCM generator
-- Runtime self-test system
-- Improved reconnect stability
-- Reduced blocking socket operations
-- Dynamic slot monitoring
-- Better watchdog behavior
-- Runtime diagnostics endpoints
+## Current Features
 
-## GNSS Runtime
-- Generic receiver abstraction layer
-- Passive UART observation
-- Receiver auto-detection
-- GNSS profile manager
-- Satellite aggregation table
-- RTCM activity monitoring
-- RTK diagnostics
-- CN0 statistics
-- Antenna diagnostics
-- Jamming diagnostics
-- AGC monitoring
-- Raw receiver console
-- Asynchronous command queue
-- Safe boot behavior without GNSS connected
+### Runtime Platform
 
-## Supported GNSS Receivers
-### Current
-- Unicore N4 (preliminary support)
-- Generic NMEA receivers
-- Initial u-blox detection support
+- board and target abstraction for multiple ESP32 families
+- capability-driven runtime limits for NTRIP slots and diagnostics features
+- Ethernet and Wi-Fi support with runtime status reporting
+- PSRAM-aware memory policy and buffer diagnostics
+- QoS state management for graceful degradation under load
 
-### Planned
-- Full u-blox UBX support
-- F9P/F9R advanced support
-- High precision UBX diagnostics
+### NTRIP Runtime
 
----
+- persistent 5-slot NTRIP configuration model
+- supervised multi-slot runtime with per-slot state machine
+- exponential reconnect handling and runtime statistics
+- shared RTCM fanout path with bounded per-slot buffers
+- runtime self-test and fake RTCM tools for validation without field hardware
+- buffer high-water marks and dropped packet counters
 
-# Supported Architectures
+### GNSS Runtime
+
+- generic receiver abstraction independent from NTRIP transport
+- passive UART observation with safe boot when no receiver is attached
+- Unicore-oriented profile manager and async command queue
+- GNSS diagnostics API with fix, RTK, RTCM, AGC, antenna, jamming, and parser status
+- aggregated satellite table with CN0 and constellation summaries
+- preliminary u-blox UBX support for detection and telemetry
+
+### Web Interface
+
+- lightweight dashboard as default entry page
+- separate config, advanced, log, and setup pages to reduce socket pressure
+- vanilla JavaScript UI with no heavy framework dependency
+- live GNSS, NTRIP, memory, and QoS visibility from the device itself
+
+## Architecture Overview
+
+The firmware is structured around a few independent layers:
+
+1. Hardware layer
+   - compile-time board and target selection
+   - board capabilities and Ethernet backend selection
+
+2. Network layer
+   - Wi-Fi and Ethernet orchestration
+   - runtime network state and capability reporting
+
+3. NTRIP layer
+   - persistent slot configuration
+   - supervised runtime tasks and RTCM fanout
+   - runtime QoS and self-test support
+
+4. GNSS layer
+   - receiver abstraction
+   - receiver diagnostics parsing
+   - receiver command/profile management
+
+5. Web/API layer
+   - lightweight embedded pages
+   - JSON APIs for status, diagnostics, configuration, and test tools
+
+This separation is meant to keep transport, GNSS logic, UI, and hardware support evolvable without forcing large rewrites.
+
+## Supported Architectures
+
+Current support path:
 
 - ESP32
 - ESP32-S3
 - ESP32-C3
 - ESP32-C6
 
----
+Default target:
 
-# Supported Ethernet Controllers
+- Waveshare ESP32-S3 ETH
 
-- W5500 (SPI)
-- LAN8720 (RMII)
+## Ethernet Backends
 
-Board-specific configuration is handled through:
+Supported Ethernet backend path:
 
-```c
-config/board_*.h
+- W5500 over SPI
+- LAN8720 over RMII
 
-Ethernet type is selected using:
+The current hardware abstraction uses compile-time board and target selection under `main/config/`.
 
-```c
-BOARD_ETHERNET_TYPE
-```
+Important files:
 
----
+- `main/config/board_config.h`
+- `main/config/board_caps.h`
+- `main/config/boards/*.h`
+- `main/config/targets/*.h`
 
-# Web API
+Backend selection is driven by board configuration rather than runtime probing.
 
-## General
-- `/api/status`
-- `/api/capabilities`
+## GNSS Support
 
-## NTRIP
-- `/api/ntrip`
-- `/api/ntrip/runtime`
-- `/api/dev/ntrip/selftest/start`
-- `/api/dev/ntrip/selftest/result`
-- `/api/dev/fake-rtcm/start`
-- `/api/dev/fake-rtcm/stop`
+Current receiver support level:
 
-## GNSS
-- `/api/gnss/status`
-- `/api/gnss/satellites`
-- `/api/gnss/diagnostics`
-- `/api/gnss/profiles`
-- `/api/gnss/profile/apply`
-- `/api/gnss/command`
-- `/api/gnss/receiver/raw`
-- `/api/gnss/detect`
+- generic NMEA diagnostics
+- Unicore N4 ASCII diagnostics and profile workflow
+- u-blox UBX detection and telemetry parsing
 
----
-
-# GNSS Profiles
-
-Integrated receiver profiles:
+Current integrated profiles:
 
 - `none`
 - `diagnostics_only`
@@ -124,263 +124,139 @@ Integrated receiver profiles:
 - `base_fixed`
 - `base_survey`
 
----
+The receiver layer is intentionally conservative: detection and diagnostics come first, while active receiver configuration is added gradually and defensively.
 
-# Web Interface
+## Stability and Resource Management
 
-## Current Features
-- GNSS status card
-- Satellite live table
-- RTK quality indicators
-- Receiver profile selection
-- Receiver command interface
-- Raw GNSS console
-- Runtime diagnostics
-- NTRIP monitoring
-- Better no-GNSS handling
+The firmware includes dedicated mechanisms to stay usable on constrained hardware:
 
----
+- bounded ringbuffers and bounded config models
+- PSRAM-aware allocation policy with internal RAM fallback
+- chunked JSON for larger web responses
+- active socket visibility via status APIs
+- QoS states: `normal`, `degraded`, `critical`
+- optional features reduced or disabled automatically under critical load
 
-# Current Status
+This is especially important for keeping RTCM transport stable while the embedded UI is open.
 
-The firmware is actively under development.
+## Web API Highlights
 
-Current focus:
-- GNSS diagnostics
-- Receiver management
-- NTRIP runtime stability
-- Unicore support
-- Future u-blox support
-- Bluetooth mobile integration
-- Survey-in / base station workflows
+Core endpoints:
 
----
+- `/api/status`
+- `/api/capabilities`
 
-# Planned Features
+NTRIP endpoints:
 
-## PR10 - Memory / Storage / Buffer Architecture
-- PSRAM capability detection
-- Dynamic buffer allocation
-- Internal RAM fallback
-- Optimized GNSS/NTRIP ringbuffers
-- HTTP chunked streaming improvements
-- Optional SD card logging
-- Runtime memory diagnostics
-- Buffer usage monitoring
-- Capability exposure via /api/capabilities
+- `/api/ntrip`
+- `/api/ntrip/runtime`
+- `/api/ntrip/restart`
 
-## PR11 - Web UI split and lightweight dashboard
+GNSS endpoints:
 
-### /dashboard
-- GNSS state
-- Fix / RTK status
-- Satellites
-- CN0 statistics
-- NTRIP runtime
-- Network summary
-- Lightweight polling only
+- `/api/gnss/status`
+- `/api/gnss/satellites`
+- `/api/gnss/diagnostics`
+- `/api/gnss/profiles`
+- `/api/gnss/profile/apply`
+- `/api/gnss/command`
+- `/api/gnss/receiver/raw`
+- `/api/gnss/base/status`
 
-### /config
-- Wi-Fi / Ethernet
-- GNSS profile
-- UART mapping
-- NTRIP slots
-- Base / rover mode
-- Receiver presets
-- Persistent configuration
+Development and validation endpoints are also present for fake RTCM, runtime mocks, and self-tests.
 
-### /advanced
-- Logs
-- Raw GNSS console
-- Self-tests
-- Fake RTCM
-- Manual commands
-- Advanced diagnostics
-- Runtime statistics
-- Buffer/memory statistics
+## Web UI Pages
 
-## PR12 - Hardware Setup Wizard
-- Visual hardware selection
-- ESP32 family selection
-  - ESP32
-  - ESP32-C3
-  - ESP32-C6
-  - ESP32-S3
-- Flash size selection
-- PSRAM selection
-- Ethernet module selection
-- GNSS receiver selection
-  - NMEA
-  - u-blox
-  - Unicore
-- UART mapping
-- Rover/base presets
-- NTRIP presets
-- Ethernet/Wi-Fi presets
-- Automatic configuration generation
-- Board capability auto-detection
-- Recommended configuration suggestions
+- `/` or `/dashboard.html`
+  - lightweight live status view
+- `/config.html`
+  - network, NTRIP, GNSS, and base configuration
+- `/advanced.html`
+  - raw console, self-test, fake RTCM, deep diagnostics
+- `/log.html`
+  - device log view
+- `/setup.html`
+  - hardware setup wizard and capability guidance
 
----
-
-# Future Features
-
-## Connectivity
-- Bluetooth LE support (Android/iOS)
-- LoRa support
-- Multi-radio support
-- MQTT monitoring
-- Remote syslog support
-
-## GNSS / Robotics
-- Rover field measurement mode
-- Advanced RTCM analysis
-- GNSS recording/replay
-- Survey export/import
-
-## Performance
-- PSRAM optimized buffers
-- SD card log persistence
-- Remote log streaming
-- Advanced runtime profiling
-
-## Mobile / UX
-- Enhanced mobile support
-- Progressive Web App (PWA)
-- Offline dashboard cache
-- Touch-friendly field UI
-
----
-
-# Default UART Pinout
+## Default UART Pinout
 
 Default UART configuration:
 
 - TX: GPIO1
 - RX: GPIO3
 
-(Default for WT32-ETH01)
+This matches the historical WT32-ETH01 default.
 
----
+## Roadmap
 
-# Release History
+Near-term direction:
 
-## UPDATE 2026-05-14
-# Release v0.5.0-dev
+- stronger field validation of Unicore profile workflows
+- deeper u-blox support without sacrificing safety
+- more complete base station workflow coverage
+- continued QoS and memory hardening before broader beta use
+- broader board coverage on top of the current abstraction layer
 
-Major architecture overhaul and GNSS runtime redesign.
+Longer-term exploration:
 
-### Added
-- Modular NTRIP runtime
-- GNSS abstraction layer
-- GNSS diagnostics
-- Satellite aggregation
-- Runtime APIs
-- Receiver profiles
-- Fake RTCM generator
-- Self-test framework
-- Raw GNSS console
-- Asynchronous GNSS command queue
-- Better watchdog handling
-- Improved reconnect logic
-- Improved diagnostics UI
+- additional radio and transport options
+- extended telemetry and logging backends
+- more workflow-oriented field tools for rover and base deployments
 
----
+## Legacy Notes
 
-## UPDATE 2026-03-16
-# Release v0.4.1a
+This project has evolved through several phases:
 
-### Added
-- Modular network stack
-- Ethernet / Wi-Fi separation
-- network_state manager
-- Improved logging/debugging
-- General runtime improvements
+- initial ESP32 NTRIP gateway firmware with Wi-Fi and dual-server behavior
+- ESP-IDF v5 migration and WT32-ETH01 maintenance
+- universal board and Ethernet architecture work
+- modular NTRIP runtime and GNSS abstraction redesign
+- lightweight web UI and QoS/memory hardening
 
-### Supported Architectures
-- ESP32 / ETH
-- ESP32-S3 / ETH
-- ESP32-C3
-- ESP32-C6
+Older release notes are preserved below for historical context, but the sections above describe the current platform more accurately.
 
-### Supported Ethernet Controllers
-- W5500 (SPI)
-- LAN8720 (RMII)
+## Release History
 
----
+### v0.5.0-dev
+- modular NTRIP runtime and slot supervision
+- GNSS abstraction and diagnostics APIs
+- receiver profile manager and raw console
+- fake RTCM and embedded self-test framework
+- lightweight multi-page web UI
+- QoS and memory/runtime visibility
 
-## UPDATE 2026-03-15
-# Release v0.4
+### v0.4.1a
+- universal board and target architecture groundwork
+- Ethernet and Wi-Fi refactor direction
+- broader ESP32 family support path
 
-### Added
-- ESP-IDF updated from v5.2.3 to v5.5.3
+### v0.4
+- ESP-IDF 5.5.3 migration
 - Waveshare ESP32-S3 ETH support
 
----
-
-## UPDATE 2025-02-15
-# Release v0.3
-
-### Added
-- ESP-IDF v5.2.3 migration
+### v0.3
+- ESP-IDF 5.2.3 migration
 - WT32-ETH01 support
-- NTRIP caster functionality restored
+- NTRIP caster path restored
 
----
+### v0.2
+- socket client and server support
+- improved stability over the earliest branch
 
-## UPDATE 2025-02-14
-# Release v0.2
-
-### Added
-- Socket client/server
-- Improved stability
-- Button component removal
-
----
-
-## UPDATE 2025-02-13
-# Release v0.1
-
-### Added
-- WiFi station
-- WiFi hotspot
-- Web interface
+### v0.1
+- Wi-Fi station and hotspot support
+- embedded web interface
 - UART configuration
-- Two NTRIP servers
+- two NTRIP servers
 
----
+## Credits
 
-# Notes
+- Original ESP32 NTRIP DUO work by Nebojša Cvetković
+- ESP-IDF v5 modernization by dr. Kónya Sándor
+- current RTK Gateway direction focused on modular runtime, diagnostics, portability, and embedded observability
 
-This project is still evolving rapidly and APIs/configuration formats may change between development releases.
+## Project Status
 
-Testing and feedback are welcome.
+The project is still evolving quickly. APIs, configuration layouts, and receiver workflows may continue to change between development versions while the platform stabilizes.
 
-
-# ESP32 RTK Gateway WT32-ETH01 
-
-This version had been updated from ESP-IDF 4.1 to v5.2.3 and adapted to the WT32-ETH01 ESP32 Module.
-
-
-UPDATE 2025-02-15:
-[Release v0.3](https://github.com/sandorkonya/esp32-ntrip-DUO/releases/tag/v0.3) has the:
-
-- NTRIP Caster functionality back (not fully tested though, can be buggy)
-
-
-UPDATE 2025-02-14:
-[Release v0.2](https://github.com/sandorkonya/esp32-ntrip-DUO/releases/tag/v0.2) has the:
-
- - socket client & server
- - increased stability by removing the button component
-
-[Release v0.1](https://github.com/sandorkonya/esp32-ntrip-DUO/releases/tag/v0.1) has the features:
-
-- WiFi Station
-- WiFi Hotspot
-- Web Interface
-- UART configuration
-- Two NTRIP Servers
-
-## Pinout
-By default it is set for UART0 TX gpio1, RX gpio3 (also default for the WT32-ETH01 module)
+Testing, validation feedback, and hardware reports are very welcome.
