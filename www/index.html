@@ -310,6 +310,7 @@
             var wifiStaStatusText = form.find('.wifi-sta-status');
             var gnssSummary = $('.gnss-summary');
             var gnssDiagnosticsSummary = $('.gnss-diagnostics-summary');
+            var gnssConstellationSummary = $('.gnss-constellation-summary');
             var gnssSatelliteTable = $('.gnss-satellite-table tbody');
             var gnssSatelliteStatus = $('.gnss-satellite-status');
             var gnssProfileStatus = $('.gnss-profile-status');
@@ -401,11 +402,15 @@
                 gnssDiagnosticsSummary.empty();
 
                 if (!diagnostics.detected) {
-                    gnssDiagnosticsSummary.append($('<div>', {class: 'small text-muted', text: 'Waiting for GNSS data'}));
+                    gnssDiagnosticsSummary.append($('<div>', {class: 'small text-muted', text: 'No GNSS data'}));
                     return;
                 }
 
                 gnssDiagnosticsSummary
+                    .append($('<span>', {class: 'capability-pill', text: 'Fix ' + (diagnostics.fix_type || 'unknown')}))
+                    .append($('<span>', {class: 'capability-pill', text: 'Quality ' + (diagnostics.fix_quality || 0)}))
+                    .append($('<span>', {class: 'capability-pill', text: 'RTK ' + (diagnostics.rtk_status || 'unknown')}))
+                    .append($('<span>', {class: 'capability-pill', text: 'RTCM ' + (diagnostics.rtcm_state || 'idle')}))
                     .append($('<span>', {class: 'capability-pill', text: 'Diff age ' + (diagnostics.diff_age || 0)}))
                     .append($('<span>', {class: 'capability-pill', text: 'Base ' + (diagnostics.base_id || '-')}))
                     .append($('<span>', {class: 'capability-pill', text: 'Antenna ' + (diagnostics.antenna_status || 'unknown')}))
@@ -420,29 +425,42 @@
                 if (typeof diagnostics.agc_aux === 'number' && diagnostics.agc_aux >= 0) {
                     gnssDiagnosticsSummary.append($('<span>', {class: 'capability-pill', text: 'AGC aux ' + diagnostics.agc_aux}));
                 }
-
-                if (Array.isArray(diagnostics.constellations)) {
-                    diagnostics.constellations.forEach(function(entry) {
-                        if (!entry || !entry.visible) return;
-                        gnssDiagnosticsSummary.append($('<span>', {
-                            class: 'capability-pill',
-                            text: entry.name + ' ' + entry.visible + ' / CN0 ' + (entry.cn0_mean || 0) + '/' + (entry.cn0_max || 0)
-                        }));
-                    });
-                }
             };
 
             var renderGnssSatellites = function(payload) {
                 if (!gnssSatelliteTable.length || !gnssSatelliteStatus.length) return;
                 gnssSatelliteTable.empty();
                 gnssSatelliteStatus.empty();
+                if (gnssConstellationSummary.length) gnssConstellationSummary.empty();
 
                 if (!payload || !payload.detected) {
-                    gnssSatelliteStatus.text('No satellites available');
+                    gnssSatelliteStatus.text('No GNSS data');
+                    if (gnssConstellationSummary.length) {
+                        gnssConstellationSummary.append($('<div>', {class: 'small text-muted', text: 'Connect a receiver to populate satellite diagnostics.'}));
+                    }
                     return;
                 }
 
                 const satellites = Array.isArray(payload.satellites) ? payload.satellites.slice() : [];
+                if (gnssConstellationSummary.length) {
+                    gnssConstellationSummary
+                        .append($('<span>', {class: 'capability-pill', text: (payload.total_visible || 0) + ' visible'}))
+                        .append($('<span>', {class: 'capability-pill', text: (payload.total_used || 0) + ' used'}))
+                        .append($('<span>', {class: 'capability-pill', text: 'CN0 ' + (payload.cn0_mean || 0) + '/' + (payload.cn0_max || 0)}))
+                        .append($('<span>', {class: 'capability-pill', text: 'Fix ' + (payload.fix_type || 'unknown')}))
+                        .append($('<span>', {class: 'capability-pill', text: 'RTK ' + (payload.rtk_status || 'unknown')}));
+
+                    if (Array.isArray(payload.constellations)) {
+                        payload.constellations.forEach(function(entry) {
+                            if (!entry || !entry.visible) return;
+                            gnssConstellationSummary.append($('<span>', {
+                                class: 'capability-pill',
+                                text: entry.name + ' ' + entry.visible + '/' + (entry.used || 0) + ' CN0 ' + (entry.cn0_mean || 0) + '/' + (entry.cn0_max || 0)
+                            }));
+                        });
+                    }
+                }
+
                 if (!satellites.length) {
                     gnssSatelliteStatus.text('Receiver connected, waiting for satellite details');
                     return;
@@ -456,16 +474,17 @@
                 satellites.forEach(function(sat) {
                     gnssSatelliteTable.append($('<tr>')
                         .append($('<td>', {text: sat.constellation || 'unknown'}))
-                        .append($('<td>', {text: sat.svid || 0}))
+                        .append($('<td>', {text: sat.prn || sat.svid || 0}))
                         .append($('<td>', {text: sat.elevation || 0}))
                         .append($('<td>', {text: sat.azimuth || 0}))
                         .append($('<td>', {text: sat.cn0 || 0}))
                         .append($('<td>', {text: sat.signal_id || '-'}))
                         .append($('<td>', {text: sat.used ? 'yes' : 'no'}))
+                        .append($('<td>', {text: (sat.last_seen_ms || 0) + 'ms'}))
                     );
                 });
 
-                gnssSatelliteStatus.text(satellites.length + ' satellite(s) in cache');
+                gnssSatelliteStatus.text((payload.total_visible || satellites.length) + ' visible, ' + (payload.total_used || 0) + ' used');
             };
 
             var refreshGnssViews = function() {
@@ -1125,6 +1144,7 @@
                     <small class="text-muted ml-2">Profile apply is queued asynchronously and may take a few seconds.</small>
                 </div>
                 <div class="gnss-diagnostics-summary small text-muted mt-3"></div>
+                <div class="gnss-constellation-summary small text-muted mt-2"></div>
                 <div class="table-responsive mt-3">
                     <table class="table table-sm table-striped mb-0 gnss-satellite-table">
                         <thead>
@@ -1136,6 +1156,7 @@
                                 <th>CN0</th>
                                 <th>Sig</th>
                                 <th>Used</th>
+                                <th>Age</th>
                             </tr>
                         </thead>
                         <tbody></tbody>
