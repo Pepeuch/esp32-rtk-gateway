@@ -64,11 +64,17 @@ static esp_err_t captive_404_handler(httpd_req_t *req, httpd_err_code_t err)
 #define WWW_PARTITION_PATH "/www"
 #define WWW_PARTITION_LABEL "www"
 #define BUFFER_SIZE 2048
-#define WEB_MAX_URI_HANDLERS 40
+#define WEB_SERVER_MAX_URI_HANDLERS 96
+#define WEB_SERVER_MAX_OPEN_SOCKETS 16
 
 static const char *TAG = "WEB";
 
 static char *buffer;
+
+static bool json_bool_value(cJSON *entry, bool default_value);
+static uint32_t json_u32_value(cJSON *entry, uint32_t default_value);
+static int32_t json_i32_value(cJSON *entry, int32_t default_value);
+static int32_t json_scaled_e7_value(cJSON *entry, int32_t default_value);
 
 enum auth_method {
     AUTH_METHOD_OPEN = 0,
@@ -501,6 +507,14 @@ static void gnss_profiles_json_fill(cJSON *root)
         cJSON_AddStringToObject(entry, "mode", profiles[i].mode);
         cJSON_AddBoolToObject(entry, "selected", strcmp(status.profile, profiles[i].name) == 0);
     }
+
+    cJSON_AddStringToObject(root, "base_mode", receiver_base_mode_name((receiver_base_mode_t)config_get_i8(CONF_ITEM(KEY_CONFIG_BASE_MODE))));
+    cJSON_AddNumberToObject(root, "base_latitude_e7", config_get_i32(CONF_ITEM(KEY_CONFIG_BASE_LAT_E7)));
+    cJSON_AddNumberToObject(root, "base_longitude_e7", config_get_i32(CONF_ITEM(KEY_CONFIG_BASE_LON_E7)));
+    cJSON_AddNumberToObject(root, "base_altitude_mm", config_get_i32(CONF_ITEM(KEY_CONFIG_BASE_ALT_MM)));
+    cJSON_AddNumberToObject(root, "base_survey_duration_s", config_get_u32(CONF_ITEM(KEY_CONFIG_BASE_SURVEY_DURATION)));
+    cJSON_AddNumberToObject(root, "base_survey_accuracy_mm", config_get_u32(CONF_ITEM(KEY_CONFIG_BASE_SURVEY_ACCURACY_MM)));
+    cJSON_AddBoolToObject(root, "base_rtcm_output", config_get_bool1(CONF_ITEM(KEY_CONFIG_BASE_RTCM_OUTPUT)));
 }
 
 static void gnss_raw_json_fill(cJSON *root)
@@ -693,6 +707,37 @@ static void gnss_satellites_json_fill(cJSON *root)
     }
 
     free(satellites);
+}
+
+static void gnss_base_status_json_fill(cJSON *root)
+{
+    receiver_base_status_t status;
+    if (receiver_get_base_status(&status) != ESP_OK) {
+        cJSON_AddBoolToObject(root, "success", false);
+        cJSON_AddStringToObject(root, "state", "error");
+        cJSON_AddStringToObject(root, "error", "gnss_base_status_unavailable");
+        return;
+    }
+
+    cJSON_AddBoolToObject(root, "success", true);
+    cJSON_AddStringToObject(root, "state", status.detected ? "ready" : "idle");
+    cJSON_AddBoolToObject(root, "detected", status.detected);
+    cJSON_AddStringToObject(root, "receiver_type", receiver_type_name(status.receiver_type));
+    cJSON_AddStringToObject(root, "configured_mode", status.configured_mode_name);
+    cJSON_AddStringToObject(root, "active_profile", status.active_profile);
+    cJSON_AddStringToObject(root, "receiver_mode", status.receiver_mode);
+    cJSON_AddBoolToObject(root, "has_fixed_position", status.has_fixed_position);
+    cJSON_AddBoolToObject(root, "survey_running", status.survey_running);
+    cJSON_AddNumberToObject(root, "latitude_e7", status.latitude_e7);
+    cJSON_AddNumberToObject(root, "longitude_e7", status.longitude_e7);
+    cJSON_AddNumberToObject(root, "altitude_mm", status.altitude_mm);
+    cJSON_AddNumberToObject(root, "survey_duration_target_s", status.survey_duration_target_s);
+    cJSON_AddNumberToObject(root, "survey_accuracy_target_mm", status.survey_accuracy_target_mm);
+    cJSON_AddNumberToObject(root, "survey_elapsed_s", status.survey_elapsed_s);
+    cJSON_AddNumberToObject(root, "survey_progress_percent", status.survey_progress_percent);
+    cJSON_AddBoolToObject(root, "rtcm_output", status.rtcm_output);
+    cJSON_AddStringToObject(root, "last_action_status", status.last_action_status);
+    cJSON_AddStringToObject(root, "disabled_reason", status.disabled_reason);
 }
 
 static esp_err_t basic_auth(httpd_req_t *req) {
@@ -1336,6 +1381,123 @@ static esp_err_t gnss_diagnostics_get_handler(httpd_req_t *req)
     return json_response_chunked(req, root);
 }
 
+static esp_err_t gnss_base_status_get_handler(httpd_req_t *req)
+{
+    if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
+
+    cJSON *root = cJSON_CreateObject();
+    gnss_base_status_json_fill(root);
+    return json_response(req, root);
+}
+
+static esp_err_t gnss_base_start_survey_post_handler(httpd_req_t *req)
+{
+    if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
+
+    char *body = NULL;
+    esp_err_t err = request_body_alloc(req, &body);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    uint32_t duration_s = config_get_u32(CONF_ITEM(KEY_CONFIG_BASE_SURVEY_DURATION));
+    uint32_t accuracy_mm = config_get_u32(CONF_ITEM(KEY_CONFIG_BASE_SURVEY_ACCURACY_MM));
+    bool rtcm_output = config_get_bool1(CONF_ITEM(KEY_CONFIG_BASE_RTCM_OUTPUT));
+
+    if (body != NULL && req->content_len > 0) {
+        cJSON *payload = cJSON_Parse(body);
+        if (payload != NULL) {
+            duration_s = json_u32_value(cJSON_GetObjectItemCaseSensitive(payload, "duration_s"), duration_s);
+            accuracy_mm = json_u32_value(cJSON_GetObjectItemCaseSensitive(payload, "accuracy_mm"), accuracy_mm);
+            rtcm_output = json_bool_value(cJSON_GetObjectItemCaseSensitive(payload, "rtcm_output"), rtcm_output);
+            cJSON_Delete(payload);
+        }
+    }
+    free(body);
+
+    err = receiver_base_start_survey(duration_s, accuracy_mm, rtcm_output, true);
+    cJSON *root = cJSON_CreateObject();
+    if (err != ESP_OK) {
+        cJSON_AddBoolToObject(root, "success", false);
+        cJSON_AddStringToObject(root, "error", esp_err_to_name(err));
+        return json_response(req, root);
+    }
+
+    gnss_base_status_json_fill(root);
+    cJSON_AddStringToObject(root, "warning", "Survey profile queued asynchronously");
+    return json_response(req, root);
+}
+
+static esp_err_t gnss_base_stop_survey_post_handler(httpd_req_t *req)
+{
+    if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
+
+    esp_err_t err = receiver_base_stop_survey(true);
+    cJSON *root = cJSON_CreateObject();
+    if (err != ESP_OK) {
+        cJSON_AddBoolToObject(root, "success", false);
+        cJSON_AddStringToObject(root, "error", esp_err_to_name(err));
+        return json_response(req, root);
+    }
+
+    gnss_base_status_json_fill(root);
+    return json_response(req, root);
+}
+
+static esp_err_t gnss_base_apply_fixed_post_handler(httpd_req_t *req)
+{
+    if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
+
+    char *body = NULL;
+    esp_err_t err = request_body_alloc(req, &body);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    int32_t latitude_e7 = config_get_i32(CONF_ITEM(KEY_CONFIG_BASE_LAT_E7));
+    int32_t longitude_e7 = config_get_i32(CONF_ITEM(KEY_CONFIG_BASE_LON_E7));
+    int32_t altitude_mm = config_get_i32(CONF_ITEM(KEY_CONFIG_BASE_ALT_MM));
+    bool rtcm_output = config_get_bool1(CONF_ITEM(KEY_CONFIG_BASE_RTCM_OUTPUT));
+
+    cJSON *payload = cJSON_Parse(body);
+    free(body);
+    if (payload != NULL) {
+        latitude_e7 = json_scaled_e7_value(cJSON_GetObjectItemCaseSensitive(payload, "latitude"), latitude_e7);
+        longitude_e7 = json_scaled_e7_value(cJSON_GetObjectItemCaseSensitive(payload, "longitude"), longitude_e7);
+        altitude_mm = json_i32_value(cJSON_GetObjectItemCaseSensitive(payload, "altitude_mm"), altitude_mm);
+        rtcm_output = json_bool_value(cJSON_GetObjectItemCaseSensitive(payload, "rtcm_output"), rtcm_output);
+        cJSON_Delete(payload);
+    }
+
+    err = receiver_base_apply_fixed(latitude_e7, longitude_e7, altitude_mm, rtcm_output, true);
+    cJSON *root = cJSON_CreateObject();
+    if (err != ESP_OK) {
+        cJSON_AddBoolToObject(root, "success", false);
+        cJSON_AddStringToObject(root, "error", esp_err_to_name(err));
+        return json_response(req, root);
+    }
+
+    gnss_base_status_json_fill(root);
+    cJSON_AddStringToObject(root, "warning", "Fixed base profile queued asynchronously");
+    return json_response(req, root);
+}
+
+static esp_err_t gnss_base_clear_post_handler(httpd_req_t *req)
+{
+    if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
+
+    esp_err_t err = receiver_base_clear(true);
+    cJSON *root = cJSON_CreateObject();
+    if (err != ESP_OK) {
+        cJSON_AddBoolToObject(root, "success", false);
+        cJSON_AddStringToObject(root, "error", esp_err_to_name(err));
+        return json_response(req, root);
+    }
+
+    gnss_base_status_json_fill(root);
+    return json_response(req, root);
+}
+
 static esp_err_t gnss_profiles_get_handler(httpd_req_t *req)
 {
     if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
@@ -1493,6 +1655,34 @@ static uint32_t json_u32_value(cJSON *entry, uint32_t default_value)
     }
     if (cJSON_IsString(entry) && entry->valuestring != NULL) {
         return (uint32_t)strtoul(entry->valuestring, NULL, 10);
+    }
+    return default_value;
+}
+
+static int32_t json_i32_value(cJSON *entry, int32_t default_value)
+{
+    if (entry == NULL) {
+        return default_value;
+    }
+    if (cJSON_IsNumber(entry)) {
+        return (int32_t)entry->valuedouble;
+    }
+    if (cJSON_IsString(entry) && entry->valuestring != NULL) {
+        return (int32_t)strtol(entry->valuestring, NULL, 10);
+    }
+    return default_value;
+}
+
+static int32_t json_scaled_e7_value(cJSON *entry, int32_t default_value)
+{
+    if (entry == NULL) {
+        return default_value;
+    }
+    if (cJSON_IsNumber(entry)) {
+        return (int32_t)(entry->valuedouble * 10000000.0);
+    }
+    if (cJSON_IsString(entry) && entry->valuestring != NULL) {
+        return (int32_t)(strtod(entry->valuestring, NULL) * 10000000.0);
     }
     return default_value;
 }
@@ -1867,7 +2057,9 @@ static httpd_handle_t web_server_start(void)
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.uri_match_fn = httpd_uri_match_wildcard;
-    config.max_uri_handlers = WEB_MAX_URI_HANDLERS;
+    config.max_uri_handlers = WEB_SERVER_MAX_URI_HANDLERS;
+    config.max_open_sockets = WEB_SERVER_MAX_OPEN_SOCKETS;
+    config.lru_purge_enable = true;
 
     // Start the httpd server
     ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);
@@ -1882,6 +2074,11 @@ static httpd_handle_t web_server_start(void)
         register_uri_handler(server, "/api/gnss/status", HTTP_GET, gnss_status_get_handler);
         register_uri_handler(server, "/api/gnss/satellites", HTTP_GET, gnss_satellites_get_handler);
         register_uri_handler(server, "/api/gnss/diagnostics", HTTP_GET, gnss_diagnostics_get_handler);
+        register_uri_handler(server, "/api/gnss/base/status", HTTP_GET, gnss_base_status_get_handler);
+        register_uri_handler(server, "/api/gnss/base/start-survey", HTTP_POST, gnss_base_start_survey_post_handler);
+        register_uri_handler(server, "/api/gnss/base/stop-survey", HTTP_POST, gnss_base_stop_survey_post_handler);
+        register_uri_handler(server, "/api/gnss/base/apply-fixed", HTTP_POST, gnss_base_apply_fixed_post_handler);
+        register_uri_handler(server, "/api/gnss/base/clear", HTTP_POST, gnss_base_clear_post_handler);
         register_uri_handler(server, "/api/gnss/profiles", HTTP_GET, gnss_profiles_get_handler);
         register_uri_handler(server, "/api/gnss/profile/apply", HTTP_POST, gnss_profile_apply_post_handler);
         register_uri_handler(server, "/api/gnss/command", HTTP_POST, gnss_command_post_handler);
