@@ -158,73 +158,97 @@ Current focus:
 
 # Planned Features
 
-## PR7 - Advanced GNSS Diagnostics
-- Real-time satellite diagnostics
-- CN0 graphs
-- Constellation statistics
-- RTCM quality analysis
-- GNSS timeline graphs
-- Advanced receiver monitoring
+## PR10 - Memory / Storage / Buffer Architecture
+- PSRAM capability detection
+- Dynamic buffer allocation
+- Internal RAM fallback
+- Optimized GNSS/NTRIP ringbuffers
+- HTTP chunked streaming improvements
+- Optional SD card logging
+- Runtime memory diagnostics
+- Buffer usage monitoring
+- Capability exposure via /api/capabilities
 
-## PR8 - Survey-In / Base Mode
-- Survey-in management
-- Fixed base workflows
-- RTCM base configuration
-- Persistent base coordinates
-- Base station profiles
+## PR11 - Web UI split and lightweight dashboard
 
-## PR9 - u-blox Support
-- UBX parser
-- NAV-PVT
-- NAV-SAT
-- NAV-HPPOSLLH
-- NAV-RELPOSNED
-- MON-VER
-- F9P/F9R support
-- High precision configuration
+### /dashboard
+- GNSS state
+- Fix / RTK status
+- Satellites
+- CN0 statistics
+- NTRIP runtime
+- Network summary
+- Lightweight polling only
 
-## PR10 - Hardware Setup Wizard
+### /config
+- Wi-Fi / Ethernet
+- GNSS profile
+- UART mapping
+- NTRIP slots
+- Base / rover mode
+- Receiver presets
+- Persistent configuration
+
+### /advanced
+- Logs
+- Raw GNSS console
+- Self-tests
+- Fake RTCM
+- Manual commands
+- Advanced diagnostics
+- Runtime statistics
+- Buffer/memory statistics
+
+## PR12 - Hardware Setup Wizard
 - Visual hardware selection
-- GNSS configuration
+- ESP32 family selection
+  - ESP32
+  - ESP32-C3
+  - ESP32-C6
+  - ESP32-S3
+- Flash size selection
+- PSRAM selection
+- Ethernet module selection
+- GNSS receiver selection
+  - NMEA
+  - u-blox
+  - Unicore
 - UART mapping
 - Rover/base presets
 - NTRIP presets
 - Ethernet/Wi-Fi presets
 - Automatic configuration generation
+- Board capability auto-detection
+- Recommended configuration suggestions
 
-## PR11 - Web UI split and lightweight dashboard
-/dashboard
-- état GNSS
-- fix / RTK
-- satellites
-- CN0
-- NTRIP runtime
-- résumé réseau
-
-/config
-- Wi-Fi / Ethernet
-- GNSS profile
-- NTRIP slots
-- base / rover mode
-
-/advanced
-- logs
-- raw GNSS console
-- self-tests
-- fake RTCM
-- commandes manuelles
-- diagnostics profonds
 ---
 
 # Future Features
 
+## Connectivity
 - Bluetooth LE support (Android/iOS)
-- Rover field measurement mode
 - LoRa support
-- MQTT monitoring
-- PSRAM optimized buffers
 - Multi-radio support
+- MQTT monitoring
+- Remote syslog support
+
+## GNSS / Robotics
+- Rover field measurement mode
+- Advanced RTCM analysis
+- GNSS recording/replay
+- Survey export/import
+
+## Performance
+- PSRAM optimized buffers
+- SD card log persistence
+- Remote log streaming
+- Advanced runtime profiling
+
+## Mobile / UX
 - Enhanced mobile support
+- Progressive Web App (PWA)
+- Offline dashboard cache
+- Touch-friendly field UI
 
 ---
 
