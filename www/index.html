@@ -312,6 +312,9 @@
             var gnssDiagnosticsSummary = $('.gnss-diagnostics-summary');
             var gnssSatelliteTable = $('.gnss-satellite-table tbody');
             var gnssSatelliteStatus = $('.gnss-satellite-status');
+            var gnssProfileStatus = $('.gnss-profile-status');
+            var gnssProfileSelect = $('#gnss-profile');
+            var gnssRawConsole = $('#gnss-raw-console');
             var capabilitiesSummary = $('.capabilities-summary');
             var ntripSlotsSummary = $('.ntrip-slots-summary');
             var ntripRuntimeSummary = $('.ntrip-runtime-summary');
@@ -471,6 +474,44 @@
                 });
                 $.getJSON('api/gnss/satellites').done(function(data) {
                     renderGnssSatellites(data);
+                });
+                $.getJSON('api/gnss/receiver/raw').done(function(data) {
+                    if (!data) return;
+                    if (gnssRawConsole.length) {
+                        gnssRawConsole.val(data.raw || '');
+                        gnssRawConsole.scrollTop(gnssRawConsole[0].scrollHeight);
+                    }
+                    if (gnssProfileStatus.length) {
+                        gnssProfileStatus.empty()
+                            .append($('<span>', {class: 'capability-pill', text: data.profile || 'none'}))
+                            .append($('<span>', {class: 'capability-pill', text: data.command_busy ? 'Applying' : 'Idle'}))
+                            .append($('<span>', {class: 'capability-pill', text: 'Queue ' + (data.command_queue_depth || 0)}))
+                            .append($('<span>', {class: 'capability-pill', text: data.last_command_status || 'idle'}));
+                    }
+                });
+            };
+
+            var loadGnssProfiles = function() {
+                $.getJSON('api/gnss/profiles').done(function(data) {
+                    if (!data || !Array.isArray(data.profiles) || !gnssProfileSelect.length) return;
+
+                    gnssProfileSelect.empty();
+                    data.profiles.forEach(function(profile) {
+                        gnssProfileSelect.append($('<option>', {
+                            value: profile.name,
+                            text: profile.label || profile.name,
+                            selected: !!profile.selected
+                        }));
+                    });
+
+                    $('#gnss-baud').val(data.receiver_baud || 115200);
+                    $('#gnss-nmea-rate').val(data.nmea_rate_hz || 1);
+                    $('#gnss-rtk-timeout').val(data.rtk_timeout || 60);
+                    $('#gnss-dgps-timeout').val(data.dgps_timeout || 120);
+                    $('#gnss-constellation-mask').val(data.constellation_mask || 0);
+                    $('#gnss-signal-mask').val(data.signal_mask || '');
+                    $('#gnss-rtcm-output').prop('checked', !!data.rtcm_output);
+                    $('#gnss-agnss-enable').prop('checked', !!data.agnss_enable);
                 });
             };
 
@@ -752,6 +793,7 @@
             statusUpdate();
             loadNtripSlots();
             refreshNtripRuntime();
+            loadGnssProfiles();
 
             ntripSlotsSaveButton.on('click', function() {
                 const slots = [];
@@ -830,7 +872,52 @@
                     if (data) {
                         renderGnssSummary(data);
                         refreshGnssViews();
+                        loadGnssProfiles();
                     }
+                }).always(function() {
+                    button.prop('disabled', false);
+                });
+            });
+            $('#gnss-profile-apply').on('click', function() {
+                const button = $(this);
+                button.prop('disabled', true);
+                $.ajax({
+                    url: 'api/gnss/profile/apply',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({
+                        profile: $('#gnss-profile').val(),
+                        persist: true,
+                        receiver_baud: parseInt($('#gnss-baud').val() || '115200', 10),
+                        nmea_rate_hz: parseInt($('#gnss-nmea-rate').val() || '1', 10),
+                        rtk_timeout: parseInt($('#gnss-rtk-timeout').val() || '60', 10),
+                        dgps_timeout: parseInt($('#gnss-dgps-timeout').val() || '120', 10),
+                        constellation_mask: parseInt($('#gnss-constellation-mask').val() || '0', 10),
+                        signal_mask: $('#gnss-signal-mask').val(),
+                        rtcm_output: $('#gnss-rtcm-output').is(':checked'),
+                        agnss_enable: $('#gnss-agnss-enable').is(':checked')
+                    })
+                }).done(function() {
+                    refreshGnssViews();
+                    loadGnssProfiles();
+                }).always(function() {
+                    button.prop('disabled', false);
+                });
+            });
+            $('#gnss-command-send').on('click', function() {
+                const input = $('#gnss-command-input');
+                const button = $(this);
+                const command = input.val();
+                if (!command) return;
+                button.prop('disabled', true);
+                $.ajax({
+                    url: 'api/gnss/command',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({command: command})
+                }).done(function() {
+                    input.val('');
+                    refreshGnssViews();
                 }).always(function() {
                     button.prop('disabled', false);
                 });
@@ -988,6 +1075,55 @@
             </div>
             <div class="card-body py-3">
                 <div class="gnss-summary small text-muted">Loading GNSS status...</div>
+                <div class="gnss-profile-status small text-muted mt-3"></div>
+                <div class="form-row mt-3">
+                    <div class="col-md-4">
+                        <label>Profile</label>
+                        <select class="form-control" id="gnss-profile"></select>
+                    </div>
+                    <div class="col-md-2">
+                        <label>Baud</label>
+                        <input type="number" class="form-control" id="gnss-baud" value="115200" min="9600" step="1200">
+                    </div>
+                    <div class="col-md-2">
+                        <label>NMEA Hz</label>
+                        <input type="number" class="form-control" id="gnss-nmea-rate" value="1" min="1" max="10">
+                    </div>
+                    <div class="col-md-2">
+                        <label>RTK timeout</label>
+                        <input type="number" class="form-control" id="gnss-rtk-timeout" value="60" min="1" max="600">
+                    </div>
+                    <div class="col-md-2">
+                        <label>DGPS timeout</label>
+                        <input type="number" class="form-control" id="gnss-dgps-timeout" value="120" min="1" max="600">
+                    </div>
+                </div>
+                <div class="form-row mt-2">
+                    <div class="col-md-4">
+                        <label>Constellation mask</label>
+                        <input type="number" class="form-control" id="gnss-constellation-mask" value="0">
+                    </div>
+                    <div class="col-md-4">
+                        <label>Signal mask</label>
+                        <input type="text" class="form-control" id="gnss-signal-mask" value="">
+                    </div>
+                    <div class="col-md-2 d-flex align-items-end">
+                        <div class="custom-control custom-switch">
+                            <input type="checkbox" class="custom-control-input" id="gnss-rtcm-output" checked>
+                            <label class="custom-control-label" for="gnss-rtcm-output">RTCM output</label>
+                        </div>
+                    </div>
+                    <div class="col-md-2 d-flex align-items-end">
+                        <div class="custom-control custom-switch">
+                            <input type="checkbox" class="custom-control-input" id="gnss-agnss-enable">
+                            <label class="custom-control-label" for="gnss-agnss-enable">AGNSS</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="mt-3">
+                    <button type="button" class="btn btn-sm btn-primary" id="gnss-profile-apply">Apply Profile</button>
+                    <small class="text-muted ml-2">Profile apply is queued asynchronously and may take a few seconds.</small>
+                </div>
                 <div class="gnss-diagnostics-summary small text-muted mt-3"></div>
                 <div class="table-responsive mt-3">
                     <table class="table table-sm table-striped mb-0 gnss-satellite-table">
@@ -1006,6 +1142,16 @@
                     </table>
                 </div>
                 <div class="gnss-satellite-status small text-muted mt-2">Waiting for GNSS data...</div>
+                <div class="mt-3">
+                    <label>Receiver Raw Console</label>
+                    <textarea class="form-control" id="gnss-raw-console" rows="8" readonly></textarea>
+                </div>
+                <div class="input-group mt-2">
+                    <input type="text" class="form-control" id="gnss-command-input" placeholder="Manual Unicore ASCII command">
+                    <div class="input-group-append">
+                        <button type="button" class="btn btn-outline-secondary" id="gnss-command-send">Send</button>
+                    </div>
+                </div>
             </div>
         </div>
         <div class="card mb-4">

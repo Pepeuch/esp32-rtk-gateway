@@ -309,6 +309,38 @@ const config_item_t CONFIG_ITEMS[] = {
                 .key = KEY_CONFIG_RECEIVER_MODE,
                 .type = CONFIG_ITEM_TYPE_INT8,
                 .def.int8 = 0
+        }, {
+                .key = KEY_CONFIG_RECEIVER_PROFILE,
+                .type = CONFIG_ITEM_TYPE_INT8,
+                .def.int8 = 0
+        }, {
+                .key = KEY_CONFIG_RECEIVER_NMEA_RATE,
+                .type = CONFIG_ITEM_TYPE_UINT8,
+                .def.uint8 = 1
+        }, {
+                .key = KEY_CONFIG_RECEIVER_RTCM_OUTPUT,
+                .type = CONFIG_ITEM_TYPE_BOOL,
+                .def.bool1 = true
+        }, {
+                .key = KEY_CONFIG_RECEIVER_RTK_TIMEOUT,
+                .type = CONFIG_ITEM_TYPE_UINT16,
+                .def.uint16 = 60
+        }, {
+                .key = KEY_CONFIG_RECEIVER_DGPS_TIMEOUT,
+                .type = CONFIG_ITEM_TYPE_UINT16,
+                .def.uint16 = 120
+        }, {
+                .key = KEY_CONFIG_RECEIVER_CONSTELLATION_MASK,
+                .type = CONFIG_ITEM_TYPE_UINT32,
+                .def.uint32 = 0xFFFFFFFFu
+        }, {
+                .key = KEY_CONFIG_RECEIVER_SIGNAL_MASK,
+                .type = CONFIG_ITEM_TYPE_STRING,
+                .def.str = ""
+        }, {
+                .key = KEY_CONFIG_RECEIVER_AGNSS_ENABLE,
+                .type = CONFIG_ITEM_TYPE_BOOL,
+                .def.bool1 = false
         },
 
         // WiFi

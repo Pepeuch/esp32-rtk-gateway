@@ -3,20 +3,32 @@
 #include <ctype.h>
 #include <limits.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 
 #include "config.h"
+#include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
 #include "uart.h"
 
 #define RECEIVER_LINE_BUFFER_SIZE 256
 #define RECEIVER_MAX_TOKENS 48
 #define RECEIVER_MESSAGE_STALE_MS 5000
 #define RECEIVER_RTCM_STALE_MS 3000
+#define RECEIVER_COMMAND_QUEUE_LENGTH 12
+#define RECEIVER_COMMAND_MAX_LEN 128
+#define RECEIVER_EXPECT_MAX_LEN 32
+#define RECEIVER_RAW_BUFFER_SIZE 4096
+#define RECEIVER_COMMAND_TIMEOUT_MS 2000
+#define RECEIVER_COMMAND_RETRY_COUNT 1
+
+static const char *TAG = "RECEIVER";
 
 typedef struct receiver_satellite_internal {
     bool active;
@@ -24,13 +36,25 @@ typedef struct receiver_satellite_internal {
     receiver_satellite_t satellite;
 } receiver_satellite_internal_t;
 
+typedef struct receiver_command {
+    char command[RECEIVER_COMMAND_MAX_LEN];
+    char expect[RECEIVER_EXPECT_MAX_LEN];
+    uint32_t timeout_ms;
+    uint8_t retries_left;
+} receiver_command_t;
+
 typedef struct receiver_context {
     SemaphoreHandle_t mutex;
+    QueueHandle_t command_queue;
+    TaskHandle_t command_task;
     bool initialized;
+    bool auto_apply_queued;
     receiver_type_t configured_type;
     receiver_type_t detected_type;
     receiver_mode_t configured_mode;
     receiver_mode_t current_mode;
+    receiver_profile_t configured_profile;
+    receiver_profile_t applied_profile;
     receiver_status_t status;
     receiver_satellite_internal_t satellites[RECEIVER_MAX_SATELLITES];
     char line_buffer[RECEIVER_LINE_BUFFER_SIZE];
@@ -38,9 +62,23 @@ typedef struct receiver_context {
     int64_t last_message_us;
     int64_t last_rtcm_status_us;
     uint8_t prev_byte;
+    char raw_buffer[RECEIVER_RAW_BUFFER_SIZE];
+    size_t raw_length;
+    bool command_busy;
+    bool expect_matched;
+    char expect_token[RECEIVER_EXPECT_MAX_LEN];
 } receiver_context_t;
 
 static receiver_context_t s_receiver = {0};
+
+static const receiver_profile_descriptor_t s_profiles[] = {
+    {RECEIVER_PROFILE_NONE, "none", "None", "Observe only, no active configuration", "unknown"},
+    {RECEIVER_PROFILE_DIAGNOSTICS_ONLY, "diagnostics_only", "Diagnostics Only", "Enable diagnostic logs only", "unknown"},
+    {RECEIVER_PROFILE_ROVER_BASIC, "rover_basic", "Rover Basic", "Basic rover NMEA profile", "rover"},
+    {RECEIVER_PROFILE_ROVER_RTK, "rover_rtk", "Rover RTK", "RTK rover profile with diagnostics", "rover"},
+    {RECEIVER_PROFILE_BASE_FIXED, "base_fixed", "Base Fixed", "Fixed base profile with RTCM output", "fixed"},
+    {RECEIVER_PROFILE_BASE_SURVEY, "base_survey", "Base Survey", "Survey base profile with RTCM output", "survey"},
+};
 
 static void receiver_lock(void)
 {
@@ -103,6 +141,39 @@ const char *receiver_constellation_name(receiver_constellation_t constellation)
     }
 }
 
+const char *receiver_profile_name(receiver_profile_t profile)
+{
+    for (size_t i = 0; i < sizeof(s_profiles) / sizeof(s_profiles[0]); i++) {
+        if (s_profiles[i].profile == profile) {
+            return s_profiles[i].name;
+        }
+    }
+    return "none";
+}
+
+receiver_profile_t receiver_profile_from_name(const char *name)
+{
+    if (name == NULL || *name == '\0') {
+        return RECEIVER_PROFILE_NONE;
+    }
+
+    for (size_t i = 0; i < sizeof(s_profiles) / sizeof(s_profiles[0]); i++) {
+        if (strcasecmp(name, s_profiles[i].name) == 0) {
+            return s_profiles[i].profile;
+        }
+    }
+
+    return RECEIVER_PROFILE_NONE;
+}
+
+size_t receiver_get_profiles(const receiver_profile_descriptor_t **profiles)
+{
+    if (profiles != NULL) {
+        *profiles = s_profiles;
+    }
+    return sizeof(s_profiles) / sizeof(s_profiles[0]);
+}
+
 static receiver_type_t receiver_configured_type(void)
 {
     int8_t value = config_get_i8(CONF_ITEM(KEY_CONFIG_RECEIVER_TYPE));
@@ -132,6 +203,22 @@ static receiver_mode_t receiver_configured_mode(void)
             return RECEIVER_MODE_FIXED;
         default:
             return RECEIVER_MODE_UNKNOWN;
+    }
+}
+
+static receiver_profile_t receiver_configured_profile(void)
+{
+    int8_t value = config_get_i8(CONF_ITEM(KEY_CONFIG_RECEIVER_PROFILE));
+    switch (value) {
+        case RECEIVER_PROFILE_DIAGNOSTICS_ONLY:
+        case RECEIVER_PROFILE_ROVER_BASIC:
+        case RECEIVER_PROFILE_ROVER_RTK:
+        case RECEIVER_PROFILE_BASE_FIXED:
+        case RECEIVER_PROFILE_BASE_SURVEY:
+            return (receiver_profile_t)value;
+        case RECEIVER_PROFILE_NONE:
+        default:
+            return RECEIVER_PROFILE_NONE;
     }
 }
 
@@ -183,6 +270,45 @@ static uint32_t receiver_parse_decimal_centi(const char *text)
         value = 0;
     }
     return (uint32_t)(value * 100.0);
+}
+
+static void receiver_raw_append_locked(const char *prefix, const char *text)
+{
+    if (text == NULL) {
+        return;
+    }
+
+    char line[192];
+    int written = snprintf(line, sizeof(line), "%s%s\n", prefix == NULL ? "" : prefix, text);
+    if (written <= 0) {
+        return;
+    }
+
+    size_t line_len = (size_t)written;
+    if (line_len >= sizeof(line)) {
+        line_len = sizeof(line) - 1;
+    }
+
+    if (line_len >= sizeof(s_receiver.raw_buffer)) {
+        memcpy(s_receiver.raw_buffer, line + (line_len - sizeof(s_receiver.raw_buffer) + 1), sizeof(s_receiver.raw_buffer) - 1);
+        s_receiver.raw_length = sizeof(s_receiver.raw_buffer) - 1;
+        s_receiver.raw_buffer[s_receiver.raw_length] = '\0';
+        return;
+    }
+
+    size_t required = s_receiver.raw_length + line_len;
+    if (required >= sizeof(s_receiver.raw_buffer)) {
+        size_t drop = required - sizeof(s_receiver.raw_buffer) + 1;
+        if (drop > s_receiver.raw_length) {
+            drop = s_receiver.raw_length;
+        }
+        memmove(s_receiver.raw_buffer, s_receiver.raw_buffer + drop, s_receiver.raw_length - drop);
+        s_receiver.raw_length -= drop;
+    }
+
+    memcpy(s_receiver.raw_buffer + s_receiver.raw_length, line, line_len);
+    s_receiver.raw_length += line_len;
+    s_receiver.raw_buffer[s_receiver.raw_length] = '\0';
 }
 
 static void receiver_set_type_locked(receiver_type_t type)
@@ -462,11 +588,11 @@ static void receiver_parse_unicore_agca_locked(char **tokens, size_t count)
     if (found > 1) s_receiver.status.agc_aux = values[1];
 }
 
-static void receiver_parse_unicore_status_copy(char *out, size_t out_size, const char *prefix, char **tokens, size_t count)
+static void receiver_parse_unicore_status_copy(char *out, size_t out_size, char **tokens, size_t count)
 {
     for (size_t i = 0; i < count; i++) {
         if (tokens[i] != NULL && tokens[i][0] != '\0') {
-            snprintf(out, out_size, "%s%s", prefix == NULL ? "" : prefix, tokens[i]);
+            snprintf(out, out_size, "%s", tokens[i]);
             return;
         }
     }
@@ -474,7 +600,7 @@ static void receiver_parse_unicore_status_copy(char *out, size_t out_size, const
 
 static void receiver_parse_unicore_bestsata_locked(char **tokens, size_t count)
 {
-    for (size_t i = 0; i + 4 < count; i++) {
+    for (size_t i = 0; i + 3 < count; i++) {
         uint32_t svid = 0;
         uint32_t elevation = 0;
         uint32_t azimuth = 0;
@@ -488,8 +614,8 @@ static void receiver_parse_unicore_bestsata_locked(char **tokens, size_t count)
             continue;
         }
 
-        receiver_update_satellite_locked(RECEIVER_CONSTELLATION_UNKNOWN, (uint16_t)svid, (uint16_t)elevation,
-                                         (uint16_t)azimuth, (uint16_t)cn0, 0);
+        receiver_update_satellite_locked(RECEIVER_CONSTELLATION_UNKNOWN, (uint16_t)svid,
+                                         (uint16_t)elevation, (uint16_t)azimuth, (uint16_t)cn0, 0);
     }
 }
 
@@ -509,21 +635,25 @@ static void receiver_parse_unicore_ascii_locked(char *line)
 
     if (strstr(tokens[0], "RTCMSTATUSA") != NULL) {
         receiver_set_last_rtcm_status_locked();
-        receiver_parse_unicore_status_copy(s_receiver.status.hardware_status, sizeof(s_receiver.status.hardware_status), "", &tokens[1], count > 1 ? count - 1 : 0);
+        receiver_parse_unicore_status_copy(s_receiver.status.hardware_status, sizeof(s_receiver.status.hardware_status),
+                                           count > 1 ? &tokens[1] : tokens, count > 1 ? count - 1 : 0);
     } else if (strstr(tokens[0], "AGCA") != NULL) {
         receiver_parse_unicore_agca_locked(tokens, count);
     } else if (strstr(tokens[0], "HWSTATUSA") != NULL) {
-        receiver_parse_unicore_status_copy(s_receiver.status.hardware_status, sizeof(s_receiver.status.hardware_status), "", &tokens[1], count > 1 ? count - 1 : 0);
+        receiver_parse_unicore_status_copy(s_receiver.status.hardware_status, sizeof(s_receiver.status.hardware_status),
+                                           count > 1 ? &tokens[1] : tokens, count > 1 ? count - 1 : 0);
         for (size_t i = 1; i < count; i++) {
-            if (strcasestr(tokens[i], "ANT") != NULL || strcasestr(tokens[i], "OK") != NULL || strcasestr(tokens[i], "OPEN") != NULL || strcasestr(tokens[i], "SHORT") != NULL) {
+            if (strcasestr(tokens[i], "ANT") != NULL || strcasestr(tokens[i], "OK") != NULL ||
+                strcasestr(tokens[i], "OPEN") != NULL || strcasestr(tokens[i], "SHORT") != NULL) {
                 snprintf(s_receiver.status.antenna_status, sizeof(s_receiver.status.antenna_status), "%s", tokens[i]);
                 break;
             }
         }
     } else if (strstr(tokens[0], "JAMSTATUSA") != NULL || strstr(tokens[0], "FREQJAMSTATUSA") != NULL) {
-        receiver_parse_unicore_status_copy(s_receiver.status.jamming_status, sizeof(s_receiver.status.jamming_status), "", &tokens[1], count > 1 ? count - 1 : 0);
+        receiver_parse_unicore_status_copy(s_receiver.status.jamming_status, sizeof(s_receiver.status.jamming_status),
+                                           count > 1 ? &tokens[1] : tokens, count > 1 ? count - 1 : 0);
     } else if (strstr(tokens[0], "BESTSATA") != NULL) {
-        receiver_parse_unicore_bestsata_locked(tokens + 1, count > 1 ? count - 1 : 0);
+        receiver_parse_unicore_bestsata_locked(count > 1 ? tokens + 1 : tokens, count > 1 ? count - 1 : 0);
     }
 }
 
@@ -534,8 +664,13 @@ static void receiver_parse_line_locked(char *line)
     }
 
     receiver_set_last_message_locked();
+    receiver_raw_append_locked("< ", line);
 
-    if (strncmp(line, "#", 1) == 0) {
+    if (s_receiver.command_busy && s_receiver.expect_token[0] != '\0' && strstr(line, s_receiver.expect_token) != NULL) {
+        s_receiver.expect_matched = true;
+    }
+
+    if (line[0] == '#') {
         receiver_parse_unicore_ascii_locked(line);
         return;
     }
@@ -664,6 +799,234 @@ static void receiver_recompute_stats_locked(void)
     } else if (s_receiver.status.receiver_type != RECEIVER_TYPE_UNKNOWN) {
         s_receiver.status.detected = true;
     }
+
+    s_receiver.status.command_busy = s_receiver.command_busy;
+    s_receiver.status.profile_pending = s_receiver.configured_profile != RECEIVER_PROFILE_NONE &&
+                                        s_receiver.applied_profile != s_receiver.configured_profile;
+    snprintf(s_receiver.status.profile, sizeof(s_receiver.status.profile), "%s", receiver_profile_name(s_receiver.configured_profile));
+    s_receiver.status.command_queue_depth = s_receiver.command_queue != NULL ? uxQueueMessagesWaiting(s_receiver.command_queue) : 0;
+}
+
+static esp_err_t receiver_queue_formatted(const char *expect, const char *fmt, ...)
+{
+    if (s_receiver.command_queue == NULL || fmt == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    receiver_command_t cmd = {0};
+    cmd.timeout_ms = RECEIVER_COMMAND_TIMEOUT_MS;
+    cmd.retries_left = RECEIVER_COMMAND_RETRY_COUNT;
+
+    if (expect != NULL) {
+        snprintf(cmd.expect, sizeof(cmd.expect), "%s", expect);
+    }
+
+    va_list args;
+    va_start(args, fmt);
+    int written = vsnprintf(cmd.command, sizeof(cmd.command), fmt, args);
+    va_end(args);
+    if (written <= 0 || written >= (int)sizeof(cmd.command)) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    if (xQueueSend(s_receiver.command_queue, &cmd, 0) != pdTRUE) {
+        receiver_lock();
+        snprintf(s_receiver.status.last_command_status, sizeof(s_receiver.status.last_command_status), "%s", "queue_full");
+        receiver_unlock();
+        return ESP_ERR_NO_MEM;
+    }
+
+    receiver_lock();
+    snprintf(s_receiver.status.last_command_status, sizeof(s_receiver.status.last_command_status), "%s", "queued");
+    receiver_unlock();
+    return ESP_OK;
+}
+
+static esp_err_t receiver_unicore_send(const char *command, const char *expect)
+{
+    if (command == NULL || *command == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (strchr(command, '\n') == NULL && strchr(command, '\r') == NULL) {
+        return receiver_queue_formatted(expect, "%s\r\n", command);
+    }
+    return receiver_queue_formatted(expect, "%s", command);
+}
+
+static esp_err_t receiver_unicore_expect(const char *expect)
+{
+    if (expect == NULL || *expect == '\0') {
+        return ESP_OK;
+    }
+
+    TickType_t timeout_ticks = pdMS_TO_TICKS(RECEIVER_COMMAND_TIMEOUT_MS);
+    TickType_t elapsed = 0;
+    while (elapsed < timeout_ticks) {
+        bool matched = false;
+        receiver_lock();
+        matched = s_receiver.expect_matched;
+        receiver_unlock();
+        if (matched) {
+            return ESP_OK;
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+        elapsed += pdMS_TO_TICKS(100);
+    }
+
+    return ESP_ERR_TIMEOUT;
+}
+
+static esp_err_t receiver_store_profile_config(receiver_profile_t profile)
+{
+    esp_err_t err = config_set_i8(KEY_CONFIG_RECEIVER_PROFILE, (int8_t)profile);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "save receiver profile failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    err = config_commit();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "commit receiver profile failed: %s", esp_err_to_name(err));
+    }
+    return err;
+}
+
+static esp_err_t receiver_unicore_apply_profile(receiver_profile_t profile)
+{
+    char *signal_mask = NULL;
+    uint8_t nmea_rate = config_get_u8(CONF_ITEM(KEY_CONFIG_RECEIVER_NMEA_RATE));
+    bool rtcm_output = config_get_bool1(CONF_ITEM(KEY_CONFIG_RECEIVER_RTCM_OUTPUT));
+    uint16_t rtk_timeout = config_get_u16(CONF_ITEM(KEY_CONFIG_RECEIVER_RTK_TIMEOUT));
+    uint16_t dgps_timeout = config_get_u16(CONF_ITEM(KEY_CONFIG_RECEIVER_DGPS_TIMEOUT));
+    uint32_t constellation_mask = config_get_u32(CONF_ITEM(KEY_CONFIG_RECEIVER_CONSTELLATION_MASK));
+    bool agnss_enable = config_get_bool1(CONF_ITEM(KEY_CONFIG_RECEIVER_AGNSS_ENABLE));
+    uint32_t baudrate = config_get_u32(CONF_ITEM(KEY_CONFIG_RECEIVER_BAUD));
+    (void)config_get_str_blob_alloc(CONF_ITEM(KEY_CONFIG_RECEIVER_SIGNAL_MASK), (void **)&signal_mask);
+
+    if (receiver_unicore_send("UNLOGALL", NULL) != ESP_OK) goto fail;
+    if (receiver_unicore_send("LOG GPGGA ONTIME 1", "GGA") != ESP_OK) goto fail;
+    if (receiver_unicore_send("LOG GPGSV ONTIME 1", "GSV") != ESP_OK) goto fail;
+    if (receiver_unicore_send("LOG BESTNAVA ONTIME 1", "BESTNAVA") != ESP_OK) goto fail;
+    if (receiver_unicore_send("LOG RTKSTATUSA ONCHANGED", "RTKSTATUSA") != ESP_OK) goto fail;
+    if (receiver_unicore_send("LOG RTCMSTATUSA ONCHANGED", "RTCMSTATUSA") != ESP_OK) goto fail;
+    if (receiver_unicore_send("LOG AGCA ONCHANGED", "AGCA") != ESP_OK) goto fail;
+    if (receiver_unicore_send("LOG HWSTATUSA ONCHANGED", "HWSTATUSA") != ESP_OK) goto fail;
+    if (receiver_unicore_send("LOG JAMSTATUSA ONCHANGED", "JAMSTATUSA") != ESP_OK) goto fail;
+    if (receiver_unicore_send("LOG FREQJAMSTATUSA ONCHANGED", "FREQJAMSTATUSA") != ESP_OK) goto fail;
+
+    if (signal_mask != NULL && signal_mask[0] != '\0') {
+        if (receiver_queue_formatted(NULL, "SIGNALMASK %s\r\n", signal_mask) != ESP_OK) goto fail;
+    }
+
+    if (receiver_queue_formatted(NULL, "AGNSS %s\r\n", agnss_enable ? "ON" : "OFF") != ESP_OK) goto fail;
+    if (receiver_queue_formatted(NULL, "SET BAUD %u\r\n", (unsigned)baudrate) != ESP_OK) goto fail;
+    if (receiver_queue_formatted(NULL, "NMEA RATE %u\r\n", (unsigned)nmea_rate) != ESP_OK) goto fail;
+    if (receiver_queue_formatted(NULL, "RTKTIMEOUT %u\r\n", (unsigned)rtk_timeout) != ESP_OK) goto fail;
+    if (receiver_queue_formatted(NULL, "DGPSTIMEOUT %u\r\n", (unsigned)dgps_timeout) != ESP_OK) goto fail;
+    if (receiver_queue_formatted(NULL, "CONSTELLATIONMASK %u\r\n", (unsigned)constellation_mask) != ESP_OK) goto fail;
+
+    switch (profile) {
+        case RECEIVER_PROFILE_DIAGNOSTICS_ONLY:
+            if (receiver_queue_formatted(NULL, "RTCMOUTPUT OFF\r\n") != ESP_OK) goto fail;
+            break;
+        case RECEIVER_PROFILE_ROVER_BASIC:
+            if (receiver_queue_formatted(NULL, "MODE ROVER\r\n") != ESP_OK) goto fail;
+            if (receiver_queue_formatted(NULL, "RTCMOUTPUT OFF\r\n") != ESP_OK) goto fail;
+            break;
+        case RECEIVER_PROFILE_ROVER_RTK:
+            if (receiver_queue_formatted(NULL, "MODE ROVER\r\n") != ESP_OK) goto fail;
+            if (receiver_queue_formatted(NULL, "RTCMOUTPUT %s\r\n", rtcm_output ? "ON" : "OFF") != ESP_OK) goto fail;
+            break;
+        case RECEIVER_PROFILE_BASE_FIXED:
+            if (receiver_queue_formatted(NULL, "MODE BASE\r\n") != ESP_OK) goto fail;
+            if (receiver_queue_formatted(NULL, "FIX POSITION HOLD\r\n") != ESP_OK) goto fail;
+            if (receiver_queue_formatted(NULL, "RTCMOUTPUT ON\r\n") != ESP_OK) goto fail;
+            break;
+        case RECEIVER_PROFILE_BASE_SURVEY:
+            if (receiver_queue_formatted(NULL, "MODE BASE\r\n") != ESP_OK) goto fail;
+            if (receiver_queue_formatted(NULL, "SURVEY START\r\n") != ESP_OK) goto fail;
+            if (receiver_queue_formatted(NULL, "RTCMOUTPUT ON\r\n") != ESP_OK) goto fail;
+            break;
+        case RECEIVER_PROFILE_NONE:
+        default:
+            break;
+    }
+
+    if (receiver_queue_formatted(NULL, "SAVECONFIG\r\n") != ESP_OK) goto fail;
+
+    free(signal_mask);
+    receiver_lock();
+    s_receiver.applied_profile = profile;
+    s_receiver.auto_apply_queued = false;
+    snprintf(s_receiver.status.last_command_status, sizeof(s_receiver.status.last_command_status), "%s", "profile_queued");
+    receiver_unlock();
+    return ESP_OK;
+
+fail:
+    free(signal_mask);
+    receiver_lock();
+    snprintf(s_receiver.status.last_command_status, sizeof(s_receiver.status.last_command_status), "%s", "profile_queue_failed");
+    receiver_unlock();
+    return ESP_FAIL;
+}
+
+static void receiver_command_task(void *ctx)
+{
+    (void)ctx;
+    receiver_command_t cmd;
+
+    while (true) {
+        if (xQueueReceive(s_receiver.command_queue, &cmd, portMAX_DELAY) != pdTRUE) {
+            continue;
+        }
+
+        receiver_lock();
+        s_receiver.command_busy = true;
+        s_receiver.expect_matched = false;
+        snprintf(s_receiver.expect_token, sizeof(s_receiver.expect_token), "%s", cmd.expect);
+        receiver_raw_append_locked("> ", cmd.command);
+        snprintf(s_receiver.status.last_command_status, sizeof(s_receiver.status.last_command_status), "%s", "sending");
+        receiver_unlock();
+
+        int written = uart_write(cmd.command, strlen(cmd.command));
+        if (written < 0) {
+            receiver_lock();
+            s_receiver.command_busy = false;
+            s_receiver.expect_token[0] = '\0';
+            snprintf(s_receiver.status.last_command_status, sizeof(s_receiver.status.last_command_status), "%s", "tx_failed");
+            receiver_unlock();
+            continue;
+        }
+
+        if (cmd.expect[0] != '\0') {
+            esp_err_t expect_err = receiver_unicore_expect(cmd.expect);
+            if (expect_err != ESP_OK) {
+                if (cmd.retries_left > 0) {
+                    cmd.retries_left--;
+                    xQueueSendToFront(s_receiver.command_queue, &cmd, 0);
+                } else {
+                    receiver_lock();
+                    snprintf(s_receiver.status.last_command_status, sizeof(s_receiver.status.last_command_status), "%s", "timeout");
+                    receiver_unlock();
+                }
+            } else {
+                receiver_lock();
+                snprintf(s_receiver.status.last_command_status, sizeof(s_receiver.status.last_command_status), "%s", "ok");
+                receiver_unlock();
+            }
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            receiver_lock();
+            snprintf(s_receiver.status.last_command_status, sizeof(s_receiver.status.last_command_status), "%s", "ok");
+            receiver_unlock();
+        }
+
+        receiver_lock();
+        s_receiver.command_busy = false;
+        s_receiver.expect_matched = false;
+        s_receiver.expect_token[0] = '\0';
+        receiver_unlock();
+    }
 }
 
 esp_err_t receiver_init(void)
@@ -677,6 +1040,13 @@ esp_err_t receiver_init(void)
         return ESP_ERR_NO_MEM;
     }
 
+    s_receiver.command_queue = xQueueCreate(RECEIVER_COMMAND_QUEUE_LENGTH, sizeof(receiver_command_t));
+    if (s_receiver.command_queue == NULL) {
+        vSemaphoreDelete(s_receiver.mutex);
+        s_receiver.mutex = NULL;
+        return ESP_ERR_NO_MEM;
+    }
+
     receiver_lock();
     memset(&s_receiver.status, 0, sizeof(s_receiver.status));
     memset(s_receiver.satellites, 0, sizeof(s_receiver.satellites));
@@ -684,6 +1054,9 @@ esp_err_t receiver_init(void)
     s_receiver.detected_type = RECEIVER_TYPE_UNKNOWN;
     s_receiver.configured_mode = receiver_configured_mode();
     s_receiver.current_mode = s_receiver.configured_mode;
+    s_receiver.configured_profile = receiver_configured_profile();
+    s_receiver.applied_profile = RECEIVER_PROFILE_NONE;
+    s_receiver.auto_apply_queued = false;
     s_receiver.last_message_us = 0;
     s_receiver.last_rtcm_status_us = 0;
     s_receiver.status.receiver_type = RECEIVER_TYPE_UNKNOWN;
@@ -691,14 +1064,17 @@ esp_err_t receiver_init(void)
     s_receiver.status.agc_main = -1;
     s_receiver.status.agc_aux = -1;
     snprintf(s_receiver.status.mode, sizeof(s_receiver.status.mode), "%s", receiver_mode_name(s_receiver.current_mode));
+    snprintf(s_receiver.status.profile, sizeof(s_receiver.status.profile), "%s", receiver_profile_name(s_receiver.configured_profile));
     snprintf(s_receiver.status.fix_type, sizeof(s_receiver.status.fix_type), "%s", "unknown");
     snprintf(s_receiver.status.rtk_status, sizeof(s_receiver.status.rtk_status), "%s", "unknown");
     snprintf(s_receiver.status.antenna_status, sizeof(s_receiver.status.antenna_status), "%s", "unknown");
     snprintf(s_receiver.status.jamming_status, sizeof(s_receiver.status.jamming_status), "%s", "unknown");
     snprintf(s_receiver.status.hardware_status, sizeof(s_receiver.status.hardware_status), "%s", "unknown");
+    snprintf(s_receiver.status.last_command_status, sizeof(s_receiver.status.last_command_status), "%s", "idle");
     s_receiver.initialized = true;
     receiver_unlock();
 
+    xTaskCreate(receiver_command_task, "receiver_cmd", 6144, NULL, 8, &s_receiver.command_task);
     return uart_register_read_handler(receiver_uart_handler);
 }
 
@@ -724,9 +1100,32 @@ void receiver_poll(void)
     receiver_lock();
     s_receiver.configured_mode = receiver_configured_mode();
     s_receiver.current_mode = s_receiver.configured_mode;
+    s_receiver.configured_profile = receiver_configured_profile();
     snprintf(s_receiver.status.mode, sizeof(s_receiver.status.mode), "%s", receiver_mode_name(s_receiver.current_mode));
     receiver_recompute_stats_locked();
+
+    bool should_apply = s_receiver.configured_profile != RECEIVER_PROFILE_NONE &&
+                        s_receiver.detected_type == RECEIVER_TYPE_UNICORE_N4 &&
+                        s_receiver.applied_profile != s_receiver.configured_profile &&
+                        !s_receiver.auto_apply_queued &&
+                        !s_receiver.command_busy;
+
+    bool mismatch = s_receiver.configured_profile != RECEIVER_PROFILE_NONE &&
+                    s_receiver.detected_type == RECEIVER_TYPE_UBLOX;
     receiver_unlock();
+
+    if (mismatch) {
+        receiver_lock();
+        snprintf(s_receiver.status.last_command_status, sizeof(s_receiver.status.last_command_status), "%s", "receiver_mismatch");
+        receiver_unlock();
+    }
+
+    if (should_apply) {
+        receiver_lock();
+        s_receiver.auto_apply_queued = true;
+        receiver_unlock();
+        receiver_unicore_apply_profile(receiver_configured_profile());
+    }
 }
 
 esp_err_t receiver_get_status(receiver_status_t *status)
@@ -768,8 +1167,8 @@ esp_err_t receiver_get_diagnostics(receiver_diagnostics_t *diagnostics)
     }
 
     receiver_poll();
-
     memset(diagnostics, 0, sizeof(*diagnostics));
+
     receiver_lock();
     diagnostics->detected = s_receiver.status.detected;
     diagnostics->receiver_type = s_receiver.status.receiver_type;
@@ -786,8 +1185,8 @@ esp_err_t receiver_get_diagnostics(receiver_diagnostics_t *diagnostics)
     diagnostics->satellites_used = s_receiver.status.satellites_used;
     diagnostics->cn0_mean = s_receiver.status.cn0_mean;
     diagnostics->cn0_max = s_receiver.status.cn0_max;
-    uint32_t constellation_cn0_samples[RECEIVER_CONSTELLATION_COUNT] = {0};
 
+    uint32_t constellation_cn0_samples[RECEIVER_CONSTELLATION_COUNT] = {0};
     for (size_t i = 0; i < RECEIVER_MAX_SATELLITES; i++) {
         receiver_satellite_internal_t *sat = &s_receiver.satellites[i];
         if (!sat->active || sat->satellite.last_seen_ms > RECEIVER_MESSAGE_STALE_MS) {
@@ -817,12 +1216,82 @@ esp_err_t receiver_get_diagnostics(receiver_diagnostics_t *diagnostics)
     return ESP_OK;
 }
 
-esp_err_t receiver_send_command(const char *command)
+esp_err_t receiver_get_raw_output(char *buffer, size_t buffer_size, size_t *out_length)
 {
-    if (command == NULL) {
+    if (buffer == NULL || buffer_size == 0) {
         return ESP_ERR_INVALID_ARG;
     }
 
-    int written = uart_write((char *)command, strlen(command));
-    return written < 0 ? ESP_FAIL : ESP_OK;
+    receiver_lock();
+    size_t length = s_receiver.raw_length;
+    if (length >= buffer_size) {
+        length = buffer_size - 1;
+    }
+    memcpy(buffer, s_receiver.raw_buffer, length);
+    buffer[length] = '\0';
+    if (out_length != NULL) {
+        *out_length = length;
+    }
+    receiver_unlock();
+    return ESP_OK;
+}
+
+esp_err_t receiver_queue_command(const char *command, const char *expect)
+{
+    if (command == NULL || *command == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    receiver_lock();
+    receiver_type_t type = s_receiver.detected_type == RECEIVER_TYPE_UNKNOWN ? s_receiver.configured_type : s_receiver.detected_type;
+    receiver_unlock();
+
+    if (type == RECEIVER_TYPE_UBLOX) {
+        receiver_lock();
+        snprintf(s_receiver.status.last_command_status, sizeof(s_receiver.status.last_command_status), "%s", "unsupported");
+        receiver_unlock();
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+
+    return receiver_unicore_send(command, expect);
+}
+
+esp_err_t receiver_apply_profile(receiver_profile_t profile, bool persist)
+{
+    if (persist) {
+        esp_err_t persist_err = receiver_store_profile_config(profile);
+        if (persist_err != ESP_OK) {
+            ESP_LOGE(TAG, "persist receiver profile failed: %s", esp_err_to_name(persist_err));
+            return persist_err;
+        }
+    }
+
+    receiver_lock();
+    s_receiver.configured_profile = profile;
+    s_receiver.applied_profile = RECEIVER_PROFILE_NONE;
+    s_receiver.auto_apply_queued = false;
+    snprintf(s_receiver.status.profile, sizeof(s_receiver.status.profile), "%s", receiver_profile_name(profile));
+    receiver_unlock();
+
+    receiver_type_t detected = receiver_detect();
+    if (detected == RECEIVER_TYPE_UBLOX) {
+        receiver_lock();
+        snprintf(s_receiver.status.last_command_status, sizeof(s_receiver.status.last_command_status), "%s", "receiver_mismatch");
+        receiver_unlock();
+        return ESP_OK;
+    }
+
+    if (detected == RECEIVER_TYPE_UNICORE_N4) {
+        return receiver_unicore_apply_profile(profile);
+    }
+
+    receiver_lock();
+    snprintf(s_receiver.status.last_command_status, sizeof(s_receiver.status.last_command_status), "%s", "profile_pending");
+    receiver_unlock();
+    return ESP_OK;
+}
+
+esp_err_t receiver_send_command(const char *command)
+{
+    return receiver_queue_command(command, NULL);
 }

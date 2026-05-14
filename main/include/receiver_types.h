@@ -29,6 +29,15 @@ typedef enum receiver_constellation {
     RECEIVER_CONSTELLATION_COUNT
 } receiver_constellation_t;
 
+typedef enum receiver_profile {
+    RECEIVER_PROFILE_NONE = 0,
+    RECEIVER_PROFILE_DIAGNOSTICS_ONLY,
+    RECEIVER_PROFILE_ROVER_BASIC,
+    RECEIVER_PROFILE_ROVER_RTK,
+    RECEIVER_PROFILE_BASE_FIXED,
+    RECEIVER_PROFILE_BASE_SURVEY,
+} receiver_profile_t;
+
 #define RECEIVER_MAX_SATELLITES 64
 
 typedef struct receiver_status {
@@ -37,6 +46,7 @@ typedef struct receiver_status {
     char model[32];
     char firmware[32];
     char mode[16];
+    char profile[24];
     char fix_type[24];
     char rtk_status[24];
     uint32_t satellites_visible;
@@ -56,6 +66,10 @@ typedef struct receiver_status {
     char hardware_status[32];
     uint32_t last_message_ms;
     uint32_t parser_errors;
+    uint32_t command_queue_depth;
+    bool command_busy;
+    bool profile_pending;
+    char last_command_status[32];
 } receiver_status_t;
 
 typedef struct receiver_satellite {
@@ -93,5 +107,6 @@ typedef struct receiver_diagnostics {
 const char *receiver_type_name(receiver_type_t type);
 const char *receiver_mode_name(receiver_mode_t mode);
 const char *receiver_constellation_name(receiver_constellation_t constellation);
+const char *receiver_profile_name(receiver_profile_t profile);
 
 #endif // ESP32_XBEE_RECEIVER_TYPES_H

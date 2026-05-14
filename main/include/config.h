@@ -134,6 +134,14 @@ typedef struct config_item {
 #define KEY_CONFIG_RECEIVER_BAUD "rcv_baud"
 #define KEY_CONFIG_RECEIVER_UART_PORT "rcv_uart"
 #define KEY_CONFIG_RECEIVER_MODE "rcv_mode"
+#define KEY_CONFIG_RECEIVER_PROFILE "rcv_prof"
+#define KEY_CONFIG_RECEIVER_NMEA_RATE "rcv_nmea_hz"
+#define KEY_CONFIG_RECEIVER_RTCM_OUTPUT "rcv_rtcm_out"
+#define KEY_CONFIG_RECEIVER_RTK_TIMEOUT "rcv_rtk_to"
+#define KEY_CONFIG_RECEIVER_DGPS_TIMEOUT "rcv_dgps_to"
+#define KEY_CONFIG_RECEIVER_CONSTELLATION_MASK "rcv_const_mask"
+#define KEY_CONFIG_RECEIVER_SIGNAL_MASK "rcv_sig_mask"
+#define KEY_CONFIG_RECEIVER_AGNSS_ENABLE "rcv_agnss"
 
 // WiFi
 #define KEY_CONFIG_WIFI_AP_ACTIVE "w_ap_active"

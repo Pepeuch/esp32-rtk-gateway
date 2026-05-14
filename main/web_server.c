@@ -416,6 +416,7 @@ static void gnss_status_json_fill(cJSON *root)
     cJSON_AddStringToObject(root, "model", status.model);
     cJSON_AddStringToObject(root, "firmware", status.firmware);
     cJSON_AddStringToObject(root, "mode", status.mode);
+    cJSON_AddStringToObject(root, "profile", status.profile);
     cJSON_AddStringToObject(root, "fix_type", status.fix_type);
     cJSON_AddStringToObject(root, "rtk_status", status.rtk_status);
     cJSON_AddNumberToObject(root, "fix_quality", status.fix_quality);
@@ -435,6 +436,10 @@ static void gnss_status_json_fill(cJSON *root)
     cJSON_AddStringToObject(root, "hardware_status", status.hardware_status);
     cJSON_AddNumberToObject(root, "last_message_ms", status.last_message_ms == UINT32_MAX ? 0 : status.last_message_ms);
     cJSON_AddNumberToObject(root, "parser_errors", status.parser_errors);
+    cJSON_AddNumberToObject(root, "command_queue_depth", status.command_queue_depth);
+    cJSON_AddBoolToObject(root, "command_busy", status.command_busy);
+    cJSON_AddBoolToObject(root, "profile_pending", status.profile_pending);
+    cJSON_AddStringToObject(root, "last_command_status", status.last_command_status);
 }
 
 static void gnss_capabilities_json_fill(cJSON *root)
@@ -442,12 +447,91 @@ static void gnss_capabilities_json_fill(cJSON *root)
     cJSON_AddBoolToObject(root, "success", true);
     cJSON_AddBoolToObject(root, "observe_only", true);
     cJSON_AddBoolToObject(root, "shared_uart", true);
+    cJSON_AddBoolToObject(root, "profile_manager", true);
+    cJSON_AddBoolToObject(root, "raw_console", true);
 
     cJSON *types = cJSON_AddArrayToObject(root, "supported_receiver_types");
     cJSON_AddItemToArray(types, cJSON_CreateString(receiver_type_name(RECEIVER_TYPE_AUTO)));
     cJSON_AddItemToArray(types, cJSON_CreateString(receiver_type_name(RECEIVER_TYPE_UNICORE_N4)));
     cJSON_AddItemToArray(types, cJSON_CreateString(receiver_type_name(RECEIVER_TYPE_UBLOX)));
     cJSON_AddItemToArray(types, cJSON_CreateString(receiver_type_name(RECEIVER_TYPE_UNKNOWN)));
+}
+
+static void gnss_profiles_json_fill(cJSON *root)
+{
+    const receiver_profile_descriptor_t *profiles = NULL;
+    size_t profile_count = receiver_get_profiles(&profiles);
+    receiver_status_t status;
+
+    if (receiver_get_status(&status) != ESP_OK) {
+        cJSON_AddBoolToObject(root, "success", false);
+        cJSON_AddStringToObject(root, "error", "receiver_status_unavailable");
+        return;
+    }
+
+    cJSON_AddBoolToObject(root, "success", true);
+    cJSON_AddStringToObject(root, "selected_profile", status.profile);
+    cJSON_AddNumberToObject(root, "receiver_baud", config_get_u32(CONF_ITEM(KEY_CONFIG_RECEIVER_BAUD)));
+    cJSON_AddNumberToObject(root, "nmea_rate_hz", config_get_u8(CONF_ITEM(KEY_CONFIG_RECEIVER_NMEA_RATE)));
+    cJSON_AddBoolToObject(root, "rtcm_output", config_get_bool1(CONF_ITEM(KEY_CONFIG_RECEIVER_RTCM_OUTPUT)));
+    cJSON_AddNumberToObject(root, "rtk_timeout", config_get_u16(CONF_ITEM(KEY_CONFIG_RECEIVER_RTK_TIMEOUT)));
+    cJSON_AddNumberToObject(root, "dgps_timeout", config_get_u16(CONF_ITEM(KEY_CONFIG_RECEIVER_DGPS_TIMEOUT)));
+    cJSON_AddNumberToObject(root, "constellation_mask", config_get_u32(CONF_ITEM(KEY_CONFIG_RECEIVER_CONSTELLATION_MASK)));
+    cJSON_AddBoolToObject(root, "agnss_enable", config_get_bool1(CONF_ITEM(KEY_CONFIG_RECEIVER_AGNSS_ENABLE)));
+
+    char *signal_mask = NULL;
+    if (config_get_str_blob_alloc(CONF_ITEM(KEY_CONFIG_RECEIVER_SIGNAL_MASK), (void **)&signal_mask) == ESP_OK && signal_mask != NULL) {
+        cJSON_AddStringToObject(root, "signal_mask", signal_mask);
+    } else {
+        cJSON_AddStringToObject(root, "signal_mask", "");
+    }
+    free(signal_mask);
+
+    cJSON *items = cJSON_AddArrayToObject(root, "profiles");
+    for (size_t i = 0; i < profile_count; i++) {
+        cJSON *entry = cJSON_CreateObject();
+        if (entry == NULL) {
+            ESP_LOGE(TAG, "Could not allocate GNSS profile JSON object");
+            break;
+        }
+        cJSON_AddItemToArray(items, entry);
+        cJSON_AddStringToObject(entry, "name", profiles[i].name);
+        cJSON_AddStringToObject(entry, "label", profiles[i].label);
+        cJSON_AddStringToObject(entry, "description", profiles[i].description);
+        cJSON_AddStringToObject(entry, "mode", profiles[i].mode);
+        cJSON_AddBoolToObject(entry, "selected", strcmp(status.profile, profiles[i].name) == 0);
+    }
+}
+
+static void gnss_raw_json_fill(cJSON *root)
+{
+    char *buffer = calloc(1, 4096);
+    size_t length = 0;
+    receiver_status_t status;
+
+    if (buffer == NULL) {
+        cJSON_AddBoolToObject(root, "success", false);
+        cJSON_AddStringToObject(root, "error", "out_of_memory");
+        return;
+    }
+
+    if (receiver_get_status(&status) != ESP_OK || receiver_get_raw_output(buffer, 4096, &length) != ESP_OK) {
+        free(buffer);
+        cJSON_AddBoolToObject(root, "success", false);
+        cJSON_AddStringToObject(root, "error", "receiver_raw_unavailable");
+        return;
+    }
+
+    cJSON_AddBoolToObject(root, "success", true);
+    cJSON_AddBoolToObject(root, "detected", status.detected);
+    cJSON_AddStringToObject(root, "receiver_type", receiver_type_name(status.receiver_type));
+    cJSON_AddStringToObject(root, "profile", status.profile);
+    cJSON_AddBoolToObject(root, "command_busy", status.command_busy);
+    cJSON_AddNumberToObject(root, "command_queue_depth", status.command_queue_depth);
+    cJSON_AddStringToObject(root, "last_command_status", status.last_command_status);
+    cJSON_AddStringToObject(root, "raw", buffer);
+    cJSON_AddNumberToObject(root, "raw_length", length);
+    free(buffer);
 }
 
 static void gnss_constellations_json_fill(cJSON *array, const receiver_diagnostics_t *diagnostics)
@@ -1181,6 +1265,126 @@ static esp_err_t gnss_diagnostics_get_handler(httpd_req_t *req)
     return json_response(req, root);
 }
 
+static esp_err_t gnss_profiles_get_handler(httpd_req_t *req)
+{
+    if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
+
+    cJSON *root = cJSON_CreateObject();
+    gnss_profiles_json_fill(root);
+    return json_response(req, root);
+}
+
+static esp_err_t gnss_profile_apply_post_handler(httpd_req_t *req)
+{
+    if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
+
+    char *body = NULL;
+    esp_err_t err = request_body_alloc(req, &body);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    cJSON *payload = cJSON_Parse(body);
+    free(body);
+    if (payload == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+
+    cJSON *profile = cJSON_GetObjectItemCaseSensitive(payload, "profile");
+    cJSON *persist = cJSON_GetObjectItemCaseSensitive(payload, "persist");
+    if (!cJSON_IsString(profile) || profile->valuestring == NULL) {
+        cJSON_Delete(payload);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing profile");
+        return ESP_FAIL;
+    }
+
+    receiver_profile_t selected = receiver_profile_from_name(profile->valuestring);
+    bool should_persist = persist == NULL ? true : cJSON_IsTrue(persist);
+
+    cJSON *rtcm_output = cJSON_GetObjectItemCaseSensitive(payload, "rtcm_output");
+    cJSON *agnss_enable = cJSON_GetObjectItemCaseSensitive(payload, "agnss_enable");
+    cJSON *receiver_baud = cJSON_GetObjectItemCaseSensitive(payload, "receiver_baud");
+    cJSON *nmea_rate_hz = cJSON_GetObjectItemCaseSensitive(payload, "nmea_rate_hz");
+    cJSON *rtk_timeout = cJSON_GetObjectItemCaseSensitive(payload, "rtk_timeout");
+    cJSON *dgps_timeout = cJSON_GetObjectItemCaseSensitive(payload, "dgps_timeout");
+    cJSON *constellation_mask = cJSON_GetObjectItemCaseSensitive(payload, "constellation_mask");
+    cJSON *signal_mask = cJSON_GetObjectItemCaseSensitive(payload, "signal_mask");
+
+    if (cJSON_IsBool(rtcm_output)) config_set_bool1(KEY_CONFIG_RECEIVER_RTCM_OUTPUT, cJSON_IsTrue(rtcm_output));
+    if (cJSON_IsBool(agnss_enable)) config_set_bool1(KEY_CONFIG_RECEIVER_AGNSS_ENABLE, cJSON_IsTrue(agnss_enable));
+    if (cJSON_IsNumber(receiver_baud)) config_set_u32(KEY_CONFIG_RECEIVER_BAUD, (uint32_t)receiver_baud->valuedouble);
+    if (cJSON_IsNumber(nmea_rate_hz)) config_set_u8(KEY_CONFIG_RECEIVER_NMEA_RATE, (uint8_t)nmea_rate_hz->valuedouble);
+    if (cJSON_IsNumber(rtk_timeout)) config_set_u16(KEY_CONFIG_RECEIVER_RTK_TIMEOUT, (uint16_t)rtk_timeout->valuedouble);
+    if (cJSON_IsNumber(dgps_timeout)) config_set_u16(KEY_CONFIG_RECEIVER_DGPS_TIMEOUT, (uint16_t)dgps_timeout->valuedouble);
+    if (cJSON_IsNumber(constellation_mask)) config_set_u32(KEY_CONFIG_RECEIVER_CONSTELLATION_MASK, (uint32_t)constellation_mask->valuedouble);
+    if (cJSON_IsString(signal_mask) && signal_mask->valuestring != NULL) config_set_str(KEY_CONFIG_RECEIVER_SIGNAL_MASK, signal_mask->valuestring);
+    if (should_persist) config_commit();
+    cJSON_Delete(payload);
+
+    err = receiver_apply_profile(selected, should_persist);
+    cJSON *root = cJSON_CreateObject();
+    if (err != ESP_OK) {
+        cJSON_AddBoolToObject(root, "success", false);
+        cJSON_AddStringToObject(root, "error", esp_err_to_name(err));
+        return json_response(req, root);
+    }
+
+    gnss_status_json_fill(root);
+    cJSON_AddStringToObject(root, "warning", "Receiver may need a moment to apply the profile");
+    return json_response(req, root);
+}
+
+static esp_err_t gnss_command_post_handler(httpd_req_t *req)
+{
+    if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
+
+    char *body = NULL;
+    esp_err_t err = request_body_alloc(req, &body);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    cJSON *payload = cJSON_Parse(body);
+    free(body);
+    if (payload == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+
+    cJSON *command = cJSON_GetObjectItemCaseSensitive(payload, "command");
+    cJSON *expect = cJSON_GetObjectItemCaseSensitive(payload, "expect");
+    if (!cJSON_IsString(command) || command->valuestring == NULL || command->valuestring[0] == '\0') {
+        cJSON_Delete(payload);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing command");
+        return ESP_FAIL;
+    }
+
+    err = receiver_queue_command(command->valuestring,
+                                 cJSON_IsString(expect) ? expect->valuestring : NULL);
+    cJSON_Delete(payload);
+
+    cJSON *root = cJSON_CreateObject();
+    if (err != ESP_OK) {
+        cJSON_AddBoolToObject(root, "success", false);
+        cJSON_AddStringToObject(root, "error", esp_err_to_name(err));
+        return json_response(req, root);
+    }
+
+    cJSON_AddBoolToObject(root, "success", true);
+    cJSON_AddStringToObject(root, "state", "queued");
+    return json_response(req, root);
+}
+
+static esp_err_t gnss_raw_get_handler(httpd_req_t *req)
+{
+    if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
+
+    cJSON *root = cJSON_CreateObject();
+    gnss_raw_json_fill(root);
+    return json_response_chunked(req, root);
+}
+
 static bool json_string_copy(cJSON *entry, char *out, size_t out_size)
 {
     if (entry == NULL || !cJSON_IsString(entry) || out == NULL || out_size == 0) {
@@ -1607,6 +1811,10 @@ static httpd_handle_t web_server_start(void)
         register_uri_handler(server, "/api/gnss/status", HTTP_GET, gnss_status_get_handler);
         register_uri_handler(server, "/api/gnss/satellites", HTTP_GET, gnss_satellites_get_handler);
         register_uri_handler(server, "/api/gnss/diagnostics", HTTP_GET, gnss_diagnostics_get_handler);
+        register_uri_handler(server, "/api/gnss/profiles", HTTP_GET, gnss_profiles_get_handler);
+        register_uri_handler(server, "/api/gnss/profile/apply", HTTP_POST, gnss_profile_apply_post_handler);
+        register_uri_handler(server, "/api/gnss/command", HTTP_POST, gnss_command_post_handler);
+        register_uri_handler(server, "/api/gnss/receiver/raw", HTTP_GET, gnss_raw_get_handler);
         register_uri_handler(server, "/api/gnss/capabilities", HTTP_GET, gnss_capabilities_get_handler);
         register_uri_handler(server, "/api/gnss/detect", HTTP_POST, gnss_detect_post_handler);
         register_uri_handler(server, "/api/ntrip", HTTP_GET, ntrip_get_handler);
