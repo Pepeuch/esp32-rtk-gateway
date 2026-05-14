@@ -27,6 +27,19 @@
 #define RECEIVER_RAW_BUFFER_SIZE 4096
 #define RECEIVER_COMMAND_TIMEOUT_MS 2000
 #define RECEIVER_COMMAND_RETRY_COUNT 1
+#define RECEIVER_UBX_MAX_PAYLOAD 1024
+
+typedef enum receiver_ubx_state {
+    RECEIVER_UBX_SYNC_1 = 0,
+    RECEIVER_UBX_SYNC_2,
+    RECEIVER_UBX_CLASS,
+    RECEIVER_UBX_ID,
+    RECEIVER_UBX_LEN_1,
+    RECEIVER_UBX_LEN_2,
+    RECEIVER_UBX_PAYLOAD,
+    RECEIVER_UBX_CK_A,
+    RECEIVER_UBX_CK_B,
+} receiver_ubx_state_t;
 
 static const char *TAG = "RECEIVER";
 
@@ -69,6 +82,15 @@ typedef struct receiver_context {
     char expect_token[RECEIVER_EXPECT_MAX_LEN];
     bool survey_active;
     int64_t survey_started_us;
+    receiver_ubx_state_t ubx_state;
+    uint8_t ubx_class;
+    uint8_t ubx_id;
+    uint16_t ubx_length;
+    uint16_t ubx_offset;
+    uint8_t ubx_ck_a;
+    uint8_t ubx_ck_b;
+    bool ubx_store_payload;
+    uint8_t ubx_payload[RECEIVER_UBX_MAX_PAYLOAD];
 } receiver_context_t;
 
 static receiver_context_t s_receiver = {0};
@@ -303,6 +325,24 @@ static bool receiver_parse_i32(const char *text, int32_t *out_value)
     return true;
 }
 
+static uint16_t receiver_u16_le(const uint8_t *data)
+{
+    return (uint16_t)data[0] | ((uint16_t)data[1] << 8);
+}
+
+static int16_t receiver_i16_le(const uint8_t *data)
+{
+    return (int16_t)receiver_u16_le(data);
+}
+
+static uint32_t receiver_u32_le(const uint8_t *data)
+{
+    return (uint32_t)data[0] |
+           ((uint32_t)data[1] << 8) |
+           ((uint32_t)data[2] << 16) |
+           ((uint32_t)data[3] << 24);
+}
+
 static uint32_t receiver_parse_decimal_centi(const char *text)
 {
     if (text == NULL || *text == '\0') {
@@ -461,6 +501,19 @@ static void receiver_update_satellite_locked(receiver_constellation_t constellat
     sat->satellite.azimuth = azimuth;
     sat->satellite.cn0 = cn0;
     sat->satellite.signal_id = signal_id;
+    sat->last_seen_us = esp_timer_get_time();
+    sat->satellite.last_seen_ms = 0;
+}
+
+static void receiver_set_satellite_used_locked(receiver_constellation_t constellation, uint16_t svid, bool used)
+{
+    receiver_satellite_internal_t *sat = receiver_find_satellite_locked(constellation, svid);
+    if (sat == NULL) {
+        s_receiver.status.parser_errors++;
+        return;
+    }
+
+    sat->satellite.used = used;
     sat->last_seen_us = esp_timer_get_time();
     sat->satellite.last_seen_ms = 0;
 }
@@ -668,6 +721,162 @@ static void receiver_parse_unicore_bestsata_locked(char **tokens, size_t count)
     }
 }
 
+static receiver_constellation_t receiver_ubx_constellation(uint8_t gnss_id)
+{
+    switch (gnss_id) {
+        case 0:
+            return RECEIVER_CONSTELLATION_GPS;
+        case 2:
+            return RECEIVER_CONSTELLATION_GAL;
+        case 3:
+            return RECEIVER_CONSTELLATION_BDS;
+        case 5:
+            return RECEIVER_CONSTELLATION_QZSS;
+        case 6:
+            return RECEIVER_CONSTELLATION_GLO;
+        default:
+            return RECEIVER_CONSTELLATION_UNKNOWN;
+    }
+}
+
+static void receiver_parse_ubx_nav_pvt_locked(const uint8_t *payload, uint16_t length)
+{
+    if (payload == NULL || length < 92) {
+        s_receiver.status.parser_errors++;
+        return;
+    }
+
+    uint8_t fix_type = payload[20];
+    uint8_t flags = payload[21];
+    bool diff_soln = (flags & 0x02u) != 0;
+    uint8_t carr_soln = (uint8_t)((flags >> 6) & 0x03u);
+
+    s_receiver.status.fix_quality = fix_type;
+    s_receiver.status.satellites_visible = payload[23];
+    s_receiver.status.hdop_centi = receiver_u16_le(payload + 76);
+
+    if (carr_soln == 2) {
+        snprintf(s_receiver.status.fix_type, sizeof(s_receiver.status.fix_type), "%s", "rtk_fixed");
+        snprintf(s_receiver.status.rtk_status, sizeof(s_receiver.status.rtk_status), "%s", "fixed");
+    } else if (carr_soln == 1) {
+        snprintf(s_receiver.status.fix_type, sizeof(s_receiver.status.fix_type), "%s", "rtk_float");
+        snprintf(s_receiver.status.rtk_status, sizeof(s_receiver.status.rtk_status), "%s", "float");
+    } else if (diff_soln) {
+        snprintf(s_receiver.status.fix_type, sizeof(s_receiver.status.fix_type), "%s", "dgps");
+        snprintf(s_receiver.status.rtk_status, sizeof(s_receiver.status.rtk_status), "%s", "dgps");
+    } else {
+        switch (fix_type) {
+            case 0:
+                snprintf(s_receiver.status.fix_type, sizeof(s_receiver.status.fix_type), "%s", "no_fix");
+                snprintf(s_receiver.status.rtk_status, sizeof(s_receiver.status.rtk_status), "%s", "none");
+                break;
+            case 2:
+                snprintf(s_receiver.status.fix_type, sizeof(s_receiver.status.fix_type), "%s", "2d");
+                snprintf(s_receiver.status.rtk_status, sizeof(s_receiver.status.rtk_status), "%s", "standalone");
+                break;
+            case 3:
+                snprintf(s_receiver.status.fix_type, sizeof(s_receiver.status.fix_type), "%s", "3d");
+                snprintf(s_receiver.status.rtk_status, sizeof(s_receiver.status.rtk_status), "%s", "standalone");
+                break;
+            case 4:
+                snprintf(s_receiver.status.fix_type, sizeof(s_receiver.status.fix_type), "%s", "dead_reckoning");
+                snprintf(s_receiver.status.rtk_status, sizeof(s_receiver.status.rtk_status), "%s", "none");
+                break;
+            default:
+                snprintf(s_receiver.status.fix_type, sizeof(s_receiver.status.fix_type), "%s", "fix");
+                snprintf(s_receiver.status.rtk_status, sizeof(s_receiver.status.rtk_status), "%s", "unknown");
+                break;
+        }
+    }
+}
+
+static void receiver_parse_ubx_nav_sat_locked(const uint8_t *payload, uint16_t length)
+{
+    if (payload == NULL || length < 8) {
+        s_receiver.status.parser_errors++;
+        return;
+    }
+
+    uint8_t version = payload[4];
+    uint8_t num_svs = payload[5];
+    if (version != 1) {
+        return;
+    }
+
+    size_t expected = 8u + ((size_t)num_svs * 12u);
+    if (length < expected) {
+        s_receiver.status.parser_errors++;
+        return;
+    }
+
+    for (uint8_t i = 0; i < num_svs; i++) {
+        const uint8_t *sv = payload + 8u + ((size_t)i * 12u);
+        receiver_constellation_t constellation = receiver_ubx_constellation(sv[0]);
+        uint16_t svid = sv[1];
+        int16_t elevation = (int8_t)sv[3];
+        int16_t azimuth = receiver_i16_le(sv + 4);
+        uint16_t cn0 = sv[2];
+        uint32_t flags = receiver_u32_le(sv + 8);
+        bool used = (flags & (1u << 3)) != 0;
+
+        if (svid == 0) {
+            continue;
+        }
+
+        receiver_update_satellite_locked(constellation,
+                                         svid,
+                                         elevation < 0 ? 0u : (uint16_t)elevation,
+                                         azimuth < 0 ? 0u : (uint16_t)azimuth,
+                                         cn0,
+                                         0);
+        receiver_set_satellite_used_locked(constellation, svid, used);
+    }
+}
+
+static void receiver_parse_ubx_mon_ver_locked(const uint8_t *payload, uint16_t length)
+{
+    if (payload == NULL || length < 40) {
+        s_receiver.status.parser_errors++;
+        return;
+    }
+
+    char sw_version[31] = {0};
+    char hw_version[11] = {0};
+    memcpy(sw_version, payload, 30);
+    memcpy(hw_version, payload + 30, 10);
+    snprintf(s_receiver.status.firmware, sizeof(s_receiver.status.firmware), "%s", sw_version);
+
+    if (s_receiver.status.model[0] == '\0') {
+        snprintf(s_receiver.status.model, sizeof(s_receiver.status.model), "%s", "u-blox");
+    }
+
+    for (uint16_t offset = 40; offset + 30 <= length; offset += 30) {
+        char extension[31] = {0};
+        memcpy(extension, payload + offset, 30);
+
+        if (strncmp(extension, "MOD=", 4) == 0) {
+            snprintf(s_receiver.status.model, sizeof(s_receiver.status.model), "%s", extension + 4);
+        } else if (strncmp(extension, "FWVER=", 6) == 0) {
+            snprintf(s_receiver.status.firmware, sizeof(s_receiver.status.firmware), "%s", extension + 6);
+        }
+    }
+}
+
+static void receiver_parse_ubx_packet_locked(uint8_t message_class, uint8_t message_id,
+                                             const uint8_t *payload, uint16_t length)
+{
+    receiver_set_type_locked(RECEIVER_TYPE_UBLOX);
+    receiver_set_last_message_locked();
+
+    if (message_class == 0x01 && message_id == 0x07) {
+        receiver_parse_ubx_nav_pvt_locked(payload, length);
+    } else if (message_class == 0x01 && message_id == 0x35) {
+        receiver_parse_ubx_nav_sat_locked(payload, length);
+    } else if (message_class == 0x0A && message_id == 0x04) {
+        receiver_parse_ubx_mon_ver_locked(payload, length);
+    }
+}
+
 static void receiver_parse_unicore_ascii_locked(char *line)
 {
     char *tokens[RECEIVER_MAX_TOKENS] = {0};
@@ -739,6 +948,107 @@ static void receiver_parse_line_locked(char *line)
     }
 }
 
+static void receiver_ubx_reset_locked(void)
+{
+    s_receiver.ubx_state = RECEIVER_UBX_SYNC_1;
+    s_receiver.ubx_class = 0;
+    s_receiver.ubx_id = 0;
+    s_receiver.ubx_length = 0;
+    s_receiver.ubx_offset = 0;
+    s_receiver.ubx_ck_a = 0;
+    s_receiver.ubx_ck_b = 0;
+    s_receiver.ubx_store_payload = false;
+}
+
+static void receiver_ubx_checksum_update_locked(uint8_t byte)
+{
+    s_receiver.ubx_ck_a = (uint8_t)(s_receiver.ubx_ck_a + byte);
+    s_receiver.ubx_ck_b = (uint8_t)(s_receiver.ubx_ck_b + s_receiver.ubx_ck_a);
+}
+
+static void receiver_ubx_feed_byte_locked(uint8_t byte)
+{
+    switch (s_receiver.ubx_state) {
+        case RECEIVER_UBX_SYNC_1:
+            if (byte == 0xB5) {
+                s_receiver.ubx_state = RECEIVER_UBX_SYNC_2;
+            }
+            break;
+        case RECEIVER_UBX_SYNC_2:
+            if (byte == 0x62) {
+                receiver_set_type_locked(RECEIVER_TYPE_UBLOX);
+                s_receiver.ubx_state = RECEIVER_UBX_CLASS;
+                s_receiver.ubx_ck_a = 0;
+                s_receiver.ubx_ck_b = 0;
+                s_receiver.ubx_length = 0;
+                s_receiver.ubx_offset = 0;
+                s_receiver.ubx_store_payload = true;
+            } else if (byte != 0xB5) {
+                s_receiver.ubx_state = RECEIVER_UBX_SYNC_1;
+            }
+            break;
+        case RECEIVER_UBX_CLASS:
+            s_receiver.ubx_class = byte;
+            receiver_ubx_checksum_update_locked(byte);
+            s_receiver.ubx_state = RECEIVER_UBX_ID;
+            break;
+        case RECEIVER_UBX_ID:
+            s_receiver.ubx_id = byte;
+            receiver_ubx_checksum_update_locked(byte);
+            s_receiver.ubx_state = RECEIVER_UBX_LEN_1;
+            break;
+        case RECEIVER_UBX_LEN_1:
+            s_receiver.ubx_length = byte;
+            receiver_ubx_checksum_update_locked(byte);
+            s_receiver.ubx_state = RECEIVER_UBX_LEN_2;
+            break;
+        case RECEIVER_UBX_LEN_2:
+            s_receiver.ubx_length |= (uint16_t)byte << 8;
+            receiver_ubx_checksum_update_locked(byte);
+            s_receiver.ubx_store_payload = s_receiver.ubx_length <= RECEIVER_UBX_MAX_PAYLOAD;
+            if (s_receiver.ubx_length == 0) {
+                s_receiver.ubx_state = RECEIVER_UBX_CK_A;
+            } else {
+                s_receiver.ubx_state = RECEIVER_UBX_PAYLOAD;
+            }
+            break;
+        case RECEIVER_UBX_PAYLOAD:
+            if (s_receiver.ubx_store_payload && s_receiver.ubx_offset < RECEIVER_UBX_MAX_PAYLOAD) {
+                s_receiver.ubx_payload[s_receiver.ubx_offset] = byte;
+            }
+            s_receiver.ubx_offset++;
+            receiver_ubx_checksum_update_locked(byte);
+            if (s_receiver.ubx_offset >= s_receiver.ubx_length) {
+                s_receiver.ubx_state = RECEIVER_UBX_CK_A;
+            }
+            break;
+        case RECEIVER_UBX_CK_A:
+            if (byte == s_receiver.ubx_ck_a) {
+                s_receiver.ubx_state = RECEIVER_UBX_CK_B;
+            } else {
+                s_receiver.status.parser_errors++;
+                receiver_ubx_reset_locked();
+            }
+            break;
+        case RECEIVER_UBX_CK_B:
+            if (byte == s_receiver.ubx_ck_b) {
+                if (s_receiver.ubx_store_payload) {
+                    receiver_parse_ubx_packet_locked(s_receiver.ubx_class, s_receiver.ubx_id,
+                                                     s_receiver.ubx_payload, s_receiver.ubx_length);
+                } else {
+                    s_receiver.status.parser_errors++;
+                }
+            } else {
+                s_receiver.status.parser_errors++;
+            }
+            receiver_ubx_reset_locked();
+            break;
+        default:
+            receiver_ubx_reset_locked();
+            break;
+    }
+}
+
 static void receiver_uart_handler(void *handler_args, esp_event_base_t base, int32_t length, void *buffer)
 {
     (void)handler_args;
@@ -754,10 +1064,7 @@ static void receiver_uart_handler(void *handler_args, esp_event_base_t base, int
     for (int32_t i = 0; i < length; i++) {
         uint8_t byte = bytes[i];
 
-        if (s_receiver.prev_byte == 0xB5 && byte == 0x62) {
-            receiver_set_type_locked(RECEIVER_TYPE_UBLOX);
-            receiver_set_last_message_locked();
-        }
+        receiver_ubx_feed_byte_locked(byte);
         s_receiver.prev_byte = byte;
 
         if (byte == '\n' || byte == '\r') {
@@ -1125,6 +1432,7 @@ esp_err_t receiver_init(void)
     s_receiver.auto_apply_queued = false;
     s_receiver.last_message_us = 0;
     s_receiver.last_rtcm_status_us = 0;
+    receiver_ubx_reset_locked();
     s_receiver.status.receiver_type = RECEIVER_TYPE_UNKNOWN;
     s_receiver.status.detected = false;
     s_receiver.status.agc_main = -1;
