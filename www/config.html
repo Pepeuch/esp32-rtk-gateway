@@ -573,14 +573,19 @@
                 $.getJSON('api/gnss/profiles').done(function(data) {
                     if (!data || !Array.isArray(data.profiles) || !gnssProfileSelect.length) return;
 
-                    gnssProfileSelect.empty();
-                    data.profiles.forEach(function(profile) {
-                        gnssProfileSelect.append($('<option>', {
-                            value: profile.name,
-                            text: profile.label || profile.name,
-                            selected: !!profile.selected
-                        }));
-                    });
+                    const profileSelectElement = gnssProfileSelect[0];
+                    if (profileSelectElement) {
+                        profileSelectElement.replaceChildren();
+                        data.profiles.forEach(function(profile) {
+                            const option = document.createElement('option');
+                            option.value = profile.name || '';
+                            option.textContent = profile.label || profile.name || 'profile';
+                            option.selected = !!profile.selected;
+                            profileSelectElement.appendChild(option);
+                        });
+                    } else {
+                        gnssProfileSelect.empty();
+                    }
 
                     $('#gnss-baud').val(data.receiver_baud || 115200);
                     $('#gnss-nmea-rate').val(data.nmea_rate_hz || 1);
@@ -737,7 +742,7 @@
                     meta.append($('<div>', {html: 'Mock mode: <strong class="slot-mock-current">' + (slot.mock_mode || 'none') + '</strong>'}));
                     meta.append($('<div>', {html: 'Last error: <strong class="slot-error">' + (slot.last_error || 'None') + '</strong>'}));
 
-                    body.append(row1, row2, row3, row4, meta);
+                    body.append(row1).append(row2).append(row3).append(row4).append(meta);
                     card.append(body);
                     ntripSlotsEditor.append(card);
                 });

@@ -132,8 +132,8 @@
             return this.findIndex((candidate) => candidate === element);
         }
 
-        append(content) {
-            const items = toArray(content);
+        append(...contents) {
+            const items = contents.length <= 1 ? toArray(contents[0]) : contents.flatMap(toArray);
             this.forEach((parent, parentIndex) => {
                 items.forEach((item) => {
                     const node = toNode(item);
