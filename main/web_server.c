@@ -1,5 +1,5 @@
 /*
- * This file is part of the ESP32-XBee distribution (https://github.com/nebkat/esp32-xbee).
+ * This file is part of the ESP32 RTK Gateway distribution (https://github.com/Pepeuch/esp32-rtk-gateway).
  * Copyright (c) 2019 Nebojsa Cvetkovic.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -907,7 +907,7 @@ static esp_err_t basic_auth(httpd_req_t *req) {
     if (authenticated) return ESP_OK;
 
     _auth_required:
-    httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"ESP32 XBee Config\"");
+    httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"ESP32 RTK Gateway Config\"");
     httpd_resp_set_status(req, "401"); // Unauthorized
     char *unauthorized = "401 Unauthorized - Incorrect or no password provided";
     httpd_resp_send(req, unauthorized, strlen(unauthorized));
@@ -988,7 +988,7 @@ static esp_err_t core_dump_get_handler(httpd_req_t *req) {
 
     char content_disposition[128];
     snprintf(content_disposition, sizeof(content_disposition),
-            "attachment; filename=\"esp32_xbee_%s_core_dump_%s%s.bin\"", app_desc->version, elf_sha256, date);
+            "attachment; filename=\"esp32_rtk_gateway_%s_core_dump_%s%s.bin\"", app_desc->version, elf_sha256, date);
     httpd_resp_set_hdr(req, "Content-Disposition", content_disposition);
 
     for (int offset = 0; offset < core_dump_size; offset += BUFFER_SIZE) {

@@ -205,7 +205,7 @@
             form.find(":input").on('change', checkDisableIfs);
 
             $('#switch-uart').on('click', function() {
-                if (confirm("WARNING\n\nThese settings are mainly for development purposes and do not normally have to be changed. With a standard ESP32 XBee device the only setting you may want to change is the UART baud rate. DO NOT PROCEED unless you know what you are doing.")) {
+                if (confirm("WARNING\n\nThese settings are mainly for development purposes and do not normally have to be changed. With a standard ESP32 RTK Gateway device the only setting you may want to change is the UART baud rate. DO NOT PROCEED unless you know what you are doing.")) {
                     $(this).hide();
                     checkDisableIfs();
                 }
@@ -1210,7 +1210,7 @@
 <body class="bg-light">
     <div class="container">
         <div class="pt-5 text-center">
-            <h2>ESP32 RTK Gateway <a id="project-version" href="https://github.com/nebkat/esp32-xbee/releases" class="text-muted small"></a> <a id="prerelease-available" class="text-info small" style="display: none">(beta available)</a></h2>
+            <h2>ESP32 RTK Gateway <a id="project-version" href="https://github.com/Pepeuch/esp32-rtk-gateway" class="text-muted small"></a> <a id="prerelease-available" class="text-info small" style="display: none">(beta available)</a></h2>
 
             <p class="lead">Adjust the settings below and then click on "Submit". The device will restart with the new settings applied. If you have adjusted WiFi settings the device may be moved onto a new IP address, or require you to reconnect to its access point.</p>
             <div class="mb-4">
@@ -2157,7 +2157,7 @@
                     <h4 class="modal-title">Waiting for restart...</h4>
                 </div>
                 <div class="modal-body">
-                    <p>The ESP32 XBee has been restarted to apply the new configuration.</p>
+                    <p>The ESP32 RTK Gateway has been restarted to apply the new configuration.</p>
                     <p>Please wait a few seconds, and this page will automatically reload.</p>
                     <p>If you have made changes to the WiFi connection, or are using the ESP32's WiFi hotspot, you may need to check your device's WiFi connection, or read the new IP address from a serial terminal.</p>
                 </div>

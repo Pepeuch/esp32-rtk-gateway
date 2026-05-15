@@ -1,5 +1,5 @@
 /*
- * This file is part of the ESP32-XBee distribution (https://github.com/nebkat/esp32-xbee).
+ * This file is part of the ESP32 RTK Gateway distribution (https://github.com/Pepeuch/esp32-rtk-gateway).
  * Copyright (c) 2019 Nebojsa Cvetkovic.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -101,7 +101,7 @@ void app_main(void)
     uart_nmea("$PESP,INIT,START,%s,%s", app_desc->version, reset_reason_name(reset_reason));
 
     ESP_LOGI(TAG, "╔══════════════════════════════════════════════╗");
-    ESP_LOGI(TAG, "║ ESP32 XBee %-33s "                          "║", app_desc->version);
+    ESP_LOGI(TAG, "║ ESP32 RTK Gateway %-27s "                   "║", app_desc->version);
     ESP_LOGI(TAG, "╠══════════════════════════════════════════════╣");
     ESP_LOGI(TAG, "║ Compiled: %8s %-25s "                       "║", app_desc->time, app_desc->date);
     ESP_LOGI(TAG, "║ ELF SHA256: %-32s "                         "║", elf_buffer);
@@ -111,7 +111,7 @@ void app_main(void)
     ESP_LOGI(TAG, "╟──────────────────────────────────────────────╢");
     ESP_LOGI(TAG, "║ Author: Nebojša Cvetković                    ║");
     ESP_LOGI(TAG, "║ Upgraded to v5.2.3 & ETH01: dr. Kónya Sándor ║");
-    ESP_LOGI(TAG, "║ Source: https://github.com/nebkat/esp32-xbee ║");
+    ESP_LOGI(TAG, "║ Source: github.com/Pepeuch/esp32-rtk-gateway ║");
     ESP_LOGI(TAG, "╚══════════════════════════════════════════════╝");
 
     vTaskDelay(pdMS_TO_TICKS(2500));
