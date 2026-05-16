@@ -38,6 +38,7 @@ static sx126x_pkt_params_lora_t s_pkt_params;
 static bool                     s_ready;
 static bool                     s_rx_active;
 static bool                     s_tx_active;
+static const lora_region_profile_t* s_region_profile;
 
 static esp_err_t lora_lock(void)
 {
@@ -156,6 +157,49 @@ static esp_err_t lora_radio_call( sx126x_status_t status, const char* step )
     return err;
 }
 
+static esp_err_t lora_validate_region_config( const lora_radio_config_t* config )
+{
+    uint32_t resolved_frequency_hz = 0;
+
+    s_region_profile = lora_region_get_profile( config->region );
+    if( s_region_profile == NULL )
+    {
+        ESP_LOGE( TAG, "Unsupported region id %d", (int) config->region );
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+
+    if( !lora_region_is_chip_allowed( s_region_profile, config->chip_family ) )
+    {
+        ESP_LOGE( TAG, "Chip %s is not allowed for region %s",
+                  lora_chip_family_name( config->chip_family ),
+                  lora_region_name( config->region ) );
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+
+    if( config->region == LORA_REGION_CUSTOM && config->frequency_hz == 0 )
+    {
+        ESP_LOGE( TAG, "CUSTOM region requires an explicit non-zero frequency" );
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if( lora_region_resolve_frequency_hz( s_region_profile, config->frequency_hz, &resolved_frequency_hz ) != ESP_OK )
+    {
+        ESP_LOGE( TAG, "Region %s requires an explicit frequency for this configuration",
+                  lora_region_name( config->region ) );
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    s_cfg.frequency_hz = resolved_frequency_hz;
+    if( s_cfg.tx_power_dbm > s_region_profile->max_tx_power_dbm_placeholder )
+    {
+        ESP_LOGW( TAG, "Requested TX power %d dBm exceeds %s placeholder max %d dBm, clamping",
+                  s_cfg.tx_power_dbm, lora_region_name( s_cfg.region ),
+                  s_region_profile->max_tx_power_dbm_placeholder );
+        s_cfg.tx_power_dbm = s_region_profile->max_tx_power_dbm_placeholder;
+    }
+    return ESP_OK;
+}
+
 static uint32_t lora_tx_timeout_ms( size_t payload_len )
 {
     sx126x_pkt_params_lora_t pkt_params = s_pkt_params;
@@ -257,8 +301,13 @@ static esp_err_t lora_apply_radio_config_locked(void)
                          TAG, "packet type failed" );
     ESP_RETURN_ON_ERROR( lora_radio_call( sx126x_set_reg_mode( &s_hal, SX126X_REG_MODE_DCDC ), "sx126x_set_reg_mode" ),
                          TAG, "reg mode failed" );
-    ESP_RETURN_ON_ERROR( lora_radio_call( sx126x_cal_img_in_mhz( &s_hal, 850, 870 ), "sx126x_cal_img_in_mhz" ), TAG,
-                         "image calibration failed" );
+    const uint16_t frequency_mhz = (uint16_t) ( s_cfg.frequency_hz / 1000000UL );
+    const uint16_t cal_low_mhz   = ( frequency_mhz > 10U ) ? ( frequency_mhz - 10U ) : frequency_mhz;
+    const uint16_t cal_high_mhz  = frequency_mhz + 10U;
+
+    ESP_RETURN_ON_ERROR( lora_radio_call( sx126x_cal_img_in_mhz( &s_hal, cal_low_mhz, cal_high_mhz ),
+                                          "sx126x_cal_img_in_mhz" ),
+                         TAG, "image calibration failed" );
     ESP_RETURN_ON_ERROR( lora_radio_call( sx126x_set_rf_freq( &s_hal, s_cfg.frequency_hz ), "sx126x_set_rf_freq" ),
                          TAG, "rf frequency failed" );
     ESP_RETURN_ON_ERROR( lora_radio_call( sx126x_set_pa_cfg( &s_hal, &pa_cfg ), "sx126x_set_pa_cfg" ), TAG,
@@ -521,6 +570,7 @@ esp_err_t lora_radio_init( const lora_radio_config_t* config )
     }
 
     memcpy( &s_cfg, config, sizeof( s_cfg ) );
+    ESP_RETURN_ON_ERROR( lora_validate_region_config( config ), TAG, "region validation failed" );
 
     s_hal = (lora_hal_context_t){
         .spi       = NULL,
@@ -555,9 +605,22 @@ esp_err_t lora_radio_init( const lora_radio_config_t* config )
 
     s_ready = true;
 
-    ESP_LOGI( TAG, "SX1262 ready @ %u Hz SF%u BW%u CR4/%u TX %d dBm",
-              (unsigned) s_cfg.frequency_hz, s_cfg.spreading_factor, (unsigned) s_cfg.bandwidth_hz,
-              (unsigned) s_cfg.coding_rate, s_cfg.tx_power_dbm );
+    ESP_LOGI( TAG, "resolved region=%s chip=%s freq=%u bw=%u sf=%u cr=4/%u tx=%d",
+              lora_region_name( s_cfg.region ),
+              lora_chip_family_name( s_cfg.chip_family ),
+              (unsigned) s_cfg.frequency_hz,
+              (unsigned) s_cfg.bandwidth_hz,
+              (unsigned) s_cfg.spreading_factor,
+              (unsigned) s_cfg.coding_rate,
+              s_cfg.tx_power_dbm );
+    ESP_LOGI( TAG, "resolved radio_profile=%s duty_cycle_policy=%s rtcm_profile=%s",
+              lora_radio_profile_name( s_cfg.radio_profile ),
+              ( s_region_profile != NULL ) ? lora_duty_cycle_policy_name( s_region_profile->duty_cycle_policy ) : "unknown",
+              lora_rtcm_profile_name( s_cfg.rtcm_profile ) );
+    ESP_LOGI( TAG, "policy_note=%s",
+              ( s_region_profile != NULL && s_region_profile->duty_cycle_policy_note != NULL ) ?
+                  s_region_profile->duty_cycle_policy_note :
+                  "n/a" );
 
     return ESP_OK;
 }

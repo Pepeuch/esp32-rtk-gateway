@@ -1,6 +1,7 @@
 idf_component_register(
     SRCS
         "src/lora_radio.c"
+        "src/lora_region_profiles.c"
     INCLUDE_DIRS
         "include"
         "src"

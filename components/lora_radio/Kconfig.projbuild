@@ -1,0 +1,86 @@
+menu "LoRa Radio"
+
+choice LORA_REGION
+    prompt "LoRa region"
+    default LORA_REGION_EU868
+    help
+        Regional radio profile used to resolve default frequency and policy placeholders.
+        These settings are configurable placeholders, not legal guarantees.
+
+config LORA_REGION_EU868
+    bool "EU868"
+
+config LORA_REGION_US915
+    bool "US915"
+
+config LORA_REGION_AU915
+    bool "AU915"
+
+config LORA_REGION_AS923
+    bool "AS923"
+
+config LORA_REGION_CUSTOM
+    bool "CUSTOM"
+
+endchoice
+
+choice LORA_CHIP_FAMILY
+    prompt "LoRa chip family"
+    default LORA_CHIP_FAMILY_SX1262
+
+config LORA_CHIP_FAMILY_SX1261
+    bool "SX1261"
+
+config LORA_CHIP_FAMILY_SX1262
+    bool "SX1262"
+
+config LORA_CHIP_FAMILY_SX1268
+    bool "SX1268"
+
+config LORA_CHIP_FAMILY_LLCC68
+    bool "LLCC68"
+
+endchoice
+
+config LORA_FREQUENCY_HZ
+    int "LoRa frequency (Hz)"
+    default 0
+    range 0 1000000000 if !LORA_REGION_CUSTOM
+    range 1 1000000000 if LORA_REGION_CUSTOM
+    help
+        Set to 0 to resolve automatically from the selected region profile.
+        CUSTOM requires an explicit non-zero frequency.
+
+config LORA_TX_POWER_DBM
+    int "LoRa TX power (dBm)"
+    default 14
+    range -9 30
+    help
+        Requested TX power in dBm. The runtime config will clamp it to the
+        selected region profile max placeholder.
+
+choice LORA_RADIO_PROFILE
+    prompt "LoRa radio profile"
+    default LORA_RADIO_PROFILE_RTK_FAST
+
+config LORA_RADIO_PROFILE_RTK_FAST
+    bool "rtk_fast"
+
+config LORA_RADIO_PROFILE_CUSTOM
+    bool "custom"
+
+endchoice
+
+choice LORA_RTCM_PROFILE
+    prompt "LoRa RTCM profile"
+    default LORA_RTCM_PROFILE_RTK_MINIMAL
+
+config LORA_RTCM_PROFILE_RTK_MINIMAL
+    bool "rtk_minimal"
+
+config LORA_RTCM_PROFILE_CUSTOM
+    bool "custom"
+
+endchoice
+
+endmenu

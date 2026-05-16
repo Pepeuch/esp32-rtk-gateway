@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include "esp_err.h"
+#include "lora_region.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -38,6 +39,10 @@ typedef struct {
     int spi_host;
     int spi_clock_hz;
 
+    lora_region_id_t region;
+    lora_chip_family_t chip_family;
+    lora_radio_profile_t radio_profile;
+    lora_rtcm_profile_t rtcm_profile;
     uint32_t frequency_hz;
 
     uint8_t spreading_factor;
