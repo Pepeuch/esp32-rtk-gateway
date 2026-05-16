@@ -53,6 +53,7 @@
 
 static esp_err_t captive_404_handler(httpd_req_t *req, httpd_err_code_t err)
 {
+    response_set_common_headers(req, "no-store");
     httpd_resp_set_status(req, "302 Found");
     httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/");
     httpd_resp_send(req, NULL, 0);
@@ -81,6 +82,37 @@ static void qos_json_fill(cJSON *root, const ntrip_runtime_info_t *info);
 static bool qos_reject_optional_request(httpd_req_t *req, const char *feature);
 static void memory_json_fill(cJSON *root);
 static void buffer_summary_json_fill(cJSON *root);
+static void response_set_common_headers(httpd_req_t *req, const char *cache_control);
+static const char *static_cache_control_for_file(const char *filename);
+
+static void response_set_common_headers(httpd_req_t *req, const char *cache_control)
+{
+    if (req == NULL) {
+        return;
+    }
+
+    httpd_resp_set_hdr(req, "Connection", "close");
+    if (cache_control != NULL && cache_control[0] != '\0') {
+        httpd_resp_set_hdr(req, "Cache-Control", cache_control);
+    }
+}
+
+static const char *static_cache_control_for_file(const char *filename)
+{
+    if (filename == NULL) {
+        return "public, max-age=60";
+    }
+
+    if (IS_FILE_EXT(filename, ".html")) {
+        return "no-store";
+    }
+
+    if (IS_FILE_EXT(filename, ".js") || IS_FILE_EXT(filename, ".css") || IS_FILE_EXT(filename, ".ico")) {
+        return "public, max-age=300";
+    }
+
+    return "public, max-age=60";
+}
 
 static void qos_json_fill(cJSON *root, const ntrip_runtime_info_t *info)
 {
@@ -225,6 +257,7 @@ static char* get_path_from_uri(char *dest, const char *base_path, const char *ur
 }
 
 static esp_err_t json_response(httpd_req_t *req, cJSON *root) {
+    response_set_common_headers(req, "no-store");
     esp_err_t err = httpd_resp_set_type(req, "application/json");
     if (err != ESP_OK) {
         cJSON_Delete(root);
@@ -249,6 +282,8 @@ static esp_err_t json_response(httpd_req_t *req, cJSON *root) {
 
 static esp_err_t json_response_chunked(httpd_req_t *req, cJSON *root)
 {
+    response_set_common_headers(req, "no-store");
+
     esp_err_t err = httpd_resp_set_type(req, "application/json");
     if (err != ESP_OK) {
         cJSON_Delete(root);
@@ -277,15 +312,19 @@ static esp_err_t json_response_chunked(httpd_req_t *req, cJSON *root)
 
         err = httpd_resp_send_chunk(req, json + offset, chunk_length);
         if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Chunked JSON send failed at offset %u: %s", (unsigned)offset, esp_err_to_name(err));
+            ESP_LOGW(TAG, "Chunked JSON send interrupted at offset %u: %s", (unsigned)offset, esp_err_to_name(err));
             free(json);
-            httpd_resp_send_chunk(req, NULL, 0);
-            return err;
+            (void)httpd_resp_send_chunk(req, NULL, 0);
+            return ESP_OK;
         }
     }
 
     free(json);
-    return httpd_resp_send_chunk(req, NULL, 0);
+    err = httpd_resp_send_chunk(req, NULL, 0);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Chunked JSON finalization interrupted: %s", esp_err_to_name(err));
+    }
+    return ESP_OK;
 }
 
 static esp_err_t request_body_alloc(httpd_req_t *req, char **out_body)
@@ -907,6 +946,7 @@ static esp_err_t basic_auth(httpd_req_t *req) {
     if (authenticated) return ESP_OK;
 
     _auth_required:
+    response_set_common_headers(req, "no-store");
     httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"ESP32 RTK Gateway Config\"");
     httpd_resp_set_status(req, "401"); // Unauthorized
     char *unauthorized = "401 Unauthorized - Incorrect or no password provided";
@@ -934,6 +974,7 @@ static esp_err_t hotspot_auth(httpd_req_t *req) {
     }
 
     //_auth_error:
+    response_set_common_headers(req, "no-store");
     httpd_resp_set_status(req, "401"); // Unauthorized
     char *unauthorized = "401 Unauthorized - Configured to only accept connections from hotspot devices";
     httpd_resp_send(req, unauthorized, strlen(unauthorized));
@@ -949,6 +990,7 @@ static esp_err_t check_auth(httpd_req_t *req) {
 static esp_err_t log_get_handler(httpd_req_t *req) {
     if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
 
+    response_set_common_headers(req, "no-store");
     httpd_resp_set_type(req, "text/plain");
 
     size_t length;
@@ -971,10 +1013,12 @@ static esp_err_t core_dump_get_handler(httpd_req_t *req) {
 
     size_t core_dump_size = core_dump_available();
     if (core_dump_size == 0) {
+        response_set_common_headers(req, "no-store");
         httpd_resp_sendstr(req, "No core dump available");
         return ESP_OK;
     }
 
+    response_set_common_headers(req, "no-store");
     httpd_resp_set_type(req, "application/octet-stream");
 
     const esp_app_desc_t *app_desc = esp_app_get_description();
@@ -983,12 +1027,12 @@ static esp_err_t core_dump_get_handler(httpd_req_t *req) {
     esp_app_get_elf_sha256(elf_sha256, sizeof(elf_sha256));
 
     time_t t = time(NULL);
-    char date[20] = "\0";
+    char date[20] = " ";
     if (t > 315360000l) strftime(date, sizeof(date), "_%F_%T", localtime(&t));
 
     char content_disposition[128];
     snprintf(content_disposition, sizeof(content_disposition),
-            "attachment; filename=\"esp32_rtk_gateway_%s_core_dump_%s%s.bin\"", app_desc->version, elf_sha256, date);
+            "attachment; filename="esp32_rtk_gateway_%s_core_dump_%s%s.bin"", app_desc->version, elf_sha256, date);
     httpd_resp_set_hdr(req, "Content-Disposition", content_disposition);
 
     for (int offset = 0; offset < core_dump_size; offset += BUFFER_SIZE) {
@@ -996,10 +1040,18 @@ static esp_err_t core_dump_get_handler(httpd_req_t *req) {
         if (read > BUFFER_SIZE) read = BUFFER_SIZE;
 
         core_dump_read(offset, buffer, read);
-        httpd_resp_send_chunk(req, buffer, read);
+        esp_err_t err = httpd_resp_send_chunk(req, buffer, read);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "Core dump transfer interrupted at offset %d: %s", offset, esp_err_to_name(err));
+            (void)httpd_resp_send_chunk(req, NULL, 0);
+            return ESP_OK;
+        }
     }
 
-    httpd_resp_send_chunk(req, NULL, 0);
+    esp_err_t err = httpd_resp_send_chunk(req, NULL, 0);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Core dump transfer finalization interrupted: %s", esp_err_to_name(err));
+    }
 
     return ESP_OK;
 }
@@ -1088,6 +1140,7 @@ static esp_err_t file_get_handler(httpd_req_t *req) {
         httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
     }
 
+    response_set_common_headers(req, static_cache_control_for_file(file_name));
     set_content_type_from_file(req, file_name);
 
     if (stat(file_path, &file_stat) == -1) {
@@ -1097,7 +1150,7 @@ static esp_err_t file_get_handler(httpd_req_t *req) {
 
     strcpy(file_hash_path, file_path);
     strcpy(&file_hash_path[strlen(file_hash_path)], FILE_HASH_SUFFIX);
-    char etag[8 + 2 + 1] = ""; // Store CRC32, quotes and \0
+    char etag[8 + 2 + 1] = ""; // Store CRC32, quotes and  
     if (file_check_etag_hash(req, file_hash_path, etag, sizeof(etag)) == ESP_OK) {
         httpd_resp_set_status(req, "304 Not Modified");
         httpd_resp_send(req, NULL, 0);
@@ -1106,7 +1159,7 @@ static esp_err_t file_get_handler(httpd_req_t *req) {
 
     if (strlen(etag) > 0) httpd_resp_set_hdr(req, "ETag", etag);
 
-    fd = fopen(file_path, "r");
+    fd = fopen(file_path, "rb");
     if (fd == NULL) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Could not read file");
         return ESP_FAIL;
@@ -1116,41 +1169,42 @@ static esp_err_t file_get_handler(httpd_req_t *req) {
 
     size_t length;
     uint32_t crc = 0;
+    bool transfer_interrupted = false;
 
-    do {
-        length = fread(buffer, 1, BUFFER_SIZE, fd);
-
-        // Check for client disconnect *before* sending
+    while ((length = fread(buffer, 1, BUFFER_SIZE, fd)) > 0) {
         if (httpd_req_to_sockfd(req) < 0) {
-            ESP_LOGW(TAG, "Client disconnected during file transfer %s", file_name);
-            fclose(fd);
-            // If hash was partially calculated, you might want to delete it.
-            if(crc != 0) remove(file_hash_path);
-            return ESP_FAIL; // Or some other appropriate error handling
+            ESP_LOGW(TAG, "Client disconnected before completing file transfer %s", file_name);
+            transfer_interrupted = true;
+            break;
         }
 
-        if (httpd_resp_send_chunk(req, buffer, length) != ESP_OK) {
-            ESP_LOGW(TAG, "Client disconnected while sending %s", file_name);
-            fclose(fd);
-            return ESP_FAIL;
+        esp_err_t err = httpd_resp_send_chunk(req, buffer, length);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "Static file transfer interrupted for %s: %s", file_name, esp_err_to_name(err));
+            transfer_interrupted = true;
+            break;
         }
 
         crc = crc32_port(crc, (const uint8_t *)buffer, length);
-
-    } while (length != 0);
+    }
 
     fclose(fd);
 
-    fd_hash = fopen(file_hash_path, "w");
-    if (fd_hash != NULL) {
-        fwrite(&crc, sizeof(crc), 1, fd_hash);
-        fclose(fd_hash);
-    } else {
-        ESP_LOGW(TAG, "Could not open hash file %s for writing: %d %s", file_hash_path, errno, strerror(errno));
+    if (!transfer_interrupted) {
+        fd_hash = fopen(file_hash_path, "w");
+        if (fd_hash != NULL) {
+            fwrite(&crc, sizeof(crc), 1, fd_hash);
+            fclose(fd_hash);
+        } else {
+            ESP_LOGW(TAG, "Could not open hash file %s for writing: %d %s", file_hash_path, errno, strerror(errno));
+        }
     }
 
-    // Finish sending the response
-    httpd_resp_send_chunk(req, NULL, 0); // Important: Send the final zero-length chunk
+    esp_err_t err = httpd_resp_send_chunk(req, NULL, 0);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Static file response finalization interrupted for %s: %s", file_name, esp_err_to_name(err));
+    }
+
     return ESP_OK;
 }
 
@@ -2236,6 +2290,7 @@ static httpd_handle_t web_server_start(void)
     config.max_uri_handlers = WEB_SERVER_MAX_URI_HANDLERS;
     config.max_open_sockets = WEB_SERVER_MAX_OPEN_SOCKETS;
     config.lru_purge_enable = true;
+    config.keep_alive_enable = false;
 
     // Start the httpd server
     ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);

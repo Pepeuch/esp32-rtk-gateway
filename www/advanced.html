@@ -32,6 +32,12 @@
             var selftestStatus = $('.selftest-status');
             var currentQosState = 'normal';
 
+            var fetchJson = async function(url, options) {
+                var response = await fetch(url, Object.assign({cache: 'no-store'}, options || {}));
+                if (!response.ok) throw new Error('HTTP ' + response.status + ' for ' + url);
+                return response.json();
+            };
+
             var pollDelayForQos = function(state) {
                 if (state === 'critical') return 12000;
                 if (state === 'degraded') return 8000;
@@ -123,42 +129,57 @@
                 });
             };
 
-            var refreshAdvanced = function() {
-                $.getJSON('api/ntrip/runtime').done(function(data) {
-                    if (data && data.runtime && data.runtime.qos_state) {
-                        currentQosState = data.runtime.qos_state;
+            var refreshAdvanced = async function() {
+                try {
+                    var runtime = await fetchJson('api/ntrip/runtime');
+                    if (runtime && runtime.runtime && runtime.runtime.qos_state) {
+                        currentQosState = runtime.runtime.qos_state;
                     }
-                    renderRuntime(data);
+                    renderRuntime(runtime);
 
-                    $.getJSON('api/gnss/diagnostics').done(renderDiagnostics);
-                    $.getJSON('api/gnss/satellites').done(renderSatellites);
+                    try {
+                        renderDiagnostics(await fetchJson('api/gnss/diagnostics'));
+                    } catch (error) {
+                        gnssDiagnostics.text('GNSS diagnostics unavailable');
+                    }
+
+                    try {
+                        renderSatellites(await fetchJson('api/gnss/satellites'));
+                    } catch (error) {
+                        gnssSatelliteStatus.text('Satellites unavailable');
+                        gnssSatellites.empty();
+                    }
 
                     if (currentQosState === 'critical') {
                         rawConsole.val('Raw console disabled while QoS is critical');
                         $('#fake-rtcm-start, #selftest-start').prop('disabled', true);
                     } else {
                         $('#fake-rtcm-start, #selftest-start').prop('disabled', false);
-                        $.getJSON('api/gnss/receiver/raw').done(function(data) {
-                            rawConsole.val(data && data.raw ? data.raw : '');
-                        }).fail(function() {
+                        try {
+                            var rawData = await fetchJson('api/gnss/receiver/raw');
+                            rawConsole.val(rawData && rawData.raw ? rawData.raw : '');
+                        } catch (error) {
                             rawConsole.val('Raw console unavailable');
-                        });
+                        }
                     }
-                }).always(function() {
+                } catch (error) {
+                    ntripRuntime.text('NTRIP runtime unavailable');
+                } finally {
                     setTimeout(refreshAdvanced, pollDelayForQos(currentQosState));
-                });
+                }
             };
 
-            var refreshSelftest = function() {
+            var refreshSelftest = async function() {
                 if (currentQosState === 'critical') {
                     selftestStatus.text('Self-test result polling paused while QoS is critical');
                     return;
                 }
-                $.getJSON('api/dev/ntrip/selftest/result').done(function(data) {
+                try {
+                    var data = await fetchJson('api/dev/ntrip/selftest/result');
                     selftestStatus.text(JSON.stringify(data || {}, null, 2));
-                }).fail(function() {
+                } catch (error) {
                     selftestStatus.text('Self-test result unavailable');
-                });
+                }
             };
 
             $('#fake-rtcm-start').on('click', function() {
@@ -183,8 +204,8 @@
 
             $('#selftest-refresh').on('click', refreshSelftest);
 
+            selftestStatus.text('Click refresh to query the latest self-test result.');
             refreshAdvanced();
-            refreshSelftest();
         });
     </script>
 </head>
