@@ -1,6 +1,7 @@
 #include "eth_w5500.h"
 
 #include "config/board_config.h"
+#include "gpio_isr_helper.h"
 
 #if BOARD_ETHERNET_TYPE == BOARD_ETHERNET_TYPE_W5500
 
@@ -121,9 +122,8 @@ esp_netif_t *eth_w5500_init(void)
              BOARD_ETH_CS, BOARD_ETH_INT, BOARD_ETH_RST, W5500_CLOCK_SPEED_HZ,
              (BOARD_ETH_INT != GPIO_NUM_NC) ? "interrupt" : "poll");
 
-    ret = gpio_install_isr_service(0);
-    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
-        ESP_LOGE(TAG, "gpio_install_isr_service failed: %s", esp_err_to_name(ret));
+    ret = board_gpio_isr_service_ensure(TAG, "w5500");
+    if (ret != ESP_OK) {
         return NULL;
     }
     if (ret == ESP_ERR_INVALID_STATE) {

@@ -1,4 +1,9 @@
 idf_component_register(
+    SRCS
+        "src/gpio_isr_helper.c"
     INCLUDE_DIRS
         "include"
+    REQUIRES
+        driver
+        log
 )

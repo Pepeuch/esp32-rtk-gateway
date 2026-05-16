@@ -10,6 +10,7 @@
 
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
+#include "gpio_isr_helper.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -404,11 +405,8 @@ static esp_err_t lora_gpio_init(void)
     gpio_set_level( s_cfg.pin_nss, 1 );
     gpio_set_level( s_cfg.pin_reset, 1 );
 
-    esp_err_t err = gpio_install_isr_service( 0 );
-    if( err != ESP_OK && err != ESP_ERR_INVALID_STATE )
-    {
-        return err;
-    }
+    esp_err_t err = board_gpio_isr_service_ensure( TAG, "lora_radio" );
+    ESP_RETURN_ON_ERROR( err, TAG, "gpio isr ensure failed" );
 
     ESP_RETURN_ON_ERROR( gpio_set_intr_type( s_cfg.pin_dio1, GPIO_INTR_POSEDGE ), TAG, "set dio1 interrupt failed" );
     ESP_RETURN_ON_ERROR( gpio_isr_handler_add( s_cfg.pin_dio1, lora_dio1_isr, NULL ), TAG, "add dio1 isr failed" );
