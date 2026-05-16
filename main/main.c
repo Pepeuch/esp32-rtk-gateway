@@ -28,6 +28,7 @@
 
 #include "esp_system.h"
 #include "esp_log.h"
+#include "esp_check.h"
 #include "esp_event.h"
 #include "esp_netif.h"
 
@@ -56,6 +57,7 @@ static const char *TAG = "MAIN";
 static char *reset_reason_name(esp_reset_reason_t reason);
 static void lora_cb(lora_radio_event_t event, const uint8_t *data, size_t len, void *ctx);
 static void lora_transport_rtcm_rx_hook(const uint8_t *data, size_t len);
+static esp_err_t lora_build_default_config(lora_radio_config_t *config);
 
 static void got_ip_event_handler(void *arg, esp_event_base_t event_base,
                                  int32_t event_id, void *event_data)
@@ -104,6 +106,54 @@ static void lora_transport_rtcm_rx_hook(const uint8_t *data, size_t len)
     (void)data;
     ESP_LOGI(TAG, "LoRa RX payload received (%u bytes), RTCM hook ready", (unsigned)len);
     // TODO: brancher le transport RTCM entrant vers le pipeline GNSS.
+}
+
+static esp_err_t lora_build_default_config(lora_radio_config_t *config)
+{
+    const lora_region_profile_t *region_profile;
+    uint32_t resolved_frequency_hz = 0;
+
+    if (config == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    region_profile = lora_region_get_profile(LORA_DEFAULT_REGION);
+    if (region_profile == NULL) {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+
+    ESP_RETURN_ON_ERROR(lora_region_resolve_frequency_hz(region_profile, LORA_DEFAULT_FREQ_HZ, &resolved_frequency_hz),
+                        TAG,
+                        "failed to resolve default LoRa frequency");
+
+    *config = (lora_radio_config_t) {
+        .pin_mosi = BOARD_LORA_MOSI,
+        .pin_miso = BOARD_LORA_MISO,
+        .pin_sck = BOARD_LORA_SCK,
+        .pin_nss = BOARD_LORA_NSS,
+        .pin_reset = BOARD_LORA_RESET,
+        .pin_busy = BOARD_LORA_BUSY,
+        .pin_dio1 = BOARD_LORA_DIO1,
+        .spi_host = BOARD_LORA_SPI_HOST,
+        .spi_clock_hz = LORA_DEFAULT_SPI_CLOCK_HZ,
+        .region = LORA_DEFAULT_REGION,
+        .chip_family = LORA_DEFAULT_CHIP_FAMILY,
+        .radio_profile = LORA_DEFAULT_RADIO_PROFILE,
+        .rtcm_profile = LORA_DEFAULT_RTCM_PROFILE,
+        .frequency_hz = resolved_frequency_hz,
+        .spreading_factor = region_profile->default_spreading_factor,
+        .bandwidth_hz = region_profile->default_bandwidth_hz,
+        .coding_rate = region_profile->default_coding_rate,
+        .sync_word = LORA_DEFAULT_SYNC_WORD,
+        .preamble_len = LORA_DEFAULT_PREAMBLE_LEN,
+        .crc_on = LORA_DEFAULT_CRC_ON,
+        .invert_iq = LORA_DEFAULT_INVERT_IQ,
+        .tx_power_dbm = LORA_DEFAULT_TX_POWER_DBM,
+        .callback = lora_cb,
+        .user_ctx = NULL,
+    };
+
+    return ESP_OK;
 }
 
 void app_main(void)
@@ -196,30 +246,11 @@ void app_main(void)
     ESP_ERROR_CHECK(ntrip_runtime_init());
 
 #if BOARD_HAS_LORA_RADIO
-    lora_radio_config_t lora_cfg = {
-        .pin_mosi = BOARD_LORA_MOSI,
-        .pin_miso = BOARD_LORA_MISO,
-        .pin_sck = BOARD_LORA_SCK,
-        .pin_nss = BOARD_LORA_NSS,
-        .pin_reset = BOARD_LORA_RESET,
-        .pin_busy = BOARD_LORA_BUSY,
-        .pin_dio1 = BOARD_LORA_DIO1,
-        .spi_host = BOARD_LORA_SPI_HOST,
-        .spi_clock_hz = LORA_DEFAULT_SPI_CLOCK_HZ,
-        .frequency_hz = LORA_DEFAULT_FREQ_HZ,
-        .spreading_factor = LORA_DEFAULT_SF,
-        .bandwidth_hz = LORA_DEFAULT_BW_HZ,
-        .coding_rate = LORA_DEFAULT_CR,
-        .sync_word = LORA_DEFAULT_SYNC_WORD,
-        .preamble_len = LORA_DEFAULT_PREAMBLE_LEN,
-        .crc_on = LORA_DEFAULT_CRC_ON,
-        .invert_iq = LORA_DEFAULT_INVERT_IQ,
-        .tx_power_dbm = LORA_DEFAULT_TX_POWER_DBM,
-        .callback = lora_cb,
-        .user_ctx = NULL,
-    };
-
-    esp_err_t lora_err = lora_radio_init(&lora_cfg);
+    lora_radio_config_t lora_cfg = {0};
+    esp_err_t lora_err = lora_build_default_config(&lora_cfg);
+    if (lora_err == ESP_OK) {
+        lora_err = lora_radio_init(&lora_cfg);
+    }
     if (lora_err != ESP_OK) {
         ESP_LOGE(TAG, "LoRa init failed: %s", esp_err_to_name(lora_err));
     } else {
