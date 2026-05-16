@@ -1,5 +1,8 @@
 name: Build firmware profiles
 
+permissions:
+  contents: write
+
 on:
   workflow_dispatch:
     inputs:
@@ -95,3 +98,13 @@ jobs:
           path: |
             docs/firmware/${{ env.PROFILE }}/*.bin
             docs/manifests/${{ env.PROFILE }}.json
+
+      - name: Publish firmware to docs
+        if: github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add docs/firmware/${{ env.PROFILE }} docs/manifests/${{ env.PROFILE }}.json
+          git commit -m "ci(firmware): publish ${{ env.PROFILE }}" || echo "No firmware changes"
+          git push origin main
