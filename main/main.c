@@ -14,10 +14,10 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <web_server.h>
+#include "sdkconfig.h"
+
 #include <log.h>
 #include <status_led.h>
-#include <esp_sntp.h>
 #include <core_dump.h>
 #include <esp_ota_ops.h>
 #include <stream_stats.h>
@@ -29,39 +29,56 @@
 #include "esp_system.h"
 #include "esp_log.h"
 #include "esp_check.h"
-#include "esp_event.h"
-#include "esp_netif.h"
 
 #include "driver/uart.h"
 #include "driver/ledc.h"
 
 #include "config.h"
-#include "wifi.h"
 #include "uart.h"
-#include "interface/ntrip.h"
-#include "interface/socket_server.h"
-#include "interface/socket_client.h"
 #include "tasks.h"
-#include "network.h"
-#include "ntrip_slots.h"
-#include "ntrip_runtime.h"
-#include "receiver.h"
 #include "config/board_config.h"
 #include "board_pins.h"
 
 #include "lora_radio.h"
 #include "lora_radio_config.h"
 #include "lora_transport.h"
+
+#if CONFIG_RTK_DEVICE_ROLE_ROVER || CONFIG_RTK_DEVICE_ROLE_DUAL_DEBUG
+#include "rover_lora_pipeline.h"
+#endif
+
+#if CONFIG_RTK_DEVICE_ROLE_BASE || CONFIG_RTK_DEVICE_ROLE_DUAL_DEBUG
 #include "rtk_lora_pipeline.h"
+#endif
+
+#if CONFIG_RTK_DEVICE_ROLE_BASE || CONFIG_RTK_DEVICE_ROLE_DUAL_DEBUG
+#include <web_server.h>
+#include <esp_sntp.h>
+#include "esp_event.h"
+#include "esp_netif.h"
+#include "wifi.h"
+#include "interface/ntrip.h"
+#include "interface/socket_server.h"
+#include "interface/socket_client.h"
+#include "network.h"
+#include "ntrip_slots.h"
+#include "ntrip_runtime.h"
+#include "receiver.h"
+#endif
 
 static const char *TAG = "MAIN";
 
 static char *reset_reason_name(esp_reset_reason_t reason);
+static const char *device_role_name(void);
 static void lora_cb(lora_radio_event_t event, const uint8_t *data, size_t len, void *ctx);
 static void lora_transport_rtcm_rx_hook(const uint8_t *data, size_t len);
 static esp_err_t lora_build_default_config(lora_radio_config_t *config);
-static void rtk_lora_uart_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data);
 
+#if CONFIG_RTK_DEVICE_ROLE_BASE || CONFIG_RTK_DEVICE_ROLE_DUAL_DEBUG
+static void rtk_lora_uart_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data);
+#endif
+
+#if CONFIG_RTK_DEVICE_ROLE_BASE || CONFIG_RTK_DEVICE_ROLE_DUAL_DEBUG
 static void got_ip_event_handler(void *arg, esp_event_base_t event_base,
                                  int32_t event_id, void *event_data)
 {
@@ -75,11 +92,31 @@ static void sntp_time_set_handler(struct timeval *tv)
 {
     ESP_LOGI(TAG, "Synced time from SNTP");
 }
+#endif
+
+static const char *device_role_name(void)
+{
+#if CONFIG_RTK_DEVICE_ROLE_BASE
+    return "BASE";
+#elif CONFIG_RTK_DEVICE_ROLE_ROVER
+    return "ROVER";
+#elif CONFIG_RTK_DEVICE_ROLE_DUAL_DEBUG
+    return "DUAL_DEBUG";
+#else
+    return "UNKNOWN";
+#endif
+}
 
 static void lora_cb(lora_radio_event_t event, const uint8_t *data, size_t len, void *ctx)
 {
     (void)ctx;
+
+#if CONFIG_RTK_DEVICE_ROLE_BASE || CONFIG_RTK_DEVICE_ROLE_DUAL_DEBUG
     rtk_lora_pipeline_handle_radio_event(event, data, len);
+#endif
+#if CONFIG_RTK_DEVICE_ROLE_ROVER || CONFIG_RTK_DEVICE_ROLE_DUAL_DEBUG
+    rover_lora_pipeline_handle_radio_event(event, data, len);
+#endif
 
     switch (event) {
         case LORA_RADIO_EVENT_RX_DONE:
@@ -112,6 +149,7 @@ static void lora_transport_rtcm_rx_hook(const uint8_t *data, size_t len)
     // TODO: brancher le transport RTCM entrant vers le pipeline GNSS.
 }
 
+#if CONFIG_RTK_DEVICE_ROLE_BASE || CONFIG_RTK_DEVICE_ROLE_DUAL_DEBUG
 static void rtk_lora_uart_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
 {
     (void)handler_args;
@@ -126,6 +164,7 @@ static void rtk_lora_uart_handler(void *handler_args, esp_event_base_t base, int
         ESP_LOGW(TAG, "RTK LoRa UART feed failed: %s", esp_err_to_name(err));
     }
 }
+#endif
 
 static esp_err_t lora_build_default_config(lora_radio_config_t *config)
 {
@@ -199,9 +238,6 @@ void app_main(void)
     stream_stats_init();
 
     config_init();
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, &got_ip_event_handler, NULL));
 
     esp_reset_reason_t reset_reason = esp_reset_reason();
 
@@ -219,6 +255,7 @@ void app_main(void)
     ESP_LOGI(TAG, "║ ESP-IDF: %-35s "                            "║", app_desc->idf_ver);
     ESP_LOGI(TAG, "╟──────────────────────────────────────────────╢");
     ESP_LOGI(TAG, "║ Reset reason: %-30s "                       "║", reset_reason_name(reset_reason));
+    ESP_LOGI(TAG, "║ Device role: %-30s "                        "║", device_role_name());
     ESP_LOGI(TAG, "╟──────────────────────────────────────────────╢");
     ESP_LOGI(TAG, "║ Author: Nebojša Cvetković                    ║");
     ESP_LOGI(TAG, "║ Upgraded to v5.2.3 & ETH01: dr. Kónya Sándor ║");
@@ -253,6 +290,11 @@ void app_main(void)
         }
     }
 
+#if CONFIG_RTK_DEVICE_ROLE_BASE || CONFIG_RTK_DEVICE_ROLE_DUAL_DEBUG
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, &got_ip_event_handler, NULL));
+
     esp_netif_t *netif = NULL;
     bool eth_ready = false;
     bool wifi_ready = false;
@@ -263,6 +305,7 @@ void app_main(void)
     uart_init();
     ESP_ERROR_CHECK(receiver_init());
     ESP_ERROR_CHECK(ntrip_runtime_init());
+#endif
 
 #if BOARD_HAS_LORA_RADIO
     lora_radio_config_t lora_cfg = {0};
@@ -277,6 +320,7 @@ void app_main(void)
         if (lora_err != ESP_OK) {
             ESP_LOGE(TAG, "LoRa RX start failed: %s", esp_err_to_name(lora_err));
         } else {
+#if CONFIG_RTK_DEVICE_ROLE_BASE || CONFIG_RTK_DEVICE_ROLE_DUAL_DEBUG
             const rtk_lora_pipeline_config_t pipeline_cfg = {
                 .uart_num = BOARD_GNSS_UART_NUM,
                 .uart_rx_pin = BOARD_GNSS_UART_RX_PIN,
@@ -296,10 +340,26 @@ void app_main(void)
                     ESP_LOGE(TAG, "RTK LoRa UART handler register failed: %s", esp_err_to_name(lora_err));
                 }
             }
+#endif
+#if CONFIG_RTK_DEVICE_ROLE_ROVER || CONFIG_RTK_DEVICE_ROLE_DUAL_DEBUG
+            const rover_lora_pipeline_config_t rover_cfg = {
+                .uart_num = BOARD_GNSS_UART_NUM,
+                .uart_rx_pin = BOARD_GNSS_UART_RX_PIN,
+                .uart_tx_pin = BOARD_GNSS_UART_TX_PIN,
+                .uart_baud_rate = config_get_u32(CONF_ITEM(KEY_CONFIG_UART_BAUD_RATE)),
+                .max_lora_payload = LORA_TRANSPORT_DEFAULT_MAX_PAYLOAD,
+            };
+
+            lora_err = rover_lora_pipeline_init(&rover_cfg);
+            if (lora_err != ESP_OK) {
+                ESP_LOGE(TAG, "Rover LoRa pipeline init failed: %s", esp_err_to_name(lora_err));
+            }
+#endif
         }
     }
 #endif
 
+#if CONFIG_RTK_DEVICE_ROLE_BASE || CONFIG_RTK_DEVICE_ROLE_DUAL_DEBUG
     if (netif != NULL) {
         ESP_LOGI(TAG, "Waiting up to 3000 ms for Ethernet...");
         eth_ready = network_wait_for_ethernet_ready(3000);
@@ -340,6 +400,7 @@ wait_for_network();
     esp_sntp_set_sync_mode(SNTP_SYNC_MODE_SMOOTH);
     esp_sntp_set_time_sync_notification_cb(sntp_time_set_handler);
     esp_sntp_init();
+#endif
 
 #ifdef DEBUG_HEAP
     while (true) {

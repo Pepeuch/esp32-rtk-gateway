@@ -203,6 +203,26 @@ Longer-term exploration:
 - extended telemetry and logging backends
 - more workflow-oriented field tools for rover and base deployments
 
+## TODO — LoRa RTK roles
+
+### Base mode
+- [x] Add LoRa regional profiles
+- [x] Add SX126x radio layer
+- [x] Add RTCM3 filter
+- [x] Add RTCM LoRa fragmentation
+- [x] Wire GNSS UART -> RTCM filter -> LoRa TX pipeline
+
+### Rover mode
+- [x] Add build-time ROVER role
+- [x] Add LoRa RX -> RTCM reassembly -> GNSS UART output pipeline
+- [ ] Test on ESP32-C3 hardware
+- [ ] Split rover firmware into a smaller dedicated repo if needed
+- [ ] Add minimal sdkconfig defaults for ESP32-C3 rover
+- [ ] Remove unused dependencies from rover build completely
+- [ ] Add ACK/retry or loss statistics
+- [ ] Add duty-cycle manager
+- [ ] Add RTCM profile selection per region
+
 ## Legacy Notes
 
 This project has evolved through several phases:

@@ -18,3 +18,27 @@ config BOARD_GENERIC_ESP32_ETH
     bool "Generic ESP32 ETH"
 
 endchoice
+
+choice RTK_DEVICE_ROLE
+    prompt "RTK device role"
+    default RTK_DEVICE_ROLE_BASE
+
+config RTK_DEVICE_ROLE_BASE
+    bool "BASE"
+    help
+        Build the RTK base pipeline: GNSS UART input, RTCM filtering,
+        LoRa fragmentation/transmit, and network or storage features if available.
+
+config RTK_DEVICE_ROLE_ROVER
+    bool "ROVER"
+    help
+        Build the RTK rover pipeline: LoRa receive/reassembly and GNSS UART output only.
+        Ethernet, SD, web server, and NTRIP features stay disabled.
+
+config RTK_DEVICE_ROLE_DUAL_DEBUG
+    bool "DUAL_DEBUG"
+    help
+        Build both pipelines for ESP32-S3 debug and loop testing.
+        Intended for development use rather than deployment.
+
+endchoice

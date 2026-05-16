@@ -1,0 +1,11 @@
+idf_component_register(
+    SRCS
+        "src/rover_lora_pipeline.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        driver
+        lora_radio
+        lora_transport
+        rtcm_filter
+)
