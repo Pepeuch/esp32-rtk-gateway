@@ -466,6 +466,24 @@ footer {
     padding-bottom: 24px;
 }
 
+.panel-hidden {
+    display: none !important;
+}
+
+.component-note {
+    font-size: 0.9rem;
+    color: #52606d;
+}
+
+.lora-readonly-info {
+    min-height: 38px;
+    padding-top: 6px;
+}
+
+.config-page-nav a[aria-current="page"] {
+    box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08);
+}
+
 @media (max-width: 720px) {
     .container,
     .container-fluid {

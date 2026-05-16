@@ -51,6 +51,8 @@
 #define crc32_port esp_rom_crc32_le
 #endif
 
+static void response_set_common_headers(httpd_req_t *req, const char *cache_control);
+
 static esp_err_t captive_404_handler(httpd_req_t *req, httpd_err_code_t err)
 {
     response_set_common_headers(req, "no-store");
@@ -68,6 +70,8 @@ static esp_err_t captive_404_handler(httpd_req_t *req, httpd_err_code_t err)
 #define BUFFER_SIZE 2048
 #define WEB_SERVER_MAX_URI_HANDLERS 64
 #define WEB_SERVER_MAX_OPEN_SOCKETS 6
+#define IS_FILE_EXT(filename, ext) \
+    (strcasecmp(&filename[strlen(filename) - sizeof(ext) + 1], ext) == 0)
 
 static const char *TAG = "WEB";
 
@@ -82,7 +86,6 @@ static void qos_json_fill(cJSON *root, const ntrip_runtime_info_t *info);
 static bool qos_reject_optional_request(httpd_req_t *req, const char *feature);
 static void memory_json_fill(cJSON *root);
 static void buffer_summary_json_fill(cJSON *root);
-static void response_set_common_headers(httpd_req_t *req, const char *cache_control);
 static const char *static_cache_control_for_file(const char *filename);
 
 static void response_set_common_headers(httpd_req_t *req, const char *cache_control)
@@ -173,9 +176,6 @@ enum auth_method {
 
 static char *basic_authentication;
 static enum auth_method auth_method;
-
-#define IS_FILE_EXT(filename, ext) \
-    (strcasecmp(&filename[strlen(filename) - sizeof(ext) + 1], ext) == 0)
 
 static esp_err_t www_spiffs_init() {
     ESP_LOGD(TAG, "Initializing SPIFFS");
@@ -379,8 +379,22 @@ static void capabilities_json_fill(cJSON *cap)
     cJSON_AddBoolToObject(cap, "wifi_only", capabilities.wifi_only);
     cJSON_AddBoolToObject(cap, "advanced_diagnostics", capabilities.advanced_diagnostics);
     cJSON_AddBoolToObject(cap, "safe_mode", capabilities.safe_mode);
+    cJSON_AddBoolToObject(cap, "has_lora_radio", capabilities.has_lora_radio);
     cJSON_AddNumberToObject(cap, "max_ntrip_slots", capabilities.max_ntrip_slots);
     cJSON_AddNumberToObject(cap, "configured_ntrip_slots", capabilities.configured_ntrip_slots);
+    cJSON_AddStringToObject(cap, "device_role", capabilities.device_role);
+
+    cJSON *lora = cJSON_AddObjectToObject(cap, "lora");
+    cJSON_AddBoolToObject(lora, "supported", capabilities.has_lora_radio);
+    cJSON_AddStringToObject(lora, "region", capabilities.lora_region);
+    cJSON_AddStringToObject(lora, "chip_family", capabilities.lora_chip_family);
+    cJSON_AddStringToObject(lora, "radio_profile", capabilities.lora_radio_profile);
+    cJSON_AddStringToObject(lora, "rtcm_profile", capabilities.lora_rtcm_profile);
+    cJSON_AddStringToObject(lora, "duty_cycle_policy", capabilities.lora_duty_cycle_policy);
+    cJSON_AddNumberToObject(lora, "frequency_hz", capabilities.lora_frequency_hz);
+    cJSON_AddNumberToObject(lora, "tx_power_dbm", capabilities.lora_tx_power_dbm);
+    cJSON_AddNumberToObject(lora, "duty_cycle_window_s", capabilities.lora_duty_cycle_window_s);
+    cJSON_AddNumberToObject(lora, "max_airtime_per_window_ms", capabilities.lora_max_airtime_per_window_ms);
 
     cJSON *memory = cJSON_AddObjectToObject(cap, "memory");
     cJSON_AddNumberToObject(memory, "heap_total_bytes", capabilities.heap_total_bytes);
@@ -1027,12 +1041,13 @@ static esp_err_t core_dump_get_handler(httpd_req_t *req) {
     esp_app_get_elf_sha256(elf_sha256, sizeof(elf_sha256));
 
     time_t t = time(NULL);
-    char date[20] = " ";
+    char date[20] = "";
     if (t > 315360000l) strftime(date, sizeof(date), "_%F_%T", localtime(&t));
 
     char content_disposition[128];
     snprintf(content_disposition, sizeof(content_disposition),
-            "attachment; filename="esp32_rtk_gateway_%s_core_dump_%s%s.bin"", app_desc->version, elf_sha256, date);
+            "attachment; filename=\"esp32_rtk_gateway_%s_core_dump_%s%s.bin\"",
+            app_desc->version, elf_sha256, date);
     httpd_resp_set_hdr(req, "Content-Disposition", content_disposition);
 
     for (int offset = 0; offset < core_dump_size; offset += BUFFER_SIZE) {
