@@ -4,6 +4,8 @@
 
 #if BOARD_ETHERNET_TYPE == BOARD_ETHERNET_TYPE_W5500
 
+#include <inttypes.h>
+
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "esp_eth.h"
@@ -13,9 +15,46 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_mac.h"
+#include "esp_eth_netif_glue.h"
 #include "network_state.h"
 
 static const char *TAG = "ETH_W5500";
+static const int W5500_CLOCK_SPEED_HZ = 12 * 1000 * 1000;
+
+static void cleanup_w5500_partial(esp_netif_t *netif,
+                                  esp_eth_netif_glue_handle_t netif_glue,
+                                  esp_eth_handle_t eth_handle,
+                                  esp_eth_mac_t *mac,
+                                  esp_eth_phy_t *phy,
+                                  bool spi_bus_initialized)
+{
+    if (netif_glue != NULL) {
+        esp_eth_del_netif_glue(netif_glue);
+    }
+    if (netif != NULL) {
+        esp_netif_destroy(netif);
+    }
+    if (eth_handle != NULL) {
+        esp_err_t err = esp_eth_driver_uninstall(eth_handle);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "esp_eth_driver_uninstall failed during cleanup: %s", esp_err_to_name(err));
+        }
+    } else {
+        if (mac != NULL && mac->del != NULL) {
+            mac->del(mac);
+        }
+        if (phy != NULL && phy->del != NULL) {
+            phy->del(phy);
+        }
+    }
+    if (spi_bus_initialized) {
+        esp_err_t err = spi_bus_free(BOARD_ETH_SPI_HOST);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "spi_bus_free failed during cleanup: %s", esp_err_to_name(err));
+        }
+    }
+    network_state_reset_ethernet();
+}
 
 static void eth_got_ip_event_handler(void *arg, esp_event_base_t event_base,
                                      int32_t event_id, void *event_data)
@@ -71,13 +110,36 @@ esp_netif_t *eth_w5500_init(void)
     esp_eth_handle_t eth_handle = NULL;
     esp_eth_mac_t *mac = NULL;
     esp_eth_phy_t *phy = NULL;
+    esp_eth_netif_glue_handle_t netif_glue = NULL;
+    esp_netif_t *netif = NULL;
     esp_err_t ret;
+    bool spi_bus_initialized = false;
 
-    ESP_LOGI(TAG, "Initializing W5500 Ethernet for ESP32-S3...");
+    ESP_LOGI(TAG, "Initializing W5500 Ethernet");
+    ESP_LOGI(TAG, "W5500 config: spi_host=%d mosi=%d miso=%d sclk=%d cs=%d int=%d rst=%d clock_hz=%d mode=%s",
+             BOARD_ETH_SPI_HOST, BOARD_ETH_MOSI, BOARD_ETH_MISO, BOARD_ETH_SCLK,
+             BOARD_ETH_CS, BOARD_ETH_INT, BOARD_ETH_RST, W5500_CLOCK_SPEED_HZ,
+             (BOARD_ETH_INT != GPIO_NUM_NC) ? "interrupt" : "poll");
 
     ret = gpio_install_isr_service(0);
     if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
         ESP_LOGE(TAG, "gpio_install_isr_service failed: %s", esp_err_to_name(ret));
+        return NULL;
+    }
+    if (ret == ESP_ERR_INVALID_STATE) {
+        ESP_LOGI(TAG, "GPIO ISR service already installed");
+    }
+
+    if (BOARD_ETH_SPI_HOST != SPI2_HOST && BOARD_ETH_SPI_HOST != SPI3_HOST) {
+        ESP_LOGE(TAG, "Unsupported SPI host for W5500: %d", BOARD_ETH_SPI_HOST);
+        return NULL;
+    }
+    if (BOARD_ETH_MOSI < 0 || BOARD_ETH_MISO < 0 || BOARD_ETH_SCLK < 0 || BOARD_ETH_CS < 0) {
+        ESP_LOGE(TAG, "Invalid W5500 SPI pin configuration");
+        return NULL;
+    }
+    if (BOARD_ETH_RST < 0) {
+        ESP_LOGE(TAG, "Invalid W5500 reset GPIO: %d", BOARD_ETH_RST);
         return NULL;
     }
 
@@ -88,7 +150,11 @@ esp_netif_t *eth_w5500_init(void)
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type = GPIO_INTR_DISABLE
     };
-    ESP_ERROR_CHECK(gpio_config(&rst_gpio_conf));
+    ret = gpio_config(&rst_gpio_conf);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "gpio_config(reset) failed: %s", esp_err_to_name(ret));
+        return NULL;
+    }
 
     gpio_set_level(BOARD_ETH_RST, 0);
     vTaskDelay(pdMS_TO_TICKS(100));
@@ -105,19 +171,24 @@ esp_netif_t *eth_w5500_init(void)
     };
 
     ret = spi_bus_initialize(BOARD_ETH_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO);
+    ESP_LOGI(TAG, "spi_bus_initialize(host=%d) -> %s", BOARD_ETH_SPI_HOST, esp_err_to_name(ret));
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "spi_bus_initialize failed: %s", esp_err_to_name(ret));
         return NULL;
     }
+    spi_bus_initialized = true;
 
     spi_device_interface_config_t devcfg = {
         .command_bits = 16,
         .address_bits = 8,
         .mode = 0,
-        .clock_speed_hz = 12 * 1000 * 1000,
+        .clock_speed_hz = W5500_CLOCK_SPEED_HZ,
         .spics_io_num = BOARD_ETH_CS,
         .queue_size = 20,
     };
+
+    ESP_LOGI(TAG, "spi_bus_add_device will be handled by esp_eth_mac_new_w5500 using host=%d cs=%d clock_hz=%d",
+             BOARD_ETH_SPI_HOST, BOARD_ETH_CS, devcfg.clock_speed_hz);
 
     eth_mac_config_t mac_config = ETH_MAC_DEFAULT_CONFIG();
     mac_config.rx_task_stack_size = 4096;
@@ -127,22 +198,33 @@ esp_netif_t *eth_w5500_init(void)
     phy_config.reset_gpio_num = BOARD_ETH_RST;
 
     eth_w5500_config_t w5500_config = ETH_W5500_DEFAULT_CONFIG(BOARD_ETH_SPI_HOST, &devcfg);
-    w5500_config.int_gpio_num = BOARD_ETH_INT;
-    w5500_config.poll_period_ms = 100;
+    if (BOARD_ETH_INT != GPIO_NUM_NC) {
+        w5500_config.int_gpio_num = BOARD_ETH_INT;
+        w5500_config.poll_period_ms = 0;
+    } else {
+        w5500_config.int_gpio_num = -1;
+        w5500_config.poll_period_ms = 100;
+    }
+
+    ESP_LOGI(TAG, "W5500 IRQ config: int_gpio=%d poll_period_ms=%" PRIu32,
+             w5500_config.int_gpio_num, w5500_config.poll_period_ms);
 
     mac = esp_eth_mac_new_w5500(&w5500_config, &mac_config);
     phy = esp_eth_phy_new_w5500(&phy_config);
 
     if (mac == NULL || phy == NULL) {
         ESP_LOGE(TAG, "Failed to create W5500 MAC/PHY");
+        cleanup_w5500_partial(NULL, NULL, NULL, mac, phy, spi_bus_initialized);
         return NULL;
     }
 
     esp_eth_config_t eth_config = ETH_DEFAULT_CONFIG(mac, phy);
 
     ret = esp_eth_driver_install(&eth_config, &eth_handle);
+    ESP_LOGI(TAG, "esp_eth_driver_install -> %s", esp_err_to_name(ret));
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "esp_eth_driver_install failed: %s", esp_err_to_name(ret));
+        cleanup_w5500_partial(NULL, NULL, NULL, mac, phy, spi_bus_initialized);
         return NULL;
     }
 
@@ -157,6 +239,7 @@ esp_netif_t *eth_w5500_init(void)
     ret = esp_eth_ioctl(eth_handle, ETH_CMD_S_MAC_ADDR, eth_mac_addr);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to set Ethernet MAC address: %s", esp_err_to_name(ret));
+        cleanup_w5500_partial(NULL, NULL, eth_handle, NULL, NULL, spi_bus_initialized);
         return NULL;
     }
 
@@ -169,15 +252,24 @@ esp_netif_t *eth_w5500_init(void)
     }
 
     esp_netif_config_t netif_config = ESP_NETIF_DEFAULT_ETH();
-    esp_netif_t *netif = esp_netif_new(&netif_config);
+    netif = esp_netif_new(&netif_config);
     if (netif == NULL) {
         ESP_LOGE(TAG, "esp_netif_new failed");
+        cleanup_w5500_partial(NULL, NULL, eth_handle, NULL, NULL, spi_bus_initialized);
         return NULL;
     }
 
-    ret = esp_netif_attach(netif, esp_eth_new_netif_glue(eth_handle));
+    netif_glue = esp_eth_new_netif_glue(eth_handle);
+    if (netif_glue == NULL) {
+        ESP_LOGE(TAG, "esp_eth_new_netif_glue failed");
+        cleanup_w5500_partial(netif, NULL, eth_handle, NULL, NULL, spi_bus_initialized);
+        return NULL;
+    }
+
+    ret = esp_netif_attach(netif, netif_glue);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "esp_netif_attach failed: %s", esp_err_to_name(ret));
+        cleanup_w5500_partial(netif, netif_glue, eth_handle, NULL, NULL, spi_bus_initialized);
         return NULL;
     }
 
@@ -187,7 +279,7 @@ esp_netif_t *eth_w5500_init(void)
     ret = esp_eth_start(eth_handle);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "W5500 Ethernet start failed: %s", esp_err_to_name(ret));
-        esp_netif_destroy(netif);
+        cleanup_w5500_partial(netif, netif_glue, eth_handle, NULL, NULL, spi_bus_initialized);
         return NULL;
     }
 
