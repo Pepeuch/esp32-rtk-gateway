@@ -172,15 +172,24 @@ static bool uart_log_forward = false;
 static stream_stats_handle_t stream_stats;
 
 static void uart_task(void *ctx);
+static int uart_pin_from_config(uint8_t pin)
+{
+    return pin == 255 ? UART_PIN_NO_CHANGE : (int) pin;
+}
 
 void uart_init() {
     uart_log_forward = config_get_bool1(CONF_ITEM(KEY_CONFIG_UART_LOG_FORWARD));
-
     uart_port = config_get_u8(CONF_ITEM(KEY_CONFIG_UART_NUM));
+    uint8_t tx_pin_raw = config_get_u8(CONF_ITEM(KEY_CONFIG_UART_TX_PIN));
+    uint8_t rx_pin_raw = config_get_u8(CONF_ITEM(KEY_CONFIG_UART_RX_PIN));
+
+    uint8_t rts_pin_raw = config_get_u8(CONF_ITEM(KEY_CONFIG_UART_RTS_PIN));
+    uint8_t cts_pin_raw = config_get_u8(CONF_ITEM(KEY_CONFIG_UART_CTS_PIN));
 
     uart_hw_flowcontrol_t flow_ctrl;
-    bool flow_ctrl_rts = config_get_bool1(CONF_ITEM(KEY_CONFIG_UART_FLOW_CTRL_RTS));
-    bool flow_ctrl_cts = config_get_bool1(CONF_ITEM(KEY_CONFIG_UART_FLOW_CTRL_CTS));
+    bool flow_ctrl_rts = config_get_bool1(CONF_ITEM(KEY_CONFIG_UART_FLOW_CTRL_RTS)) && rts_pin_raw != 255;
+    bool flow_ctrl_cts = config_get_bool1(CONF_ITEM(KEY_CONFIG_UART_FLOW_CTRL_CTS)) && cts_pin_raw != 255;
+
     if (flow_ctrl_rts && flow_ctrl_cts) {
         flow_ctrl = UART_HW_FLOWCTRL_CTS_RTS;
     } else if (flow_ctrl_rts) {
@@ -198,13 +207,14 @@ void uart_init() {
             .stop_bits = config_get_i8(CONF_ITEM(KEY_CONFIG_UART_STOP_BITS)),
             .flow_ctrl = flow_ctrl
     };
+
     ESP_ERROR_CHECK(uart_param_config(uart_port, &uart_config));
     ESP_ERROR_CHECK(uart_set_pin(
             uart_port,
-            config_get_u8(CONF_ITEM(KEY_CONFIG_UART_TX_PIN)),
-            config_get_u8(CONF_ITEM(KEY_CONFIG_UART_RX_PIN)),
-            config_get_u8(CONF_ITEM(KEY_CONFIG_UART_RTS_PIN)),
-            config_get_u8(CONF_ITEM(KEY_CONFIG_UART_CTS_PIN))
+            uart_pin_from_config(tx_pin_raw),
+            uart_pin_from_config(rx_pin_raw),
+            uart_pin_from_config(rts_pin_raw),
+            uart_pin_from_config(cts_pin_raw)
     ));
     ESP_ERROR_CHECK(uart_driver_install(uart_port, UART_BUFFER_SIZE, UART_BUFFER_SIZE, 0, NULL, 0));
 

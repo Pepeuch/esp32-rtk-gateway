@@ -175,8 +175,6 @@ Development and validation endpoints are also present for fake RTCM, runtime moc
   - raw console, self-test, fake RTCM, deep diagnostics
 - `/log.html`
   - device log view
-- `/setup.html`
-  - hardware setup wizard and capability guidance
 
 ## Default UART Pinout
 
