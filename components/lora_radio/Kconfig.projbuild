@@ -1,5 +1,12 @@
 menu "LoRa Radio"
 
+config LORA_FEATURE_ENABLED
+    bool "Enable LoRa radio feature"
+    default y
+    help
+        Build-time enable for the LoRa radio path. Disable this for profiles
+        that keep the hardware idle and do not expose LoRa UI/runtime features.
+
 choice LORA_REGION
     prompt "LoRa region"
     default LORA_REGION_EU868

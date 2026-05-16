@@ -325,7 +325,7 @@
 
             <div class="actions">
               <button id="compile-button" type="button">Compiler</button>
-              <button id="download-button" class="secondary" type="button">Télécharger le manifest</button>
+              <button id="download-button" class="secondary" type="button">Télécharger le profil</button>
             </div>
 
             <div id="status" class="status">En attente de sélection.</div>
@@ -354,6 +354,7 @@
           <div class="card-header">Profil détecté</div>
           <div class="card-body">
             <div class="pill-row" id="profile-pills"></div>
+            <div id="profile-json" class="manifest-box" style="margin-top: 14px;">{}</div>
           </div>
         </section>
       </aside>
@@ -361,6 +362,8 @@
   </div>
 
   <script>
+    const workflowUrl = 'https://github.com/Pepeuch/esp32-rtk-gateway/actions/workflows/build-firmware-profiles.yml';
+
     const fields = {
       chip: document.querySelector('#chip'),
       board: document.querySelector('#board'),
@@ -380,46 +383,51 @@
     const manifestUrlEl = document.querySelector('#manifest-url');
     const compileButton = document.querySelector('#compile-button');
     const downloadButton = document.querySelector('#download-button');
+    const profileJsonEl = document.querySelector('#profile-json');
 
     const boardRules = {
       generic_esp32_eth: {
         chip: 'esp32',
-        ethernet: 'lan8720',
-        psram: 'none',
+        defaultEthernet: 'lan8720',
+        defaultPsram: 'none',
         defaultFlash: '4mb',
+        supportsLora: false,
       },
       waveshare_esp32s3_eth: {
         chip: 'esp32s3',
-        ethernet: 'w5500',
-        psram: '8mb',
+        defaultEthernet: 'w5500',
+        defaultPsram: '8mb',
         defaultFlash: '16mb',
+        supportsLora: true,
       },
       mammotion_esp32s3: {
         chip: 'esp32s3',
-        ethernet: 'none',
-        psram: '8mb',
+        defaultEthernet: 'none',
+        defaultPsram: '8mb',
         defaultFlash: '16mb',
+        supportsLora: true,
       },
     };
 
-    function currentConfig() {
+    function currentProfile() {
       return Object.fromEntries(Object.entries(fields).map(([key, field]) => [key, field.value]));
     }
 
-    function firmwareId(config) {
+    function firmwareId(profile) {
       return [
-        config.board,
-        config.role,
-        config.region.toLowerCase(),
-        config.gnss,
-        config.lora,
-        config.flash,
-        config.psram,
+        profile.board,
+        profile.role,
+        profile.region.toLowerCase(),
+        profile.gnss,
+        profile.lora,
+        profile.ethernet,
+        profile.flash,
+        profile.psram,
       ].join('-');
     }
 
-    function manifestPath(config) {
-      return `manifests/${firmwareId(config)}.json`;
+    function manifestPath(profile) {
+      return `manifests/${firmwareId(profile)}.json`;
     }
 
     function setStatus(text, kind = '') {
@@ -447,101 +455,168 @@
     function syncBoardDefaults() {
       const rule = boardRules[fields.board.value];
       if (!rule) return;
+
       fields.chip.value = rule.chip;
-      fields.ethernet.value = rule.ethernet;
-      fields.psram.value = rule.psram;
+      if (fields.role.value === 'rover') {
+        fields.ethernet.value = 'none';
+      } else if (!fields.ethernet.dataset.userTouched) {
+        fields.ethernet.value = rule.defaultEthernet;
+      }
+      if (!fields.psram.dataset.userTouched) {
+        fields.psram.value = rule.defaultPsram;
+      }
       fields.flash.value = rule.defaultFlash;
+      if (!rule.supportsLora) {
+        fields.lora.value = 'none';
+      } else if (!fields.lora.dataset.userTouched && fields.lora.value === 'none') {
+        fields.lora.value = 'sx126x';
+      }
     }
 
-    function validate(config) {
-      if (config.lora === 'sx126x' && config.region === 'CUSTOM') {
-        return 'Région CUSTOM sélectionnée : il faudra un manifest/firmware custom explicite.';
+    function applyUiRules() {
+      const rule = boardRules[fields.board.value];
+      const messages = [];
+
+      fields.chip.value = rule.chip;
+      fields.chip.disabled = true;
+
+      if (fields.role.value === 'rover') {
+        fields.ethernet.value = 'none';
+        messages.push('Profil rover: Ethernet est forcé à none pour un firmware minimal.');
       }
-      if (config.role === 'rover' && config.ethernet !== 'none') {
-        return 'Rover minimal : Ethernet devrait normalement être désactivé.';
+
+      if (!rule.supportsLora) {
+        fields.lora.value = 'none';
+        fields.lora.disabled = true;
+        messages.push('Cette board ne déclare pas de radio LoRa: le profil LoRa est forcé à none.');
+      } else {
+        fields.lora.disabled = false;
       }
-      return '';
+
+      fields.ethernet.disabled = fields.role.value === 'rover';
+
+      if (fields.lora.value === 'none') {
+        fields.region.title = 'La région reste disponible pour les choix GNSS/RTCM même si LoRa est désactivé.';
+      } else {
+        fields.region.title = '';
+      }
+
+      return messages;
+    }
+
+    function validate(profile) {
+      const messages = [];
+      const rule = boardRules[profile.board];
+
+      if (rule && profile.chip !== rule.chip) {
+        messages.push(`La board ${profile.board} impose ${rule.chip}.`);
+      }
+      if (profile.board === 'generic_esp32_eth' && profile.ethernet !== 'lan8720') {
+        messages.push('Generic ESP32 ETH attend Ethernet LAN8720.');
+      }
+      if (profile.board === 'mammotion_esp32s3' && profile.ethernet !== 'none') {
+        messages.push('Mammotion ESP32-S3 fonctionne ici sans Ethernet.');
+      }
+      if (profile.board === 'waveshare_esp32s3_eth' && profile.role !== 'rover' && profile.ethernet !== 'w5500') {
+        messages.push('Waveshare ESP32-S3 ETH attend W5500 pour les profils base/dual_debug.');
+      }
+      if (profile.role === 'rover' && profile.ethernet !== 'none') {
+        messages.push('Le rôle rover doit désactiver Ethernet.');
+      }
+      if (!rule.supportsLora && profile.lora !== 'none') {
+        messages.push('Cette board ne supporte pas LoRa dans le profil courant.');
+      }
+      if (profile.lora === 'sx126x' && profile.region === 'CUSTOM') {
+        messages.push('Région CUSTOM sélectionnée: un build/manifeste spécifique sera nécessaire.');
+      }
+
+      return messages;
     }
 
     function render() {
-      const config = currentConfig();
-      const id = firmwareId(config);
-      const manifest = manifestPath(config);
-      const warning = validate(config);
+      syncBoardDefaults();
+      const ruleMessages = applyUiRules();
+      const profile = currentProfile();
+      const id = firmwareId(profile);
+      const manifest = manifestPath(profile);
+      const validationMessages = validate(profile);
+      const allMessages = ruleMessages.concat(validationMessages);
 
       summary.replaceChildren();
       pills.replaceChildren();
 
-      appendSummary('Puce ESP', config.chip);
-      appendSummary('Board', config.board);
-      appendSummary('Rôle', config.role);
-      appendSummary('Flash', config.flash);
-      appendSummary('PSRAM', config.psram);
-      appendSummary('Ethernet', config.ethernet);
-      appendSummary('GNSS', config.gnss);
-      appendSummary('LoRa', config.lora);
-      appendSummary('Région', config.region);
+      appendSummary('Puce ESP', profile.chip);
+      appendSummary('Board', profile.board);
+      appendSummary('Rôle', profile.role);
+      appendSummary('Flash', profile.flash);
+      appendSummary('PSRAM', profile.psram);
+      appendSummary('Ethernet', profile.ethernet);
+      appendSummary('GNSS', profile.gnss);
+      appendSummary('LoRa', profile.lora);
+      appendSummary('Région', profile.region);
       appendSummary('Firmware ID', id);
 
-      appendPill(config.chip);
-      appendPill(config.board);
-      appendPill(config.role);
-      appendPill(config.region);
-      appendPill(config.gnss);
-      appendPill(config.lora === 'none' ? 'No LoRa' : 'SX126x');
+      appendPill(profile.chip);
+      appendPill(profile.board);
+      appendPill(profile.role);
+      appendPill(profile.region);
+      appendPill(profile.gnss);
+      appendPill(profile.lora === 'none' ? 'No LoRa' : 'SX126x');
+      appendPill(profile.ethernet);
 
       installButton.setAttribute('manifest', manifest);
       manifestUrlEl.textContent = manifest;
+      profileJsonEl.textContent = JSON.stringify(profile, null, 2);
 
-      if (warning) setStatus(warning, 'warn');
-      else setStatus('Profil prêt. Le manifest doit exister dans docs/manifests/.', 'ok');
+      if (allMessages.length) {
+        setStatus(allMessages.join(' '), 'warn');
+      } else if (profile.lora === 'none') {
+        setStatus('Profil prêt. LoRa est désactivé; la région reste disponible pour les profils GNSS/RTCM.', 'ok');
+      } else {
+        setStatus('Profil prêt. Le manifest doit exister dans docs/manifests/.', 'ok');
+      }
     }
 
-    function downloadManifestSkeleton() {
-      const config = currentConfig();
-      const id = firmwareId(config);
-      const manifest = {
-        name: `ESP32 RTK Gateway - ${id}`,
-        version: 'dev',
-        home_assistant_domain: 'esphome',
-        new_install_prompt_erase: true,
-        builds: [
-          {
-            chipFamily: config.chip.toUpperCase().replace('ESP32', 'ESP32-'),
-            parts: [
-              { path: `../firmware/${id}/bootloader.bin`, offset: 0 },
-              { path: `../firmware/${id}/partition-table.bin`, offset: 32768 },
-              { path: `../firmware/${id}/ota_data_initial.bin`, offset: 57344 },
-              { path: `../firmware/${id}/esp32-rtk-gateway.bin`, offset: 131072 },
-              { path: `../firmware/${id}/www.bin`, offset: 6422528 }
-            ]
-          }
-        ]
-      };
-
-      const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: 'application/json' });
+    function downloadProfileJson() {
+      const profile = currentProfile();
+      const id = firmwareId(profile);
+      const blob = new Blob([JSON.stringify(profile, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${id}.json`;
+      a.download = `${id}.profile.json`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
     }
 
-    Object.values(fields).forEach((field) => field.addEventListener('change', render));
-    fields.board.addEventListener('change', () => { syncBoardDefaults(); render(); });
-
-    compileButton.addEventListener('click', () => {
-      const config = currentConfig();
-      const id = firmwareId(config);
-      setStatus(`Compilation demandée pour ${id}. À brancher plus tard à GitHub Actions ou workflow_dispatch.`, 'warn');
+    Object.values(fields).forEach((field) => {
+      field.addEventListener('change', () => {
+        field.dataset.userTouched = '1';
+        render();
+      });
+    });
+    fields.board.addEventListener('change', () => {
+      delete fields.ethernet.dataset.userTouched;
+      delete fields.psram.dataset.userTouched;
+      delete fields.lora.dataset.userTouched;
+      render();
+    });
+    fields.role.addEventListener('change', () => {
+      delete fields.ethernet.dataset.userTouched;
+      render();
     });
 
-    downloadButton.addEventListener('click', downloadManifestSkeleton);
+    compileButton.addEventListener('click', () => {
+      const profile = currentProfile();
+      const id = firmwareId(profile);
+      window.open(workflowUrl, '_blank', 'noopener');
+      setStatus(`Profil ${id} prêt. Télécharge le JSON puis lance le workflow GitHub Actions build-firmware-profiles.yml avec ce profil.`, 'warn');
+    });
 
-    syncBoardDefaults();
+    downloadButton.addEventListener('click', downloadProfileJson);
+
     render();
   </script>
 </body>

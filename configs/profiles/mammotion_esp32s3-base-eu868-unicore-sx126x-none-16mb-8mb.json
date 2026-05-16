@@ -1,0 +1,11 @@
+{
+  "chip": "esp32s3",
+  "board": "mammotion_esp32s3",
+  "role": "base",
+  "flash": "16mb",
+  "psram": "8mb",
+  "ethernet": "none",
+  "gnss": "unicore",
+  "lora": "sx126x",
+  "region": "EU868"
+}

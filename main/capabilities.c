@@ -59,7 +59,7 @@ void capabilities_get(platform_capabilities_t *capabilities)
     capabilities->ethernet_active = capabilities->ethernet_supported && network_is_ethernet_ready();
     capabilities->wifi_only = !capabilities->ethernet_active;
     capabilities->advanced_diagnostics = capabilities->ethernet_active && capabilities->psram_available;
-    capabilities->has_lora_radio = BOARD_HAS_LORA_RADIO;
+    capabilities->has_lora_radio = BOARD_HAS_LORA_RADIO && CONFIG_LORA_FEATURE_ENABLED;
     capabilities->configured_ntrip_slots = 5;
     capabilities->max_ntrip_slots = capabilities_max_ntrip_slots(
         capabilities->ethernet_active,

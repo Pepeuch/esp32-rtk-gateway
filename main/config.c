@@ -27,6 +27,19 @@
 #include "config.h"
 #include "esp_netif.h"
 #include "config/board_config.h"
+#include "receiver_types.h"
+
+#if CONFIG_GNSS_RECEIVER_DEFAULT_UBLOX
+#define DEFAULT_RECEIVER_TYPE_VALUE RECEIVER_TYPE_UBLOX
+#elif CONFIG_GNSS_RECEIVER_DEFAULT_UNICORE
+#define DEFAULT_RECEIVER_TYPE_VALUE RECEIVER_TYPE_UNICORE_N4
+#elif CONFIG_GNSS_RECEIVER_DEFAULT_NMEA
+#define DEFAULT_RECEIVER_TYPE_VALUE RECEIVER_TYPE_AUTO
+#elif CONFIG_GNSS_RECEIVER_DEFAULT_SEPTENTRIO
+#define DEFAULT_RECEIVER_TYPE_VALUE RECEIVER_TYPE_AUTO
+#else
+#define DEFAULT_RECEIVER_TYPE_VALUE RECEIVER_TYPE_AUTO
+#endif
 
 
 static const char *TAG = "CONFIG";
@@ -297,7 +310,7 @@ const config_item_t CONFIG_ITEMS[] = {
         {
                 .key = KEY_CONFIG_RECEIVER_TYPE,
                 .type = CONFIG_ITEM_TYPE_INT8,
-                .def.int8 = 0
+                .def.int8 = DEFAULT_RECEIVER_TYPE_VALUE
         }, {
                 .key = KEY_CONFIG_RECEIVER_BAUD,
                 .type = CONFIG_ITEM_TYPE_UINT32,

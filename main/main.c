@@ -327,7 +327,7 @@ void app_main(void)
     ESP_ERROR_CHECK(ntrip_runtime_init());
 #endif
 
-#if BOARD_HAS_LORA_RADIO
+#if BOARD_HAS_LORA_RADIO && CONFIG_LORA_FEATURE_ENABLED
     lora_radio_config_t lora_cfg = {0};
     esp_err_t lora_err = lora_build_default_config(&lora_cfg);
     if (lora_err == ESP_OK) {

@@ -6,17 +6,22 @@ permissions:
 on:
   workflow_dispatch:
     inputs:
-      profile:
-        description: "Firmware profile to build"
+      known_profile:
+        description: "Known profile preset"
         required: true
-        default: "waveshare_esp32s3_eth-base-eu868-unicore-sx126x-16mb-8mb"
+        default: "waveshare_esp32s3_eth-base-eu868-unicore-sx126x-w5500-16mb-8mb"
         type: choice
         options:
-          - waveshare_esp32s3_eth-base-eu868-unicore-sx126x-16mb-8mb
-          - waveshare_esp32s3_eth-base-eu868-ublox-sx126x-16mb-8mb
-          - mammotion_esp32s3-base-eu868-unicore-sx126x-16mb-8mb
-          - generic_esp32_eth-base-eu868-ublox-none-4mb-none
-          - waveshare_esp32s3_eth-rover-eu868-unicore-sx126x-16mb-8mb
+          - waveshare_esp32s3_eth-base-eu868-unicore-sx126x-w5500-16mb-8mb
+          - waveshare_esp32s3_eth-base-eu868-ublox-sx126x-w5500-16mb-8mb
+          - mammotion_esp32s3-base-eu868-unicore-sx126x-none-16mb-8mb
+          - generic_esp32_eth-base-eu868-ublox-none-lan8720-4mb-none
+          - waveshare_esp32s3_eth-rover-eu868-unicore-sx126x-none-16mb-8mb
+      profile_json:
+        description: "Optional raw profile JSON string. When set, it overrides known_profile."
+        required: false
+        default: ""
+        type: string
 
 jobs:
   build:
@@ -24,7 +29,8 @@ jobs:
 
     env:
       IDF_VERSION: v5.5.3
-      PROFILE: ${{ github.event.inputs.profile }}
+      KNOWN_PROFILE: ${{ github.event.inputs.known_profile }}
+      PROFILE_JSON_INPUT: ${{ github.event.inputs.profile_json }}
 
     steps:
       - name: Checkout
@@ -36,13 +42,22 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.espressif
-          key: esp-idf-${{ runner.os }}-${{ env.IDF_VERSION }}
+          key: esp-idf-tools-${{ runner.os }}-${{ env.IDF_VERSION }}
 
       - name: Cache ESP-IDF source
         uses: actions/cache@v4
         with:
           path: ~/esp-idf
           key: esp-idf-source-${{ runner.os }}-${{ env.IDF_VERSION }}
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ runner.os }}-${{ env.IDF_VERSION }}-${{ env.KNOWN_PROFILE }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ env.IDF_VERSION }}-
+            ccache-${{ runner.os }}-
 
       - name: Install ESP-IDF
         shell: bash
@@ -58,79 +73,54 @@ jobs:
 
           "$HOME/esp-idf/install.sh"
 
-      - name: Build firmware
+      - name: Resolve build profile
+        shell: bash
+        run: |
+          mkdir -p build
+          if [ -n "$PROFILE_JSON_INPUT" ]; then
+            printf '%s\n' "$PROFILE_JSON_INPUT" > build/profile.json
+          else
+            cp "configs/profiles/${KNOWN_PROFILE}.json" build/profile.json
+          fi
+
+          echo "Selected profile input:"
+          cat build/profile.json
+
+      - name: Build firmware from profile
         shell: bash
         run: |
           source "$HOME/esp-idf/export.sh"
+          export IDF_CCACHE_ENABLE=1
+          chmod +x scripts/build_profile.sh
+          ./scripts/build_profile.sh build/profile.json
 
-          PROFILE="${{ github.event.inputs.profile }}"
-          echo "Building profile: $PROFILE"
+      - name: Capture build outputs
+        id: capture
+        shell: bash
+        run: |
+          firmware_id="$(cat build/generated/firmware-id.txt)"
+          firmware_dir="$(cat build/generated/firmware-dir.txt)"
+          manifest_path="$(cat build/generated/manifest-path.txt)"
 
-          mkdir -p "docs/firmware/$PROFILE" docs/manifests
-
-          CHIP_FAMILY=""
-
-          case "$PROFILE" in
-            waveshare_esp32s3_eth-*)
-              CHIP_FAMILY="ESP32-S3"
-              idf.py set-target esp32s3
-              ;;
-            mammotion_esp32s3-*)
-              CHIP_FAMILY="ESP32-S3"
-              idf.py set-target esp32s3
-              ;;
-            generic_esp32_eth-*)
-              CHIP_FAMILY="ESP32"
-              idf.py set-target esp32
-              ;;
-            *)
-              echo "Unknown profile: $PROFILE"
-              exit 1
-              ;;
-          esac
-
-          idf.py build
-
-          cp build/bootloader/bootloader.bin "docs/firmware/$PROFILE/"
-          cp build/partition_table/partition-table.bin "docs/firmware/$PROFILE/"
-          cp build/ota_data_initial.bin "docs/firmware/$PROFILE/" || true
-          cp build/esp32-rtk-gateway.bin "docs/firmware/$PROFILE/"
-          cp build/www.bin "docs/firmware/$PROFILE/" || true
-
-          cat > "docs/manifests/$PROFILE.json" <<EOF
-          {
-            "name": "ESP32 RTK Gateway - $PROFILE",
-            "version": "${GITHUB_SHA::7}",
-            "new_install_prompt_erase": true,
-            "builds": [
-              {
-                "chipFamily": "$CHIP_FAMILY",
-                "parts": [
-                  { "path": "../firmware/$PROFILE/bootloader.bin", "offset": 0 },
-                  { "path": "../firmware/$PROFILE/partition-table.bin", "offset": 32768 },
-                  { "path": "../firmware/$PROFILE/ota_data_initial.bin", "offset": 57344 },
-                  { "path": "../firmware/$PROFILE/esp32-rtk-gateway.bin", "offset": 131072 },
-                  { "path": "../firmware/$PROFILE/www.bin", "offset": 6422528 }
-                ]
-              }
-            ]
-          }
-          EOF
+          echo "firmware_id=$firmware_id" >> "$GITHUB_OUTPUT"
+          echo "firmware_dir=$firmware_dir" >> "$GITHUB_OUTPUT"
+          echo "manifest_path=$manifest_path" >> "$GITHUB_OUTPUT"
 
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
         with:
-          name: firmware-${{ env.PROFILE }}
+          name: firmware-${{ steps.capture.outputs.firmware_id }}
           path: |
-            docs/firmware/${{ env.PROFILE }}/*.bin
-            docs/manifests/${{ env.PROFILE }}.json
+            ${{ steps.capture.outputs.firmware_dir }}/*
+            ${{ steps.capture.outputs.manifest_path }}
 
       - name: Publish firmware to docs
         if: github.ref == 'refs/heads/main'
+        shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add docs/firmware/${{ env.PROFILE }} docs/manifests/${{ env.PROFILE }}.json
-          git commit -m "ci(firmware): publish ${{ env.PROFILE }}" || echo "No firmware changes"
+          git add "${{ steps.capture.outputs.firmware_dir }}" "${{ steps.capture.outputs.manifest_path }}"
+          git commit -m "ci(firmware): publish ${{ steps.capture.outputs.firmware_id }}" || echo "No firmware changes"
           git push origin main

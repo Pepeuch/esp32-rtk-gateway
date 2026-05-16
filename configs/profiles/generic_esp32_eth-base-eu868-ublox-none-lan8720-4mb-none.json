@@ -1,0 +1,11 @@
+{
+  "chip": "esp32",
+  "board": "generic_esp32_eth",
+  "role": "base",
+  "flash": "4mb",
+  "psram": "none",
+  "ethernet": "lan8720",
+  "gnss": "ublox",
+  "lora": "none",
+  "region": "EU868"
+}

@@ -5,6 +5,9 @@ choice APP_BOARD_TYPE
 config BOARD_WAVESHARE_ESP32S3_ETH
     bool "Waveshare ESP32-S3-ETH"
 
+config BOARD_MAMMOTION_ESP32S3
+    bool "Mammotion ESP32-S3"
+
 config BOARD_GENERIC_ESP32C3
     bool "Generic ESP32-C3"
 
@@ -16,6 +19,27 @@ config BOARD_GENERIC_ESP32
 
 config BOARD_GENERIC_ESP32_ETH
     bool "Generic ESP32 ETH"
+
+endchoice
+
+choice GNSS_RECEIVER_DEFAULT
+    prompt "Default GNSS receiver family"
+    default GNSS_RECEIVER_DEFAULT_AUTO
+
+config GNSS_RECEIVER_DEFAULT_AUTO
+    bool "Auto detect"
+
+config GNSS_RECEIVER_DEFAULT_UBLOX
+    bool "u-blox"
+
+config GNSS_RECEIVER_DEFAULT_UNICORE
+    bool "Unicore"
+
+config GNSS_RECEIVER_DEFAULT_NMEA
+    bool "Generic NMEA"
+
+config GNSS_RECEIVER_DEFAULT_SEPTENTRIO
+    bool "Septentrio"
 
 endchoice
 
