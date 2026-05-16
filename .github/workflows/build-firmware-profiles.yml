@@ -1,0 +1,97 @@
+name: Build firmware profiles
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "Firmware profile to build"
+        required: true
+        default: "waveshare_esp32s3_eth-base-eu868-unicore-sx126x-16mb-8mb"
+        type: choice
+        options:
+          - waveshare_esp32s3_eth-base-eu868-unicore-sx126x-16mb-8mb
+          - waveshare_esp32s3_eth-base-eu868-ublox-sx126x-16mb-8mb
+          - mammotion_esp32s3-base-eu868-unicore-sx126x-16mb-8mb
+          - generic_esp32_eth-base-eu868-ublox-none-4mb-none
+          - waveshare_esp32s3_eth-rover-eu868-unicore-sx126x-16mb-8mb
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      IDF_VERSION: v5.5.3
+      PROFILE: ${{ github.event.inputs.profile }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build ESP-IDF firmware
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: ${{ env.IDF_VERSION }}
+          target: esp32s3
+          command: |
+            echo "Building profile: $PROFILE"
+
+            mkdir -p docs/firmware/$PROFILE docs/manifests
+
+            CHIP_FAMILY=""
+
+            case "$PROFILE" in
+              waveshare_esp32s3_eth-*)
+                CHIP_FAMILY="ESP32-S3"
+                idf.py set-target esp32s3
+                ;;
+              mammotion_esp32s3-*)
+                CHIP_FAMILY="ESP32-S3"
+                idf.py set-target esp32s3
+                ;;
+              generic_esp32_eth-*)
+                CHIP_FAMILY="ESP32"
+                idf.py set-target esp32
+                ;;
+              *)
+                echo "Unknown profile: $PROFILE"
+                exit 1
+                ;;
+            esac
+
+            idf.py build
+
+            cp build/bootloader/bootloader.bin docs/firmware/$PROFILE/
+            cp build/partition_table/partition-table.bin docs/firmware/$PROFILE/
+            cp build/ota_data_initial.bin docs/firmware/$PROFILE/ || true
+            cp build/esp32-rtk-gateway.bin docs/firmware/$PROFILE/
+            cp build/www.bin docs/firmware/$PROFILE/ || true
+
+            cat > docs/manifests/$PROFILE.json <<EOF
+            {
+              "name": "ESP32 RTK Gateway - $PROFILE",
+              "version": "${GITHUB_SHA::7}",
+              "new_install_prompt_erase": true,
+              "builds": [
+                {
+                  "chipFamily": "$CHIP_FAMILY",
+                  "parts": [
+                    { "path": "../firmware/$PROFILE/bootloader.bin", "offset": 0 },
+                    { "path": "../firmware/$PROFILE/partition-table.bin", "offset": 32768 },
+                    { "path": "../firmware/$PROFILE/ota_data_initial.bin", "offset": 57344 },
+                    { "path": "../firmware/$PROFILE/esp32-rtk-gateway.bin", "offset": 131072 },
+                    { "path": "../firmware/$PROFILE/www.bin", "offset": 6422528 }
+                  ]
+                }
+              ]
+            }
+            EOF
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ env.PROFILE }}
+          path: |
+            docs/firmware/${{ env.PROFILE }}/*.bin
+            docs/manifests/${{ env.PROFILE }}.json

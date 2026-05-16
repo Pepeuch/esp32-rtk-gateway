@@ -1,0 +1,548 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ESP32 RTK Gateway Flasher</title>
+  <script type="module" src="https://unpkg.com/esp-web-tools@latest/dist/web/install-button.js"></script>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f8fb;
+      --card: #ffffff;
+      --text: #1f2933;
+      --muted: #6b7280;
+      --border: #d8e0ea;
+      --primary: #0f5cc0;
+      --warn: #a85a00;
+      --danger: #b42318;
+      --ok: #13795b;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    .wrap {
+      width: min(1100px, calc(100% - 24px));
+      margin: 0 auto;
+      padding: 24px 0 40px;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      margin-bottom: 20px;
+    }
+
+    h1 { margin: 0; font-size: clamp(1.6rem, 3vw, 2.2rem); }
+    h2 { margin: 0; font-size: 1rem; }
+    p { margin-top: 0; }
+
+    .subtitle {
+      margin-top: 6px;
+      color: var(--muted);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.8fr);
+      gap: 16px;
+    }
+
+    @media (max-width: 860px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+      overflow: hidden;
+      margin-bottom: 16px;
+    }
+
+    .card-header {
+      padding: 14px 16px;
+      border-bottom: 1px solid #e8eef5;
+      background: #fbfdff;
+      font-weight: 700;
+    }
+
+    .card-body { padding: 16px; }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 14px;
+    }
+
+    label {
+      display: block;
+      font-size: 0.9rem;
+      font-weight: 650;
+      margin-bottom: 6px;
+    }
+
+    select, input {
+      width: 100%;
+      min-height: 40px;
+      padding: 9px 11px;
+      border: 1px solid #cbd5e1;
+      border-radius: 10px;
+      background: #ffffff;
+      color: #111827;
+      font: inherit;
+    }
+
+    select:focus, input:focus {
+      outline: 3px solid rgba(15, 92, 192, 0.16);
+      border-color: var(--primary);
+    }
+
+    .hint {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 0.84rem;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-top: 16px;
+    }
+
+    button, .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 40px;
+      border-radius: 10px;
+      border: 1px solid var(--primary);
+      background: var(--primary);
+      color: white;
+      font: inherit;
+      font-weight: 650;
+      padding: 9px 14px;
+      cursor: pointer;
+      text-decoration: none;
+    }
+
+    button.secondary, .button.secondary {
+      background: white;
+      color: var(--primary);
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .pill-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .pill {
+      display: inline-flex;
+      padding: 5px 10px;
+      border-radius: 999px;
+      background: #eef3f7;
+      font-size: 0.86rem;
+    }
+
+    .status {
+      min-height: 22px;
+      color: var(--muted);
+      font-size: 0.92rem;
+      margin-top: 12px;
+    }
+
+    .status.warn { color: var(--warn); }
+    .status.error { color: var(--danger); }
+    .status.ok { color: var(--ok); }
+
+    .summary-list {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .summary-list li {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #eef2f7;
+    }
+
+    .summary-list strong { color: #111827; }
+    .summary-list span { color: var(--muted); text-align: right; }
+
+    .hidden { display: none !important; }
+
+    .manifest-box {
+      word-break: break-all;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.82rem;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      padding: 10px;
+      border-radius: 10px;
+      margin-top: 10px;
+    }
+
+    .warning-box {
+      border: 1px solid #f1c27d;
+      background: #fff8ec;
+      color: #6b3d00;
+      border-radius: 12px;
+      padding: 12px;
+      margin-top: 14px;
+      font-size: 0.92rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>ESP32 RTK Gateway Flasher</h1>
+        <div class="subtitle">Sélectionne ton matériel, génère le profil, puis flash le firmware adapté.</div>
+      </div>
+      <a class="button secondary" href="https://github.com/Pepeuch/esp32-rtk-gateway">GitHub</a>
+    </header>
+
+    <div class="grid">
+      <main>
+        <section class="card">
+          <div class="card-header">Configuration du firmware</div>
+          <div class="card-body">
+            <div class="form-grid">
+              <div>
+                <label for="chip">Puce ESP</label>
+                <select id="chip">
+                  <option value="esp32">ESP32</option>
+                  <option value="esp32c3">ESP32-C3</option>
+                  <option value="esp32c6">ESP32-C6</option>
+                  <option value="esp32s3" selected>ESP32-S3</option>
+                </select>
+              </div>
+
+              <div>
+                <label for="board">Board</label>
+                <select id="board">
+                  <option value="generic_esp32_eth">ESP32 ETH</option>
+                  <option value="waveshare_esp32s3_eth" selected>ESP32-S3 ETH / Waveshare</option>
+                  <option value="mammotion_esp32s3">ESP32-S3 Mammotion</option>
+                </select>
+              </div>
+
+              <div>
+                <label for="role">Rôle firmware</label>
+                <select id="role">
+                  <option value="base" selected>Base RTK</option>
+                  <option value="rover">Rover LoRa minimal</option>
+                  <option value="dual_debug">Dual debug</option>
+                </select>
+              </div>
+
+              <div>
+                <label for="flash">Mémoire flash</label>
+                <select id="flash">
+                  <option value="4mb">4 MB</option>
+                  <option value="8mb">8 MB</option>
+                  <option value="16mb" selected>16 MB</option>
+                </select>
+              </div>
+
+              <div>
+                <label for="psram">PSRAM</label>
+                <select id="psram">
+                  <option value="none">Aucune</option>
+                  <option value="4mb">4 MB</option>
+                  <option value="8mb" selected>8 MB</option>
+                </select>
+              </div>
+
+              <div>
+                <label for="ethernet">Ethernet</label>
+                <select id="ethernet">
+                  <option value="none">Aucun</option>
+                  <option value="lan8720">LAN8720</option>
+                  <option value="w5500" selected>W5500</option>
+                </select>
+              </div>
+
+              <div>
+                <label for="gnss">Puce GNSS</label>
+                <select id="gnss">
+                  <option value="ublox">u-blox</option>
+                  <option value="nmea">NMEA générique</option>
+                  <option value="unicore" selected>Unicore</option>
+                  <option value="septentrio">Septentrio</option>
+                </select>
+              </div>
+
+              <div>
+                <label for="lora">LoRa</label>
+                <select id="lora">
+                  <option value="none">Aucun</option>
+                  <option value="sx126x" selected>SX126x</option>
+                </select>
+              </div>
+
+              <div>
+                <label for="region">Région</label>
+                <select id="region">
+                  <option value="EU868" selected>Europe EU868</option>
+                  <option value="US915">USA US915</option>
+                  <option value="AU915">Australie AU915</option>
+                  <option value="AS923">Asie AS923</option>
+                  <option value="CUSTOM">Custom</option>
+                </select>
+                <div class="hint">Utilisée pour la radio LoRa et les profils RTCM/GNSS.</div>
+              </div>
+            </div>
+
+            <div class="warning-box">
+              Les limites radio affichées ou appliquées par défaut ne sont pas une garantie légale. L’utilisateur doit vérifier la réglementation locale avant émission.
+            </div>
+
+            <div class="actions">
+              <button id="compile-button" type="button">Compiler</button>
+              <button id="download-button" class="secondary" type="button">Télécharger le manifest</button>
+            </div>
+
+            <div id="status" class="status">En attente de sélection.</div>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-header">Flash USB</div>
+          <div class="card-body">
+            <p class="hint">Le bouton Flash utilise ESP Web Tools. Il fonctionne surtout avec Chrome/Edge via WebSerial.</p>
+            <esp-web-install-button id="install-button" manifest=""></esp-web-install-button>
+            <div id="manifest-url" class="manifest-box">Aucun manifest sélectionné.</div>
+          </div>
+        </section>
+      </main>
+
+      <aside>
+        <section class="card">
+          <div class="card-header">Résumé</div>
+          <div class="card-body">
+            <ul class="summary-list" id="summary"></ul>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-header">Profil détecté</div>
+          <div class="card-body">
+            <div class="pill-row" id="profile-pills"></div>
+          </div>
+        </section>
+      </aside>
+    </div>
+  </div>
+
+  <script>
+    const fields = {
+      chip: document.querySelector('#chip'),
+      board: document.querySelector('#board'),
+      role: document.querySelector('#role'),
+      flash: document.querySelector('#flash'),
+      psram: document.querySelector('#psram'),
+      ethernet: document.querySelector('#ethernet'),
+      gnss: document.querySelector('#gnss'),
+      lora: document.querySelector('#lora'),
+      region: document.querySelector('#region'),
+    };
+
+    const summary = document.querySelector('#summary');
+    const pills = document.querySelector('#profile-pills');
+    const statusEl = document.querySelector('#status');
+    const installButton = document.querySelector('#install-button');
+    const manifestUrlEl = document.querySelector('#manifest-url');
+    const compileButton = document.querySelector('#compile-button');
+    const downloadButton = document.querySelector('#download-button');
+
+    const boardRules = {
+      generic_esp32_eth: {
+        chip: 'esp32',
+        ethernet: 'lan8720',
+        psram: 'none',
+        defaultFlash: '4mb',
+      },
+      waveshare_esp32s3_eth: {
+        chip: 'esp32s3',
+        ethernet: 'w5500',
+        psram: '8mb',
+        defaultFlash: '16mb',
+      },
+      mammotion_esp32s3: {
+        chip: 'esp32s3',
+        ethernet: 'none',
+        psram: '8mb',
+        defaultFlash: '16mb',
+      },
+    };
+
+    function currentConfig() {
+      return Object.fromEntries(Object.entries(fields).map(([key, field]) => [key, field.value]));
+    }
+
+    function firmwareId(config) {
+      return [
+        config.board,
+        config.role,
+        config.region.toLowerCase(),
+        config.gnss,
+        config.lora,
+        config.flash,
+        config.psram,
+      ].join('-');
+    }
+
+    function manifestPath(config) {
+      return `manifests/${firmwareId(config)}.json`;
+    }
+
+    function setStatus(text, kind = '') {
+      statusEl.className = 'status ' + kind;
+      statusEl.textContent = text;
+    }
+
+    function appendSummary(label, value) {
+      const li = document.createElement('li');
+      const strong = document.createElement('strong');
+      const span = document.createElement('span');
+      strong.textContent = label;
+      span.textContent = value;
+      li.append(strong, span);
+      summary.appendChild(li);
+    }
+
+    function appendPill(text) {
+      const span = document.createElement('span');
+      span.className = 'pill';
+      span.textContent = text;
+      pills.appendChild(span);
+    }
+
+    function syncBoardDefaults() {
+      const rule = boardRules[fields.board.value];
+      if (!rule) return;
+      fields.chip.value = rule.chip;
+      fields.ethernet.value = rule.ethernet;
+      fields.psram.value = rule.psram;
+      fields.flash.value = rule.defaultFlash;
+    }
+
+    function validate(config) {
+      if (config.lora === 'sx126x' && config.region === 'CUSTOM') {
+        return 'Région CUSTOM sélectionnée : il faudra un manifest/firmware custom explicite.';
+      }
+      if (config.role === 'rover' && config.ethernet !== 'none') {
+        return 'Rover minimal : Ethernet devrait normalement être désactivé.';
+      }
+      return '';
+    }
+
+    function render() {
+      const config = currentConfig();
+      const id = firmwareId(config);
+      const manifest = manifestPath(config);
+      const warning = validate(config);
+
+      summary.replaceChildren();
+      pills.replaceChildren();
+
+      appendSummary('Puce ESP', config.chip);
+      appendSummary('Board', config.board);
+      appendSummary('Rôle', config.role);
+      appendSummary('Flash', config.flash);
+      appendSummary('PSRAM', config.psram);
+      appendSummary('Ethernet', config.ethernet);
+      appendSummary('GNSS', config.gnss);
+      appendSummary('LoRa', config.lora);
+      appendSummary('Région', config.region);
+      appendSummary('Firmware ID', id);
+
+      appendPill(config.chip);
+      appendPill(config.board);
+      appendPill(config.role);
+      appendPill(config.region);
+      appendPill(config.gnss);
+      appendPill(config.lora === 'none' ? 'No LoRa' : 'SX126x');
+
+      installButton.setAttribute('manifest', manifest);
+      manifestUrlEl.textContent = manifest;
+
+      if (warning) setStatus(warning, 'warn');
+      else setStatus('Profil prêt. Le manifest doit exister dans docs/manifests/.', 'ok');
+    }
+
+    function downloadManifestSkeleton() {
+      const config = currentConfig();
+      const id = firmwareId(config);
+      const manifest = {
+        name: `ESP32 RTK Gateway - ${id}`,
+        version: 'dev',
+        home_assistant_domain: 'esphome',
+        new_install_prompt_erase: true,
+        builds: [
+          {
+            chipFamily: config.chip.toUpperCase().replace('ESP32', 'ESP32-'),
+            parts: [
+              { path: `../firmware/${id}/bootloader.bin`, offset: 0 },
+              { path: `../firmware/${id}/partition-table.bin`, offset: 32768 },
+              { path: `../firmware/${id}/ota_data_initial.bin`, offset: 57344 },
+              { path: `../firmware/${id}/esp32-rtk-gateway.bin`, offset: 131072 },
+              { path: `../firmware/${id}/www.bin`, offset: 6422528 }
+            ]
+          }
+        ]
+      };
+
+      const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${id}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    Object.values(fields).forEach((field) => field.addEventListener('change', render));
+    fields.board.addEventListener('change', () => { syncBoardDefaults(); render(); });
+
+    compileButton.addEventListener('click', () => {
+      const config = currentConfig();
+      const id = firmwareId(config);
+      setStatus(`Compilation demandée pour ${id}. À brancher plus tard à GitHub Actions ou workflow_dispatch.`, 'warn');
+    });
+
+    downloadButton.addEventListener('click', downloadManifestSkeleton);
+
+    syncBoardDefaults();
+    render();
+  </script>
+</body>
+</html>
