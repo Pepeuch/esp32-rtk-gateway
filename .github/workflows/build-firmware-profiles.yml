@@ -38,6 +38,8 @@ jobs:
           esp_idf_version: ${{ env.IDF_VERSION }}
           target: esp32s3
           command: |
+            PROFILE="${{ github.event.inputs.profile }}"
+
             echo "Building profile: $PROFILE"
 
             mkdir -p docs/firmware/$PROFILE docs/manifests
