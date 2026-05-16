@@ -194,9 +194,19 @@ append_template "sdkconfig.gnss_${PROFILE_GNSS}.defaults"
 append_template "sdkconfig.lora_${PROFILE_LORA}.defaults"
 append_template "sdkconfig.region_$(printf '%s' "${PROFILE_REGION}" | tr '[:upper:]' '[:lower:]').defaults"
 
+{
+    printf 'CONFIG_PARTITION_TABLE_CUSTOM=y\n'
+    printf 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=\"partitions.csv\"\n'
+    printf 'CONFIG_PARTITION_TABLE_FILENAME=\"partitions.csv\"\n'
+} >> "${GENERATED_DEFAULTS}"
+
 echo "Generated profile: ${FIRMWARE_ID}"
 echo "Generated defaults: ${GENERATED_DEFAULTS}"
 echo "Target: ${IDF_TARGET_NAME}"
+printf '\n--- partitions.csv ---\n'
+cat "${ROOT_DIR}/partitions.csv"
+printf '\n--- sdkconfig.defaults PARTITION_TABLE/FLASHSIZE ---\n'
+grep -E 'CONFIG_(PARTITION_TABLE|ESPTOOLPY_FLASHSIZE)' "${GENERATED_DEFAULTS}" || true
 
 idf.py -B "${BUILD_DIR}" -D SDKCONFIG="${SDKCONFIG_PATH}" set-target "${IDF_TARGET_NAME}"
 idf.py -B "${BUILD_DIR}" -D SDKCONFIG="${SDKCONFIG_PATH}" -D SDKCONFIG_DEFAULTS="${GENERATED_DEFAULTS}" reconfigure
