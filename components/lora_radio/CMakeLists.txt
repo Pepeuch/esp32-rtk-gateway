@@ -1,0 +1,12 @@
+idf_component_register(
+    SRCS
+        "src/lora_radio.c"
+    INCLUDE_DIRS
+        "include"
+        "src"
+    REQUIRES
+        driver
+        freertos
+        esp_timer
+        sx126x_driver
+)

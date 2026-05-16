@@ -46,6 +46,10 @@
 #include "ntrip_runtime.h"
 #include "receiver.h"
 
+#include "lora_radio.h"
+#include "lora_radio_config.h"
+#include "driver/spi_master.h"
+
 static const char *TAG = "MAIN";
 
 static char *reset_reason_name(esp_reset_reason_t reason);
@@ -241,4 +245,48 @@ static char *reset_reason_name(esp_reset_reason_t reason)
             return "SDIO";
     }
     return "UNKNOWN";
+}
+
+static void lora_cb(lora_radio_event_t event, const uint8_t *data, size_t len, void *ctx)
+{
+    switch (event) {
+    case LORA_RADIO_EVENT_RX_DONE:
+        // TODO: injecter data vers RTCM/GNSS
+        break;
+
+    case LORA_RADIO_EVENT_TX_DONE:
+        break;
+
+    default:
+        break;
+    }
+}
+
+void app_main(void)
+{
+    lora_radio_config_t cfg = {
+        .pin_mosi = LORA_DEFAULT_MOSI,
+        .pin_miso = LORA_DEFAULT_MISO,
+        .pin_sck = LORA_DEFAULT_SCK,
+        .pin_nss = LORA_DEFAULT_NSS,
+        .pin_reset = LORA_DEFAULT_RESET,
+        .pin_busy = LORA_DEFAULT_BUSY,
+        .pin_dio1 = LORA_DEFAULT_DIO1,
+
+        .spi_host = SPI2_HOST,
+        .spi_clock_hz = LORA_DEFAULT_SPI_CLOCK_HZ,
+
+        .frequency_hz = LORA_DEFAULT_FREQ_HZ,
+        .spreading_factor = LORA_DEFAULT_SF,
+        .bandwidth_hz = LORA_DEFAULT_BW_HZ,
+        .coding_rate = LORA_DEFAULT_CR,
+        .sync_word = LORA_DEFAULT_SYNC_WORD,
+        .tx_power_dbm = LORA_DEFAULT_TX_POWER_DBM,
+
+        .callback = lora_cb,
+        .user_ctx = NULL,
+    };
+
+    lora_radio_init(&cfg);
+    lora_radio_start_rx();
 }
