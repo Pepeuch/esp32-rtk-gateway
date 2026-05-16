@@ -45,6 +45,7 @@
 #include "ntrip_slots.h"
 #include "ntrip_runtime.h"
 #include "receiver.h"
+#include "config/board_config.h"
 #include "board_pins.h"
 
 #include "lora_radio.h"

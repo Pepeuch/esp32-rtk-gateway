@@ -1,0 +1,112 @@
+#pragma once
+
+#include "driver/gpio.h"
+#include "driver/spi_master.h"
+#include "driver/uart.h"
+
+#ifndef GPIO_NUM_NC
+#define GPIO_NUM_NC ((gpio_num_t)-1)
+#endif
+
+#ifndef BOARD_HAS_LORA_RADIO
+#define BOARD_HAS_LORA_RADIO 0
+#endif
+
+#ifndef BOARD_W5500_MOSI
+#define BOARD_W5500_MOSI GPIO_NUM_NC
+#endif
+#ifndef BOARD_W5500_MISO
+#define BOARD_W5500_MISO GPIO_NUM_NC
+#endif
+#ifndef BOARD_W5500_SCK
+#define BOARD_W5500_SCK GPIO_NUM_NC
+#endif
+#ifndef BOARD_W5500_CS
+#define BOARD_W5500_CS GPIO_NUM_NC
+#endif
+#ifndef BOARD_W5500_INT
+#define BOARD_W5500_INT GPIO_NUM_NC
+#endif
+#ifndef BOARD_W5500_RST
+#define BOARD_W5500_RST GPIO_NUM_NC
+#endif
+#ifndef BOARD_W5500_SPI_HOST
+#define BOARD_W5500_SPI_HOST SPI2_HOST
+#endif
+
+#ifndef BOARD_LAN8720_MDC
+#define BOARD_LAN8720_MDC GPIO_NUM_NC
+#endif
+#ifndef BOARD_LAN8720_MDIO
+#define BOARD_LAN8720_MDIO GPIO_NUM_NC
+#endif
+#ifndef BOARD_LAN8720_PHY_ADDR
+#define BOARD_LAN8720_PHY_ADDR 0
+#endif
+#ifndef BOARD_LAN8720_PHY_POWER
+#define BOARD_LAN8720_PHY_POWER GPIO_NUM_NC
+#endif
+#ifndef BOARD_LAN8720_RMII_CLK
+#define BOARD_LAN8720_RMII_CLK GPIO_NUM_NC
+#endif
+
+#ifndef BOARD_SD_CARD_MOSI
+#define BOARD_SD_CARD_MOSI GPIO_NUM_NC
+#endif
+#ifndef BOARD_SD_CARD_MISO
+#define BOARD_SD_CARD_MISO GPIO_NUM_NC
+#endif
+#ifndef BOARD_SD_CARD_SCK
+#define BOARD_SD_CARD_SCK GPIO_NUM_NC
+#endif
+#ifndef BOARD_SD_CARD_CS
+#define BOARD_SD_CARD_CS GPIO_NUM_NC
+#endif
+
+#ifndef BOARD_LORA_MOSI
+#define BOARD_LORA_MOSI GPIO_NUM_NC
+#endif
+#ifndef BOARD_LORA_MISO
+#define BOARD_LORA_MISO GPIO_NUM_NC
+#endif
+#ifndef BOARD_LORA_SCK
+#define BOARD_LORA_SCK GPIO_NUM_NC
+#endif
+#ifndef BOARD_LORA_NSS
+#define BOARD_LORA_NSS GPIO_NUM_NC
+#endif
+#ifndef BOARD_LORA_DIO1
+#define BOARD_LORA_DIO1 GPIO_NUM_NC
+#endif
+#ifndef BOARD_LORA_RESET
+#define BOARD_LORA_RESET GPIO_NUM_NC
+#endif
+#ifndef BOARD_LORA_BUSY
+#define BOARD_LORA_BUSY GPIO_NUM_NC
+#endif
+#ifndef BOARD_LORA_SPI_HOST
+#define BOARD_LORA_SPI_HOST SPI3_HOST
+#endif
+
+#ifndef BOARD_GNSS_UART_NUM
+#define BOARD_GNSS_UART_NUM UART_NUM_1
+#endif
+#ifndef BOARD_GNSS_UART_TX_PIN
+#define BOARD_GNSS_UART_TX_PIN GPIO_NUM_NC
+#endif
+#ifndef BOARD_GNSS_UART_RX_PIN
+#define BOARD_GNSS_UART_RX_PIN GPIO_NUM_NC
+#endif
+#ifndef BOARD_GNSS_PPS_PIN
+#define BOARD_GNSS_PPS_PIN GPIO_NUM_NC
+#endif
+
+#ifndef BOARD_GNSS_DEBUG_UART_NUM
+#define BOARD_GNSS_DEBUG_UART_NUM UART_NUM_2
+#endif
+#ifndef BOARD_GNSS_DEBUG_UART_TX_PIN
+#define BOARD_GNSS_DEBUG_UART_TX_PIN GPIO_NUM_NC
+#endif
+#ifndef BOARD_GNSS_DEBUG_UART_RX_PIN
+#define BOARD_GNSS_DEBUG_UART_RX_PIN GPIO_NUM_NC
+#endif

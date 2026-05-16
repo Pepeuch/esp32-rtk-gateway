@@ -5,6 +5,7 @@ idf_component_register(
         "include"
         "src"
     REQUIRES
+        board_config
         driver
         freertos
         esp_timer

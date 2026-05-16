@@ -1,41 +1,9 @@
 #pragma once
 
 #include "../board_caps.h"
+#include "board_pins.h"
 
 #define BOARD_NAME "Waveshare ESP32-S3-ETH"
-
-#define BOARD_HAS_LORA_RADIO       1
-
-#define BOARD_W5500_MOSI           GPIO_NUM_11
-#define BOARD_W5500_MISO           GPIO_NUM_12
-#define BOARD_W5500_SCK            GPIO_NUM_13
-#define BOARD_W5500_CS             GPIO_NUM_14
-#define BOARD_W5500_INT            GPIO_NUM_10
-#define BOARD_W5500_RST            GPIO_NUM_9
-#define BOARD_W5500_SPI_HOST       SPI2_HOST
-
-#define BOARD_SD_CARD_MOSI         GPIO_NUM_6
-#define BOARD_SD_CARD_MISO         GPIO_NUM_5
-#define BOARD_SD_CARD_SCK          GPIO_NUM_7
-#define BOARD_SD_CARD_CS           GPIO_NUM_4
-
-#define BOARD_LORA_MOSI            GPIO_NUM_21
-#define BOARD_LORA_MISO            GPIO_NUM_17
-#define BOARD_LORA_SCK             GPIO_NUM_16
-#define BOARD_LORA_NSS             GPIO_NUM_15
-#define BOARD_LORA_DIO1            GPIO_NUM_18
-#define BOARD_LORA_RESET           GPIO_NUM_36
-#define BOARD_LORA_BUSY            GPIO_NUM_39
-#define BOARD_LORA_SPI_HOST        SPI3_HOST
-
-#define BOARD_GNSS_UART_NUM        UART_NUM_1
-#define BOARD_GNSS_UART_TX_PIN     GPIO_NUM_38
-#define BOARD_GNSS_UART_RX_PIN     GPIO_NUM_37
-#define BOARD_GNSS_PPS_PIN         GPIO_NUM_35
-
-#define BOARD_GNSS_DEBUG_UART_NUM  UART_NUM_2
-#define BOARD_GNSS_DEBUG_UART_TX_PIN GPIO_NUM_43
-#define BOARD_GNSS_DEBUG_UART_RX_PIN GPIO_NUM_44
 
 #define DEFAULT_DEBUG_UART_NUM     BOARD_GNSS_DEBUG_UART_NUM
 #define DEFAULT_DEBUG_UART_TX_PIN  BOARD_GNSS_DEBUG_UART_TX_PIN
@@ -68,10 +36,10 @@
 #define BOARD_SD_SCLK              BOARD_SD_CARD_SCK
 #define BOARD_SD_CS                BOARD_SD_CARD_CS
 
-#define BOARD_HAS_ETHERNET   1
+#define BOARD_HAS_ETHERNET   0
 #define BOARD_HAS_WIFI       1
 #define BOARD_HAS_BLUETOOTH  1
-#define BOARD_HAS_SD         1
+#define BOARD_HAS_SD         0
 #define BOARD_HAS_LORA_UART  1
 #define BOARD_HAS_GNSS_UART  1
-#define BOARD_ETHERNET_TYPE  BOARD_ETHERNET_TYPE_W5500
+
