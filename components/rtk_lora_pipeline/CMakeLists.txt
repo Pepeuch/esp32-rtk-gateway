@@ -1,0 +1,12 @@
+idf_component_register(
+    SRCS
+        "src/rtk_lora_pipeline.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        driver
+        freertos
+        lora_radio
+        lora_transport
+        rtcm_filter
+)

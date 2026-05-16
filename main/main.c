@@ -51,6 +51,8 @@
 
 #include "lora_radio.h"
 #include "lora_radio_config.h"
+#include "lora_transport.h"
+#include "rtk_lora_pipeline.h"
 
 static const char *TAG = "MAIN";
 
@@ -58,6 +60,7 @@ static char *reset_reason_name(esp_reset_reason_t reason);
 static void lora_cb(lora_radio_event_t event, const uint8_t *data, size_t len, void *ctx);
 static void lora_transport_rtcm_rx_hook(const uint8_t *data, size_t len);
 static esp_err_t lora_build_default_config(lora_radio_config_t *config);
+static void rtk_lora_uart_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data);
 
 static void got_ip_event_handler(void *arg, esp_event_base_t event_base,
                                  int32_t event_id, void *event_data)
@@ -76,6 +79,7 @@ static void sntp_time_set_handler(struct timeval *tv)
 static void lora_cb(lora_radio_event_t event, const uint8_t *data, size_t len, void *ctx)
 {
     (void)ctx;
+    rtk_lora_pipeline_handle_radio_event(event, data, len);
 
     switch (event) {
         case LORA_RADIO_EVENT_RX_DONE:
@@ -106,6 +110,21 @@ static void lora_transport_rtcm_rx_hook(const uint8_t *data, size_t len)
     (void)data;
     ESP_LOGI(TAG, "LoRa RX payload received (%u bytes), RTCM hook ready", (unsigned)len);
     // TODO: brancher le transport RTCM entrant vers le pipeline GNSS.
+}
+
+static void rtk_lora_uart_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
+{
+    (void)handler_args;
+    (void)base;
+
+    if (event_data == NULL || event_id <= 0) {
+        return;
+    }
+
+    esp_err_t err = rtk_lora_pipeline_push_uart_bytes((const uint8_t *)event_data, (size_t)event_id);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "RTK LoRa UART feed failed: %s", esp_err_to_name(err));
+    }
 }
 
 static esp_err_t lora_build_default_config(lora_radio_config_t *config)
@@ -257,6 +276,26 @@ void app_main(void)
         lora_err = lora_radio_start_rx();
         if (lora_err != ESP_OK) {
             ESP_LOGE(TAG, "LoRa RX start failed: %s", esp_err_to_name(lora_err));
+        } else {
+            const rtk_lora_pipeline_config_t pipeline_cfg = {
+                .uart_num = BOARD_GNSS_UART_NUM,
+                .uart_rx_pin = BOARD_GNSS_UART_RX_PIN,
+                .uart_tx_pin = BOARD_GNSS_UART_TX_PIN,
+                .pps_pin = BOARD_GNSS_PPS_PIN,
+                .uart_baud_rate = config_get_u32(CONF_ITEM(KEY_CONFIG_UART_BAUD_RATE)),
+                .stream_id = 1,
+                .max_lora_payload = LORA_TRANSPORT_DEFAULT_MAX_PAYLOAD,
+            };
+
+            lora_err = rtk_lora_pipeline_init(&pipeline_cfg);
+            if (lora_err != ESP_OK) {
+                ESP_LOGE(TAG, "RTK LoRa pipeline init failed: %s", esp_err_to_name(lora_err));
+            } else {
+                lora_err = uart_register_read_handler(rtk_lora_uart_handler);
+                if (lora_err != ESP_OK) {
+                    ESP_LOGE(TAG, "RTK LoRa UART handler register failed: %s", esp_err_to_name(lora_err));
+                }
+            }
         }
     }
 #endif

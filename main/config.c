@@ -266,7 +266,7 @@ const config_item_t CONFIG_ITEMS[] = {
         }, {
                 .key = KEY_CONFIG_UART_BAUD_RATE,
                 .type = CONFIG_ITEM_TYPE_UINT32,
-                .def.uint32 = 115200
+                .def.uint32 = 921600
         }, {
                 .key = KEY_CONFIG_UART_DATA_BITS,
                 .type = CONFIG_ITEM_TYPE_INT8,
@@ -301,7 +301,7 @@ const config_item_t CONFIG_ITEMS[] = {
         }, {
                 .key = KEY_CONFIG_RECEIVER_BAUD,
                 .type = CONFIG_ITEM_TYPE_UINT32,
-                .def.uint32 = 115200
+                .def.uint32 = 921600
         }, {
                 .key = KEY_CONFIG_RECEIVER_UART_PORT,
                 .type = CONFIG_ITEM_TYPE_UINT8,
