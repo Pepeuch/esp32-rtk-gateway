@@ -1,4 +1,5 @@
 #include <string.h>
+#include <inttypes.h>
 #include <esp_wifi.h>
 #include <esp_log.h>
 #include <nvs.h>
@@ -278,20 +279,29 @@ void wifi_sta_status(wifi_sta_status_t *status) {
 
 
 void wait_for_ip() {
-     if(network_is_ethernet()) {
+     if(network_is_ethernet_started()) {
         ESP_LOGI(TAG, "Waiting for Ethernet connection...");
          esp_netif_t *eth_netif = esp_netif_get_handle_from_ifkey("ETH_DEF");
          if(eth_netif == NULL){
           ESP_LOGE(TAG, "No Ethernet interface found.");
           return;
         }
-       esp_netif_ip_info_t ip_info;
-         if(esp_netif_get_ip_info(eth_netif, &ip_info) == ESP_OK){
-             if(ip_info.ip.addr != 0){
-              ESP_LOGI(TAG, "Ethernet got IP.");
-            return;
+        uint32_t wait_log_tick = 0;
+        while (network_is_ethernet_started()) {
+            esp_netif_ip_info_t ip_info;
+            if(esp_netif_get_ip_info(eth_netif, &ip_info) == ESP_OK){
+                if(ip_info.ip.addr != 0){
+                    ESP_LOGI(TAG, "Ethernet got IP.");
+                    return;
+                }
             }
+            if ((wait_log_tick % 20U) == 0U) {
+                ESP_LOGI(TAG, "Waiting for Ethernet DHCP/IP... link_up=%d", network_is_ethernet_link_up());
+            }
+            wait_log_tick++;
+            vTaskDelay(pdMS_TO_TICKS(250));
         }
+        ESP_LOGW(TAG, "Ethernet stopped before IP assignment");
 
     } else{
          ESP_LOGI(TAG, "Waiting for WiFi connection...");
@@ -318,6 +328,10 @@ void wait_for_ip() {
 
 void wait_for_network(void)
 {
+    static uint32_t s_wait_for_network_calls = 0;
+    s_wait_for_network_calls++;
+    ESP_LOGI(TAG, "wait_for_network call=%" PRIu32 " ethernet_ready=%d", s_wait_for_network_calls, network_is_ethernet_ready());
+
     if (network_is_ethernet_ready()) {
         ESP_LOGI(TAG, "Ethernet ready");
         return;

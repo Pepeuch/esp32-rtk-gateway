@@ -222,6 +222,7 @@ static void rtk_lora_parse_task(void *ctx)
 {
     uint8_t buffer[256];
     (void)ctx;
+    ESP_LOGI(TAG, "parse task started");
 
     while (true) {
         size_t len = xStreamBufferReceive(s_pipeline.uart_stream, buffer, sizeof(buffer), portMAX_DELAY);
@@ -335,6 +336,7 @@ static void rtk_lora_tx_task(void *ctx)
 {
     rtk_lora_tx_packet_t packet = {0};
     (void)ctx;
+    ESP_LOGI(TAG, "tx task started");
 
     while (true) {
         EventBits_t bits;

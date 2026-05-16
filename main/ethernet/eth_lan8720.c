@@ -4,6 +4,8 @@
 
 #if BOARD_ETHERNET_TYPE == BOARD_ETHERNET_TYPE_LAN8720
 
+#include <inttypes.h>
+
 #include "driver/gpio.h"
 #include "esp_eth.h"
 #include "esp_event.h"
@@ -21,10 +23,14 @@ static void eth_got_ip_event_handler(void *arg, esp_event_base_t event_base,
 
     ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
     network_state_set_ethernet_has_ip(true);
+    int64_t latency_us = network_state_get_ethernet_ip_latency_us();
 
     ESP_LOGI(TAG, "Ethernet got IP: " IPSTR, IP2STR(&event->ip_info.ip));
     ESP_LOGI(TAG, "Ethernet netmask: " IPSTR, IP2STR(&event->ip_info.netmask));
     ESP_LOGI(TAG, "Ethernet gateway: " IPSTR, IP2STR(&event->ip_info.gw));
+    if (latency_us >= 0) {
+        ESP_LOGI(TAG, "Ethernet DHCP/IP latency: %" PRIi64 " ms", latency_us / 1000);
+    }
 }
 
 static void eth_event_handler(void *arg, esp_event_base_t event_base,
@@ -37,7 +43,7 @@ static void eth_event_handler(void *arg, esp_event_base_t event_base,
     switch (event_id) {
         case ETHERNET_EVENT_CONNECTED:
             network_state_set_ethernet_link_up(true);
-            ESP_LOGI(TAG, "Ethernet link up");
+            ESP_LOGI(TAG, "Ethernet link up at %" PRIi64 " ms", network_state_get_ethernet_link_up_time_us() / 1000);
             break;
         case ETHERNET_EVENT_DISCONNECTED:
             network_state_set_ethernet_link_up(false);

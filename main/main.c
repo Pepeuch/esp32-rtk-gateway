@@ -16,6 +16,8 @@
 
 #include "sdkconfig.h"
 
+#include <inttypes.h>
+
 #include <log.h>
 #include <status_led.h>
 #include <core_dump.h>
@@ -80,6 +82,8 @@ static rtcm_profile_id_t rtcm_profile_id_from_lora_profile(lora_rtcm_profile_t p
 #if CONFIG_RTK_DEVICE_ROLE_BASE || CONFIG_RTK_DEVICE_ROLE_DUAL_DEBUG
 static void rtk_lora_uart_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data);
 #endif
+
+#define BOOT_STEP(step) ESP_LOGI(TAG, "boot step: %s", step)
 
 #if CONFIG_RTK_DEVICE_ROLE_BASE || CONFIG_RTK_DEVICE_ROLE_DUAL_DEBUG
 static void got_ip_event_handler(void *arg, esp_event_base_t event_base,
@@ -319,24 +323,40 @@ void app_main(void)
     bool eth_ready = false;
     bool wifi_ready = false;
 
+    BOOT_STEP("network_init:start");
     netif = network_init();
+    BOOT_STEP("network_init:done");
 
+    BOOT_STEP("ntrip_slots_init:start");
     ntrip_slots_init();
+    BOOT_STEP("ntrip_slots_init:done");
+    BOOT_STEP("uart_init:start");
     uart_init();
+    BOOT_STEP("uart_init:done");
+    BOOT_STEP("receiver_init:start");
     ESP_ERROR_CHECK(receiver_init());
+    BOOT_STEP("receiver_init:done");
+    BOOT_STEP("ntrip_runtime_init:start");
     ESP_ERROR_CHECK(ntrip_runtime_init());
+    BOOT_STEP("ntrip_runtime_init:done");
 #endif
 
 #if BOARD_HAS_LORA_RADIO && CONFIG_LORA_FEATURE_ENABLED
     lora_radio_config_t lora_cfg = {0};
+    BOOT_STEP("lora_build_default_config:start");
     esp_err_t lora_err = lora_build_default_config(&lora_cfg);
+    BOOT_STEP("lora_build_default_config:done");
     if (lora_err == ESP_OK) {
+        BOOT_STEP("lora_radio_init:start");
         lora_err = lora_radio_init(&lora_cfg);
+        BOOT_STEP("lora_radio_init:done");
     }
     if (lora_err != ESP_OK) {
         ESP_LOGE(TAG, "LoRa init failed: %s", esp_err_to_name(lora_err));
     } else {
+        BOOT_STEP("lora_radio_start_rx:start");
         lora_err = lora_radio_start_rx();
+        BOOT_STEP("lora_radio_start_rx:done");
         if (lora_err != ESP_OK) {
             ESP_LOGE(TAG, "LoRa RX start failed: %s", esp_err_to_name(lora_err));
         } else {
@@ -367,11 +387,15 @@ void app_main(void)
                     .crc_on = lora_cfg.crc_on,
                 };
 
+                BOOT_STEP("rtk_lora_pipeline_init:start");
                 lora_err = rtk_lora_pipeline_init(&pipeline_cfg);
+                BOOT_STEP("rtk_lora_pipeline_init:done");
                 if (lora_err != ESP_OK) {
                     ESP_LOGE(TAG, "RTK LoRa pipeline init failed: %s", esp_err_to_name(lora_err));
                 } else {
+                    BOOT_STEP("uart_register_read_handler(rtk_lora):start");
                     lora_err = uart_register_read_handler(rtk_lora_uart_handler);
+                    BOOT_STEP("uart_register_read_handler(rtk_lora):done");
                     if (lora_err != ESP_OK) {
                         ESP_LOGE(TAG, "RTK LoRa UART handler register failed: %s", esp_err_to_name(lora_err));
                     }
@@ -387,7 +411,9 @@ void app_main(void)
                 .max_lora_payload = LORA_TRANSPORT_DEFAULT_MAX_PAYLOAD,
             };
 
+            BOOT_STEP("rover_lora_pipeline_init:start");
             lora_err = rover_lora_pipeline_init(&rover_cfg);
+            BOOT_STEP("rover_lora_pipeline_init:done");
             if (lora_err != ESP_OK) {
                 ESP_LOGE(TAG, "Rover LoRa pipeline init failed: %s", esp_err_to_name(lora_err));
             }
@@ -398,8 +424,32 @@ void app_main(void)
 
 #if CONFIG_RTK_DEVICE_ROLE_BASE || CONFIG_RTK_DEVICE_ROLE_DUAL_DEBUG
     if (netif != NULL) {
-        ESP_LOGI(TAG, "Waiting up to 3000 ms for Ethernet...");
-        eth_ready = network_wait_for_ethernet_ready(3000);
+        const uint32_t link_wait_ms = 3000;
+        const uint32_t dhcp_wait_ms = CONFIG_ETHERNET_DHCP_TIMEOUT_MS;
+
+        ESP_LOGI(TAG, "Waiting up to %" PRIu32 " ms for Ethernet link...", link_wait_ms);
+        bool link_up = network_wait_for_ethernet_link_up(link_wait_ms);
+        if (link_up) {
+            int64_t link_time_us = network_get_ethernet_link_up_time_us();
+            if (link_time_us > 0) {
+                ESP_LOGI(TAG, "Ethernet link detected, waiting up to %" PRIu32 " ms for DHCP/IP (link_ts=%" PRIi64 " ms)",
+                         dhcp_wait_ms,
+                         link_time_us / 1000);
+            } else {
+                ESP_LOGI(TAG, "Ethernet link detected, waiting up to %" PRIu32 " ms for DHCP/IP", dhcp_wait_ms);
+            }
+            eth_ready = network_wait_for_ethernet_ip(dhcp_wait_ms);
+            if (eth_ready) {
+                int64_t latency_us = network_get_ethernet_ip_latency_us();
+                if (latency_us >= 0) {
+                    ESP_LOGI(TAG, "Ethernet IP acquired after %" PRIi64 " ms from link-up", latency_us / 1000);
+                }
+            } else {
+                ESP_LOGW(TAG, "Ethernet link is up but DHCP/IP timed out after %" PRIu32 " ms", dhcp_wait_ms);
+            }
+        } else {
+            ESP_LOGW(TAG, "Ethernet link not detected within %" PRIu32 " ms", link_wait_ms);
+        }
     }
 
     if (!eth_ready) {
@@ -418,25 +468,37 @@ void app_main(void)
         }
     }
 
+    BOOT_STEP("wait_for_network:start");
+    wait_for_network();
+    BOOT_STEP("wait_for_network:done");
 
-    
-wait_for_network();
-
+    BOOT_STEP("web_server_init:start");
     web_server_init();
+    BOOT_STEP("web_server_init:done");
 
+    BOOT_STEP("ntrip_slots_start_allowed:start");
     ntrip_slots_start_allowed();
+    BOOT_STEP("ntrip_slots_start_allowed:done");
+    BOOT_STEP("socket_server_init:start");
     socket_server_init();
+    BOOT_STEP("socket_server_init:done");
+    BOOT_STEP("socket_client_init:start");
     socket_client_init();
+    BOOT_STEP("socket_client_init:done");
 
     uart_nmea("$PESP,INIT,COMPLETE");
 
+    BOOT_STEP("wait_for_ip:start");
     wait_for_ip();
+    BOOT_STEP("wait_for_ip:done");
 
+    BOOT_STEP("sntp_init:start");
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
     esp_sntp_setservername(0, "pool.ntp.org");
     esp_sntp_set_sync_mode(SNTP_SYNC_MODE_SMOOTH);
     esp_sntp_set_time_sync_notification_cb(sntp_time_set_handler);
     esp_sntp_init();
+    BOOT_STEP("sntp_init:done");
 #endif
 
 #ifdef DEBUG_HEAP

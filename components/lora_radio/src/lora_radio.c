@@ -1,6 +1,7 @@
 #include "lora_radio.h"
 #include "lora_radio_config.h"
 
+#include <inttypes.h>
 #include <string.h>
 
 #include "esp_check.h"
@@ -40,6 +41,9 @@ static bool                     s_ready;
 static bool                     s_rx_active;
 static bool                     s_tx_active;
 static const lora_region_profile_t* s_region_profile;
+static volatile uint32_t        s_irq_count;
+static int64_t                  s_irq_window_start_us;
+static uint32_t                 s_irq_window_count;
 
 static esp_err_t lora_lock(void)
 {
@@ -452,6 +456,29 @@ static void lora_irq_task_fn( void* arg )
             continue;
         }
 
+        s_irq_count++;
+        s_irq_window_count++;
+        const int64_t now_us = esp_timer_get_time( );
+        if( s_irq_window_start_us == 0 )
+        {
+            s_irq_window_start_us = now_us;
+        }
+        else if( ( now_us - s_irq_window_start_us ) >= 1000000 )
+        {
+            if( s_irq_window_count > 100 )
+            {
+                ESP_LOGW( TAG, "LoRa DIO1 activity high irq_per_sec=%" PRIu32 " total=%" PRIu32 " rx_active=%d tx_active=%d",
+                          s_irq_window_count, s_irq_count, s_rx_active, s_tx_active );
+            }
+            else
+            {
+                ESP_LOGI( TAG, "LoRa DIO1 activity irq_per_sec=%" PRIu32 " total=%" PRIu32 " rx_active=%d tx_active=%d",
+                          s_irq_window_count, s_irq_count, s_rx_active, s_tx_active );
+            }
+            s_irq_window_start_us = now_us;
+            s_irq_window_count    = 0;
+        }
+
         if( lora_lock( ) != ESP_OK )
         {
             continue;
@@ -462,6 +489,14 @@ static void lora_irq_task_fn( void* arg )
         {
             lora_unlock( );
             lora_radio_emit( LORA_RADIO_EVENT_ERROR, NULL, 0 );
+            continue;
+        }
+
+        if( irq_status == 0 )
+        {
+            lora_unlock( );
+            ESP_LOGW( TAG, "LoRa IRQ wakeup with empty irq_status total=%" PRIu32, s_irq_count );
+            vTaskDelay( pdMS_TO_TICKS( 1 ) );
             continue;
         }
 

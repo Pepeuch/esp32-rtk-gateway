@@ -931,6 +931,7 @@ static void ntrip_runtime_supervisor_task(void *ctx)
     (void)ctx;
 
     uint32_t log_tick = 0;
+    ESP_LOGI(TAG, "supervisor task started interval_ms=%u", (unsigned)NTRIP_SUPERVISOR_INTERVAL_MS);
 
     while (true) {
         platform_capabilities_t capabilities;

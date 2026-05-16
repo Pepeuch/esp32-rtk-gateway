@@ -22,6 +22,15 @@ config BOARD_GENERIC_ESP32_ETH
 
 endchoice
 
+config ETHERNET_DHCP_TIMEOUT_MS
+    int "Ethernet DHCP timeout (ms)"
+    default 12000
+    range 1000 60000
+    help
+        How long to wait for an Ethernet IPv4 address after the PHY link is up
+        before starting WiFi fallback. This is only a firmware policy timeout,
+        not a guarantee about network behavior.
+
 choice GNSS_RECEIVER_DEFAULT
     prompt "Default GNSS receiver family"
     default GNSS_RECEIVER_DEFAULT_AUTO

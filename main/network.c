@@ -3,6 +3,7 @@
 #include "network_state.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include <inttypes.h>
 
 static const char *TAG = "NETWORK";
 
@@ -23,17 +24,27 @@ bool network_is_ethernet_link_up(void)
     return network_state_get_ethernet_link_up();
 }
 
+bool network_is_ethernet_started(void)
+{
+    return network_state_get_ethernet_driver_started();
+}
+
+bool network_is_ethernet_has_ip(void)
+{
+    return network_state_get_ethernet_has_ip();
+}
+
 bool network_is_ethernet_ready(void)
 {
     return network_state_is_network_ready();
 }
 
-bool network_wait_for_ethernet_ready(uint32_t timeout_ms)
+bool network_wait_for_ethernet_link_up(uint32_t timeout_ms)
 {
     int64_t start = esp_timer_get_time();
 
     while ((esp_timer_get_time() - start) < ((int64_t)timeout_ms * 1000)) {
-        if (network_is_ethernet_ready()) {
+        if (network_is_ethernet_link_up()) {
             return true;
         }
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -42,6 +53,40 @@ bool network_wait_for_ethernet_ready(uint32_t timeout_ms)
     return false;
 }
 
+bool network_wait_for_ethernet_ip(uint32_t timeout_ms)
+{
+    int64_t start = esp_timer_get_time();
+
+    while ((esp_timer_get_time() - start) < ((int64_t)timeout_ms * 1000)) {
+        if (network_is_ethernet_has_ip()) {
+            return true;
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+    return false;
+}
+
+bool network_wait_for_ethernet_ready(uint32_t timeout_ms)
+{
+    return network_wait_for_ethernet_ip(timeout_ms);
+}
+
+int64_t network_get_ethernet_link_up_time_us(void)
+{
+    return network_state_get_ethernet_link_up_time_us();
+}
+
+int64_t network_get_ethernet_ip_time_us(void)
+{
+    return network_state_get_ethernet_ip_time_us();
+}
+
+int64_t network_get_ethernet_ip_latency_us(void)
+{
+    return network_state_get_ethernet_ip_latency_us();
+}
+
 bool network_is_ethernet(void){
-    return network_is_ethernet_ready();
+    return network_is_ethernet_started();
 }
