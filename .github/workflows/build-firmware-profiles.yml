@@ -31,73 +31,91 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
-    
+
       - name: Cache ESP-IDF tools
         uses: actions/cache@v4
         with:
           path: ~/.espressif
           key: esp-idf-${{ runner.os }}-${{ env.IDF_VERSION }}
 
-      - name: Build ESP-IDF firmware
-        uses: espressif/esp-idf-ci-action@v1
+      - name: Cache ESP-IDF source
+        uses: actions/cache@v4
         with:
-          esp_idf_version: ${{ env.IDF_VERSION }}
-          target: esp32s3
-          command: |
-            PROFILE="${{ github.event.inputs.profile }}"
+          path: ~/esp-idf
+          key: esp-idf-source-${{ runner.os }}-${{ env.IDF_VERSION }}
 
-            echo "Building profile: $PROFILE"
+      - name: Install ESP-IDF
+        shell: bash
+        run: |
+          if [ ! -d "$HOME/esp-idf/.git" ]; then
+            git clone --recursive --branch "$IDF_VERSION" https://github.com/espressif/esp-idf.git "$HOME/esp-idf"
+          else
+            cd "$HOME/esp-idf"
+            git fetch --tags
+            git checkout "$IDF_VERSION"
+            git submodule update --init --recursive
+          fi
 
-            mkdir -p docs/firmware/$PROFILE docs/manifests
+          "$HOME/esp-idf/install.sh"
 
-            CHIP_FAMILY=""
+      - name: Build firmware
+        shell: bash
+        run: |
+          source "$HOME/esp-idf/export.sh"
 
-            case "$PROFILE" in
-              waveshare_esp32s3_eth-*)
-                CHIP_FAMILY="ESP32-S3"
-                idf.py set-target esp32s3
-                ;;
-              mammotion_esp32s3-*)
-                CHIP_FAMILY="ESP32-S3"
-                idf.py set-target esp32s3
-                ;;
-              generic_esp32_eth-*)
-                CHIP_FAMILY="ESP32"
-                idf.py set-target esp32
-                ;;
-              *)
-                echo "Unknown profile: $PROFILE"
-                exit 1
-                ;;
-            esac
+          PROFILE="${{ github.event.inputs.profile }}"
+          echo "Building profile: $PROFILE"
 
-            idf.py build
+          mkdir -p "docs/firmware/$PROFILE" docs/manifests
 
-            cp build/bootloader/bootloader.bin docs/firmware/$PROFILE/
-            cp build/partition_table/partition-table.bin docs/firmware/$PROFILE/
-            cp build/ota_data_initial.bin docs/firmware/$PROFILE/ || true
-            cp build/esp32-rtk-gateway.bin docs/firmware/$PROFILE/
-            cp build/www.bin docs/firmware/$PROFILE/ || true
+          CHIP_FAMILY=""
 
-            cat > docs/manifests/$PROFILE.json <<EOF
-            {
-              "name": "ESP32 RTK Gateway - $PROFILE",
-              "version": "${GITHUB_SHA::7}",
-              "new_install_prompt_erase": true,
-              "builds": [
-                {
-                  "chipFamily": "$CHIP_FAMILY",
-                  "parts": [
-                    { "path": "../firmware/$PROFILE/bootloader.bin", "offset": 0 },
-                    { "path": "../firmware/$PROFILE/partition-table.bin", "offset": 32768 },
-                    { "path": "../firmware/$PROFILE/ota_data_initial.bin", "offset": 57344 },
-                    { "path": "../firmware/$PROFILE/esp32-rtk-gateway.bin", "offset": 131072 },
-                    { "path": "../firmware/$PROFILE/www.bin", "offset": 6422528 }
-                  ]
-                }
-              ]
-            }
-            EOF
+          case "$PROFILE" in
+            waveshare_esp32s3_eth-*)
+              CHIP_FAMILY="ESP32-S3"
+              idf.py set-target esp32s3
+              ;;
+            mammotion_esp32s3-*)
+              CHIP_FAMILY="ESP32-S3"
+              idf.py set-target esp32s3
+              ;;
+            generic_esp32_eth-*)
+              CHIP_FAMILY="ESP32"
+              idf.py set-target esp32
+              ;;
+            *)
+              echo "Unknown profile: $PROFILE"
+              exit 1
+              ;;
+          esac
+
+          idf.py build
+
+          cp build/bootloader/bootloader.bin "docs/firmware/$PROFILE/"
+          cp build/partition_table/partition-table.bin "docs/firmware/$PROFILE/"
+          cp build/ota_data_initial.bin "docs/firmware/$PROFILE/" || true
+          cp build/esp32-rtk-gateway.bin "docs/firmware/$PROFILE/"
+          cp build/www.bin "docs/firmware/$PROFILE/" || true
+
+          cat > "docs/manifests/$PROFILE.json" <<EOF
+          {
+            "name": "ESP32 RTK Gateway - $PROFILE",
+            "version": "${GITHUB_SHA::7}",
+            "new_install_prompt_erase": true,
+            "builds": [
+              {
+                "chipFamily": "$CHIP_FAMILY",
+                "parts": [
+                  { "path": "../firmware/$PROFILE/bootloader.bin", "offset": 0 },
+                  { "path": "../firmware/$PROFILE/partition-table.bin", "offset": 32768 },
+                  { "path": "../firmware/$PROFILE/ota_data_initial.bin", "offset": 57344 },
+                  { "path": "../firmware/$PROFILE/esp32-rtk-gateway.bin", "offset": 131072 },
+                  { "path": "../firmware/$PROFILE/www.bin", "offset": 6422528 }
+                ]
+              }
+            ]
+          }
+          EOF
 
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
