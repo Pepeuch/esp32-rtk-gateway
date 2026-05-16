@@ -121,6 +121,13 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add "${{ steps.capture.outputs.firmware_dir }}" "${{ steps.capture.outputs.manifest_path }}"
-          git commit -m "ci(firmware): publish ${{ steps.capture.outputs.firmware_id }}" || echo "No firmware changes"
+          firmware_id="${{ steps.capture.outputs.firmware_id }}"
+          firmware_dir="${{ steps.capture.outputs.firmware_dir }}"
+          manifest_path="${{ steps.capture.outputs.manifest_path }}"
+
+          git add -f "$firmware_dir"/*.bin
+          git add "$firmware_dir/profile.json"
+          git add "$manifest_path"
+
+          git commit -m "ci(firmware): publish $firmware_id" || echo "No firmware changes"
           git push origin main
