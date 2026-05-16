@@ -44,6 +44,9 @@ typedef struct {
     uint32_t bandwidth_hz;
     uint8_t coding_rate;
     uint8_t sync_word;
+    uint16_t preamble_len;
+    bool crc_on;
+    bool invert_iq;
     int8_t tx_power_dbm;
 
     lora_radio_callback_t callback;

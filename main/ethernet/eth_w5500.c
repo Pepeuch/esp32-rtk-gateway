@@ -127,7 +127,7 @@ esp_netif_t *eth_w5500_init(void)
     phy_config.reset_gpio_num = BOARD_ETH_RST;
 
     eth_w5500_config_t w5500_config = ETH_W5500_DEFAULT_CONFIG(BOARD_ETH_SPI_HOST, &devcfg);
-    w5500_config.int_gpio_num = -1;
+    w5500_config.int_gpio_num = BOARD_ETH_INT;
     w5500_config.poll_period_ms = 100;
 
     mac = esp_eth_mac_new_w5500(&w5500_config, &mac_config);

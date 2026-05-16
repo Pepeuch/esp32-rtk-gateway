@@ -26,6 +26,7 @@
 #include "tasks.h"
 #include "config.h"
 #include "esp_netif.h"
+#include "config/board_config.h"
 
 
 static const char *TAG = "CONFIG";
@@ -245,23 +246,23 @@ const config_item_t CONFIG_ITEMS[] = {
         {
                 .key = KEY_CONFIG_UART_NUM,
                 .type = CONFIG_ITEM_TYPE_UINT8,
-                .def.uint8 = UART_NUM_0
+                .def.uint8 = DEFAULT_GNSS_UART_NUM
         }, {
                 .key = KEY_CONFIG_UART_TX_PIN,
                 .type = CONFIG_ITEM_TYPE_UINT8,
-                .def.uint8 = GPIO_NUM_43
+                .def.uint8 = DEFAULT_GNSS_UART_TX_PIN
         }, {
                 .key = KEY_CONFIG_UART_RX_PIN,
                 .type = CONFIG_ITEM_TYPE_UINT8,
-                .def.uint8 = GPIO_NUM_44
+                .def.uint8 = DEFAULT_GNSS_UART_RX_PIN
         }, {
                 .key = KEY_CONFIG_UART_RTS_PIN,
                 .type = CONFIG_ITEM_TYPE_UINT8,
-                .def.uint8 = GPIO_NUM_16
+                .def.uint8 = DEFAULT_GNSS_UART_RTS_PIN
         }, {
                 .key = KEY_CONFIG_UART_CTS_PIN,
                 .type = CONFIG_ITEM_TYPE_UINT8,
-                .def.uint8 = GPIO_NUM_17
+                .def.uint8 = DEFAULT_GNSS_UART_CTS_PIN
         }, {
                 .key = KEY_CONFIG_UART_BAUD_RATE,
                 .type = CONFIG_ITEM_TYPE_UINT32,
@@ -304,7 +305,7 @@ const config_item_t CONFIG_ITEMS[] = {
         }, {
                 .key = KEY_CONFIG_RECEIVER_UART_PORT,
                 .type = CONFIG_ITEM_TYPE_UINT8,
-                .def.uint8 = UART_NUM_0
+                .def.uint8 = DEFAULT_GNSS_UART_NUM
         }, {
                 .key = KEY_CONFIG_RECEIVER_MODE,
                 .type = CONFIG_ITEM_TYPE_INT8,

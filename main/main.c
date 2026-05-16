@@ -45,14 +45,16 @@
 #include "ntrip_slots.h"
 #include "ntrip_runtime.h"
 #include "receiver.h"
+#include "board_pins.h"
 
 #include "lora_radio.h"
 #include "lora_radio_config.h"
-#include "driver/spi_master.h"
 
 static const char *TAG = "MAIN";
 
 static char *reset_reason_name(esp_reset_reason_t reason);
+static void lora_cb(lora_radio_event_t event, const uint8_t *data, size_t len, void *ctx);
+static void lora_transport_rtcm_rx_hook(const uint8_t *data, size_t len);
 
 static void got_ip_event_handler(void *arg, esp_event_base_t event_base,
                                  int32_t event_id, void *event_data)
@@ -66,6 +68,41 @@ static void got_ip_event_handler(void *arg, esp_event_base_t event_base,
 static void sntp_time_set_handler(struct timeval *tv)
 {
     ESP_LOGI(TAG, "Synced time from SNTP");
+}
+
+static void lora_cb(lora_radio_event_t event, const uint8_t *data, size_t len, void *ctx)
+{
+    (void)ctx;
+
+    switch (event) {
+        case LORA_RADIO_EVENT_RX_DONE:
+            lora_transport_rtcm_rx_hook(data, len);
+            break;
+
+        case LORA_RADIO_EVENT_TX_DONE:
+            ESP_LOGD(TAG, "LoRa TX done");
+            break;
+
+        case LORA_RADIO_EVENT_RX_TIMEOUT:
+            ESP_LOGW(TAG, "LoRa RX timeout");
+            break;
+
+        case LORA_RADIO_EVENT_TX_TIMEOUT:
+            ESP_LOGW(TAG, "LoRa TX timeout");
+            break;
+
+        case LORA_RADIO_EVENT_ERROR:
+        default:
+            ESP_LOGW(TAG, "LoRa event error");
+            break;
+    }
+}
+
+static void lora_transport_rtcm_rx_hook(const uint8_t *data, size_t len)
+{
+    (void)data;
+    ESP_LOGI(TAG, "LoRa RX payload received (%u bytes), RTCM hook ready", (unsigned)len);
+    // TODO: brancher le transport RTCM entrant vers le pipeline GNSS.
 }
 
 void app_main(void)
@@ -157,6 +194,41 @@ void app_main(void)
     ESP_ERROR_CHECK(receiver_init());
     ESP_ERROR_CHECK(ntrip_runtime_init());
 
+#if BOARD_HAS_LORA_RADIO
+    lora_radio_config_t lora_cfg = {
+        .pin_mosi = BOARD_LORA_MOSI,
+        .pin_miso = BOARD_LORA_MISO,
+        .pin_sck = BOARD_LORA_SCK,
+        .pin_nss = BOARD_LORA_NSS,
+        .pin_reset = BOARD_LORA_RESET,
+        .pin_busy = BOARD_LORA_BUSY,
+        .pin_dio1 = BOARD_LORA_DIO1,
+        .spi_host = BOARD_LORA_SPI_HOST,
+        .spi_clock_hz = LORA_DEFAULT_SPI_CLOCK_HZ,
+        .frequency_hz = LORA_DEFAULT_FREQ_HZ,
+        .spreading_factor = LORA_DEFAULT_SF,
+        .bandwidth_hz = LORA_DEFAULT_BW_HZ,
+        .coding_rate = LORA_DEFAULT_CR,
+        .sync_word = LORA_DEFAULT_SYNC_WORD,
+        .preamble_len = LORA_DEFAULT_PREAMBLE_LEN,
+        .crc_on = LORA_DEFAULT_CRC_ON,
+        .invert_iq = LORA_DEFAULT_INVERT_IQ,
+        .tx_power_dbm = LORA_DEFAULT_TX_POWER_DBM,
+        .callback = lora_cb,
+        .user_ctx = NULL,
+    };
+
+    esp_err_t lora_err = lora_radio_init(&lora_cfg);
+    if (lora_err != ESP_OK) {
+        ESP_LOGE(TAG, "LoRa init failed: %s", esp_err_to_name(lora_err));
+    } else {
+        lora_err = lora_radio_start_rx();
+        if (lora_err != ESP_OK) {
+            ESP_LOGE(TAG, "LoRa RX start failed: %s", esp_err_to_name(lora_err));
+        }
+    }
+#endif
+
     if (netif != NULL) {
         ESP_LOGI(TAG, "Waiting up to 3000 ms for Ethernet...");
         eth_ready = network_wait_for_ethernet_ready(3000);
@@ -245,48 +317,4 @@ static char *reset_reason_name(esp_reset_reason_t reason)
             return "SDIO";
     }
     return "UNKNOWN";
-}
-
-static void lora_cb(lora_radio_event_t event, const uint8_t *data, size_t len, void *ctx)
-{
-    switch (event) {
-    case LORA_RADIO_EVENT_RX_DONE:
-        // TODO: injecter data vers RTCM/GNSS
-        break;
-
-    case LORA_RADIO_EVENT_TX_DONE:
-        break;
-
-    default:
-        break;
-    }
-}
-
-void app_main(void)
-{
-    lora_radio_config_t cfg = {
-        .pin_mosi = LORA_DEFAULT_MOSI,
-        .pin_miso = LORA_DEFAULT_MISO,
-        .pin_sck = LORA_DEFAULT_SCK,
-        .pin_nss = LORA_DEFAULT_NSS,
-        .pin_reset = LORA_DEFAULT_RESET,
-        .pin_busy = LORA_DEFAULT_BUSY,
-        .pin_dio1 = LORA_DEFAULT_DIO1,
-
-        .spi_host = SPI2_HOST,
-        .spi_clock_hz = LORA_DEFAULT_SPI_CLOCK_HZ,
-
-        .frequency_hz = LORA_DEFAULT_FREQ_HZ,
-        .spreading_factor = LORA_DEFAULT_SF,
-        .bandwidth_hz = LORA_DEFAULT_BW_HZ,
-        .coding_rate = LORA_DEFAULT_CR,
-        .sync_word = LORA_DEFAULT_SYNC_WORD,
-        .tx_power_dbm = LORA_DEFAULT_TX_POWER_DBM,
-
-        .callback = lora_cb,
-        .user_ctx = NULL,
-    };
-
-    lora_radio_init(&cfg);
-    lora_radio_start_rx();
 }

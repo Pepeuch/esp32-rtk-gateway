@@ -29,7 +29,7 @@ idf_component_register(SRCS "main.c"
 		"protocol/nmea.c"
 		"network.c"
         INCLUDE_DIRS "include" "." "ethernet"
-		REQUIRES w5500 esp_eth esp_timer app_update  esp_bootloader_format bootloader bootloader_support soc esp_netif driver nvs_flash esp_partition mbedtls tcp_transport lwip esp_partition esp_http_server espcoredump esp_https_ota esp_wifi esp_psram mbedtls vfs json tcp_transport esp_timer spiffs
+		REQUIRES w5500 esp_eth esp_timer app_update  esp_bootloader_format bootloader bootloader_support soc esp_netif driver nvs_flash esp_partition mbedtls tcp_transport lwip esp_partition esp_http_server espcoredump esp_https_ota esp_wifi esp_psram mbedtls vfs json tcp_transport esp_timer spiffs lora_radio board_config
 
 		)
 
