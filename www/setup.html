@@ -165,16 +165,40 @@
             else if (mode === 'base_fixed') setStatus('Fixed base preset selected. Verify stored coordinates before applying in Config.', 'warn');
             else setStatus('Wizard loaded. Review recommendations, then apply settings from Config when ready.', 'ok');
         };
+        const fetchJson = async (url) => {
+            const response = await fetch(url, { cache: 'no-store' });
+            if (!response.ok) throw new Error('HTTP ' + response.status + ' for ' + url);
+            return response.json();
+        };
         const loadData = async () => {
             try {
-                const [capabilities, status, gnss, profiles, base] = await Promise.all([
-                    fetch('/api/capabilities').then((r) => r.json()),
-                    fetch('/api/status').then((r) => r.json()),
-                    fetch('/api/gnss/status').then((r) => r.json()),
-                    fetch('/api/gnss/profiles').then((r) => r.json()),
-                    fetch('/api/gnss/base/status').then((r) => r.json())
-                ]);
-                const context = { capabilities, status, gnss, profiles, base };
+                const capabilities = await fetchJson('/api/capabilities');
+                const status = await fetchJson('/api/status');
+                const context = {
+                    capabilities,
+                    status,
+                    gnss: { detected: false, receiver_type: 'nmea' },
+                    profiles: null,
+                    base: null
+                };
+
+                try {
+                    context.gnss = await fetchJson('/api/gnss/status');
+                } catch (error) {
+                }
+                try {
+                    context.profiles = await fetchJson('/api/gnss/profiles');
+                } catch (error) {
+                }
+                try {
+                    context.base = await fetchJson('/api/gnss/base/status');
+                } catch (error) {
+                }
+
+                const gnss = context.gnss || { detected: false, receiver_type: 'nmea' };
+                const profiles = context.profiles;
+                const base = context.base;
+
                 clearNode(capabilityPills);
                 appendPill(capabilities.chip_family || 'unknown target');
                 appendPill(capabilities.network_profile || 'unknown network profile');
