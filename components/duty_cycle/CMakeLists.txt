@@ -1,9 +1,10 @@
 idf_component_register(
     SRCS
-        "src/rtcm_filter.c"
-        "src/rtcm_profiles.c"
+        "src/duty_cycle.c"
     INCLUDE_DIRS
         "include"
     REQUIRES
         esp_timer
+        freertos
+        lora_radio
 )

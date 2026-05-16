@@ -9,23 +9,10 @@
 
 static const char *TAG = "rtcm_filter";
 
-typedef struct {
-    uint16_t message_type;
-    uint32_t min_interval_ms;
-} rtcm_filter_default_rule_t;
-
-static const rtcm_filter_default_rule_t s_default_rules[] = {
-    { 1005, 10000 },
-    { 1006, 10000 },
-    { 1077, 0 },
-    { 1087, 0 },
-    { 1230, 10000 },
-};
-
 static esp_err_t rtcm_filter_parse_frame(const uint8_t *frame, size_t frame_len, uint16_t *message_type, uint16_t *payload_length);
 static rtcm_filter_rule_state_t *rtcm_filter_find_rule(rtcm_filter_t *filter, uint16_t message_type);
 static rtcm_filter_rule_state_t *rtcm_filter_add_rule(rtcm_filter_t *filter, uint16_t message_type);
-static const char *rtcm_filter_decision_name(rtcm_filter_decision_t decision);
+static esp_err_t rtcm_filter_apply_profile(rtcm_filter_t *filter, const rtcm_profile_t *profile);
 
 uint16_t rtcm3_get_message_type(const uint8_t *frame, size_t frame_len)
 {
@@ -164,32 +151,36 @@ esp_err_t rtcm3_stream_push_byte(rtcm3_stream_parser_t *parser,
 
 void rtcm_filter_init(rtcm_filter_t *filter)
 {
-    if (filter == NULL) {
-        return;
-    }
+    (void)rtcm_filter_init_with_profile(filter, RTCM_PROFILE_RTK_MINIMAL);
+}
 
-    (void)rtcm_filter_reset(filter);
+esp_err_t rtcm_filter_init_with_profile(rtcm_filter_t *filter, rtcm_profile_id_t profile_id)
+{
+    return rtcm_filter_reset_with_profile(filter, profile_id);
 }
 
 esp_err_t rtcm_filter_reset(rtcm_filter_t *filter)
 {
+    return rtcm_filter_reset_with_profile(filter, RTCM_PROFILE_RTK_MINIMAL);
+}
+
+esp_err_t rtcm_filter_reset_with_profile(rtcm_filter_t *filter, rtcm_profile_id_t profile_id)
+{
+    const rtcm_profile_t *profile;
+
     if (filter == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
 
-    memset(filter, 0, sizeof(*filter));
-
-    for (size_t i = 0; i < sizeof(s_default_rules) / sizeof(s_default_rules[0]); i++) {
-        esp_err_t err = rtcm_filter_set_rule(filter,
-                                             s_default_rules[i].message_type,
-                                             true,
-                                             s_default_rules[i].min_interval_ms);
-        if (err != ESP_OK) {
-            return err;
-        }
+    profile = rtcm_profile_get(profile_id);
+    if (profile == NULL) {
+        return ESP_ERR_NOT_FOUND;
     }
 
-    return ESP_OK;
+    memset(filter, 0, sizeof(*filter));
+    filter->profile_id = profile->profile_id;
+    filter->unknown_action = profile->unknown_action;
+    return rtcm_filter_apply_profile(filter, profile);
 }
 
 esp_err_t rtcm_filter_set_rule(rtcm_filter_t *filter, uint16_t message_type, bool enabled, uint32_t min_interval_ms)
@@ -212,6 +203,8 @@ esp_err_t rtcm_filter_set_rule(rtcm_filter_t *filter, uint16_t message_type, boo
     rule->rule.message_type = message_type;
     rule->rule.enabled = enabled;
     rule->rule.min_interval_ms = min_interval_ms;
+    rule->rule.priority = RTCM_PRIORITY_MEDIUM;
+    rule->rule.recommended_max_age_ms = min_interval_ms;
     if (!enabled) {
         rule->last_sent_us = 0;
     }
@@ -248,10 +241,23 @@ esp_err_t rtcm_filter_evaluate(rtcm_filter_t *filter, const uint8_t *frame, size
 
     rule = rtcm_filter_find_rule(filter, message_type);
     if (rule == NULL || !rule->rule.enabled) {
+        result->priority = (filter->unknown_action == RTCM_UNKNOWN_ACTION_LOW_PLACEHOLDER)
+                               ? RTCM_PRIORITY_LOW
+                               : RTCM_PRIORITY_DROP;
+        result->recommended_max_age_ms = 0;
         result->decision = RTCM_FILTER_DROP;
-        ESP_LOGI(TAG, "RTCM type=%u decision=%s", message_type, rtcm_filter_decision_name(result->decision));
+        ESP_LOGI(TAG,
+                 "RTCM type=%u profile=%s priority=%s decision=%s max_age_ms=%" PRIu32,
+                 message_type,
+                 rtcm_profile_name(filter->profile_id),
+                 rtcm_priority_name(result->priority),
+                 rtcm_filter_decision_name(result->decision),
+                 result->recommended_max_age_ms);
         return ESP_OK;
     }
+
+    result->priority = rule->rule.priority;
+    result->recommended_max_age_ms = rule->rule.recommended_max_age_ms;
 
     now_us = esp_timer_get_time();
     if (rule->rule.min_interval_ms > 0 && rule->last_sent_us > 0) {
@@ -263,17 +269,42 @@ esp_err_t rtcm_filter_evaluate(rtcm_filter_t *filter, const uint8_t *frame, size
             result->decision = RTCM_FILTER_DELAY;
             result->delay_ms = (uint32_t)((remaining_us + 999) / 1000);
             ESP_LOGI(TAG,
-                     "RTCM type=%u decision=%s delay_ms=%" PRIu32,
+                     "RTCM type=%u profile=%s priority=%s decision=%s delay_ms=%" PRIu32 " max_age_ms=%" PRIu32,
                      message_type,
+                     rtcm_profile_name(filter->profile_id),
+                     rtcm_priority_name(result->priority),
                      rtcm_filter_decision_name(result->decision),
-                     result->delay_ms);
+                     result->delay_ms,
+                     result->recommended_max_age_ms);
             return ESP_OK;
         }
     }
 
-    rule->last_sent_us = now_us;
     result->decision = RTCM_FILTER_SEND;
-    ESP_LOGI(TAG, "RTCM type=%u decision=%s", message_type, rtcm_filter_decision_name(result->decision));
+    ESP_LOGI(TAG,
+             "RTCM type=%u profile=%s priority=%s decision=%s max_age_ms=%" PRIu32,
+             message_type,
+             rtcm_profile_name(filter->profile_id),
+             rtcm_priority_name(result->priority),
+             rtcm_filter_decision_name(result->decision),
+             result->recommended_max_age_ms);
+    return ESP_OK;
+}
+
+esp_err_t rtcm_filter_mark_sent(rtcm_filter_t *filter, uint16_t message_type)
+{
+    rtcm_filter_rule_state_t *rule;
+
+    if (filter == NULL || message_type == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    rule = rtcm_filter_find_rule(filter, message_type);
+    if (rule == NULL || !rule->rule.enabled) {
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    rule->last_sent_us = esp_timer_get_time();
     return ESP_OK;
 }
 
@@ -345,16 +376,46 @@ static rtcm_filter_rule_state_t *rtcm_filter_add_rule(rtcm_filter_t *filter, uin
     return rule;
 }
 
-static const char *rtcm_filter_decision_name(rtcm_filter_decision_t decision)
+const char *rtcm_filter_decision_name(rtcm_filter_decision_t decision)
 {
     switch (decision) {
-    case RTCM_FILTER_SEND:
-        return "SEND";
-    case RTCM_FILTER_DROP:
+        case RTCM_FILTER_SEND:
+            return "SEND";
+        case RTCM_FILTER_DROP:
         return "DROP";
     case RTCM_FILTER_DELAY:
         return "DELAY";
     default:
-        return "UNKNOWN";
+            return "UNKNOWN";
     }
+}
+
+static esp_err_t rtcm_filter_apply_profile(rtcm_filter_t *filter, const rtcm_profile_t *profile)
+{
+    if (filter == NULL || profile == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    for (size_t i = 0; i < profile->rule_count; i++) {
+        const rtcm_profile_rule_t *profile_rule = &profile->rules[i];
+        rtcm_filter_rule_state_t *rule = rtcm_filter_add_rule(filter, profile_rule->message_type);
+
+        if (rule == NULL) {
+            return ESP_ERR_NO_MEM;
+        }
+
+        rule->rule.message_type = profile_rule->message_type;
+        rule->rule.enabled = true;
+        rule->rule.min_interval_ms = profile_rule->min_interval_ms;
+        rule->rule.priority = profile_rule->priority;
+        rule->rule.recommended_max_age_ms = profile_rule->recommended_max_age_ms;
+        rule->last_sent_us = 0;
+    }
+
+    ESP_LOGI(TAG,
+             "RTCM profile=%s rules=%u unknown_action=%s",
+             rtcm_profile_name(profile->profile_id),
+             (unsigned)profile->rule_count,
+             rtcm_unknown_action_name(profile->unknown_action));
+    return ESP_OK;
 }

@@ -33,13 +33,16 @@ typedef enum {
 
 typedef enum {
     LORA_RTCM_PROFILE_RTK_MINIMAL = 0,
+    LORA_RTCM_PROFILE_RTK_GPS_ONLY,
+    LORA_RTCM_PROFILE_RTK_FULL,
     LORA_RTCM_PROFILE_CUSTOM,
 } lora_rtcm_profile_t;
 
 typedef enum {
-    LORA_DUTY_CYCLE_POLICY_CONFIGURABLE = 0,
-    LORA_DUTY_CYCLE_POLICY_REGION_SPECIFIC,
-    LORA_DUTY_CYCLE_POLICY_CUSTOM_USER_DEFINED,
+    LORA_DUTY_CYCLE_POLICY_NONE = 0,
+    LORA_DUTY_CYCLE_POLICY_DUTY_CYCLE,
+    LORA_DUTY_CYCLE_POLICY_LBT_PLACEHOLDER,
+    LORA_DUTY_CYCLE_POLICY_CUSTOM,
 } lora_duty_cycle_policy_t;
 
 typedef struct {
@@ -52,6 +55,9 @@ typedef struct {
     uint8_t default_coding_rate;
     int8_t max_tx_power_dbm_placeholder;
     lora_duty_cycle_policy_t duty_cycle_policy;
+    uint32_t duty_cycle_window_s_placeholder;
+    uint32_t max_airtime_per_window_ms_placeholder;
+    uint8_t duty_cycle_warning_threshold_percent;
     const char *duty_cycle_policy_note;
     lora_rtcm_profile_t recommended_rtcm_profile;
 } lora_region_profile_t;

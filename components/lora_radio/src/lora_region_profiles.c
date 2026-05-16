@@ -15,7 +15,10 @@ static const lora_region_profile_t s_region_profiles[] = {
         .default_spreading_factor = 7,
         .default_coding_rate = 5,
         .max_tx_power_dbm_placeholder = 14,
-        .duty_cycle_policy = LORA_DUTY_CYCLE_POLICY_REGION_SPECIFIC,
+        .duty_cycle_policy = LORA_DUTY_CYCLE_POLICY_DUTY_CYCLE,
+        .duty_cycle_window_s_placeholder = 3600,
+        .max_airtime_per_window_ms_placeholder = 360000,
+        .duty_cycle_warning_threshold_percent = 80,
         .duty_cycle_policy_note = "Configurable placeholder. Validate EU868 sub-band duty-cycle and ERP limits per deployment.",
         .recommended_rtcm_profile = LORA_RTCM_PROFILE_RTK_MINIMAL,
     },
@@ -28,7 +31,10 @@ static const lora_region_profile_t s_region_profiles[] = {
         .default_spreading_factor = 7,
         .default_coding_rate = 5,
         .max_tx_power_dbm_placeholder = 20,
-        .duty_cycle_policy = LORA_DUTY_CYCLE_POLICY_CONFIGURABLE,
+        .duty_cycle_policy = LORA_DUTY_CYCLE_POLICY_NONE,
+        .duty_cycle_window_s_placeholder = 3600,
+        .max_airtime_per_window_ms_placeholder = 0,
+        .duty_cycle_warning_threshold_percent = 0,
         .duty_cycle_policy_note = "Configurable placeholder. Validate dwell-time, EIRP, and channel-plan limits per deployment.",
         .recommended_rtcm_profile = LORA_RTCM_PROFILE_RTK_MINIMAL,
     },
@@ -41,7 +47,10 @@ static const lora_region_profile_t s_region_profiles[] = {
         .default_spreading_factor = 7,
         .default_coding_rate = 5,
         .max_tx_power_dbm_placeholder = 20,
-        .duty_cycle_policy = LORA_DUTY_CYCLE_POLICY_CONFIGURABLE,
+        .duty_cycle_policy = LORA_DUTY_CYCLE_POLICY_NONE,
+        .duty_cycle_window_s_placeholder = 3600,
+        .max_airtime_per_window_ms_placeholder = 0,
+        .duty_cycle_warning_threshold_percent = 0,
         .duty_cycle_policy_note = "Configurable placeholder. Validate AU915 channel mask, dwell-time, and EIRP limits per deployment.",
         .recommended_rtcm_profile = LORA_RTCM_PROFILE_RTK_MINIMAL,
     },
@@ -54,7 +63,10 @@ static const lora_region_profile_t s_region_profiles[] = {
         .default_spreading_factor = 7,
         .default_coding_rate = 5,
         .max_tx_power_dbm_placeholder = 16,
-        .duty_cycle_policy = LORA_DUTY_CYCLE_POLICY_REGION_SPECIFIC,
+        .duty_cycle_policy = LORA_DUTY_CYCLE_POLICY_LBT_PLACEHOLDER,
+        .duty_cycle_window_s_placeholder = 3600,
+        .max_airtime_per_window_ms_placeholder = 0,
+        .duty_cycle_warning_threshold_percent = 0,
         .duty_cycle_policy_note = "Configurable placeholder. Validate local AS923 variant, listen-before-talk, and EIRP limits per deployment.",
         .recommended_rtcm_profile = LORA_RTCM_PROFILE_RTK_MINIMAL,
     },
@@ -67,7 +79,10 @@ static const lora_region_profile_t s_region_profiles[] = {
         .default_spreading_factor = 7,
         .default_coding_rate = 5,
         .max_tx_power_dbm_placeholder = 22,
-        .duty_cycle_policy = LORA_DUTY_CYCLE_POLICY_CUSTOM_USER_DEFINED,
+        .duty_cycle_policy = LORA_DUTY_CYCLE_POLICY_CUSTOM,
+        .duty_cycle_window_s_placeholder = 0,
+        .max_airtime_per_window_ms_placeholder = 0,
+        .duty_cycle_warning_threshold_percent = 0,
         .duty_cycle_policy_note = "Advanced-user placeholder. Frequency, power, airtime, and legal constraints must be set explicitly.",
         .recommended_rtcm_profile = LORA_RTCM_PROFILE_RTK_MINIMAL,
     },
@@ -124,6 +139,10 @@ const char *lora_rtcm_profile_name(lora_rtcm_profile_t rtcm_profile)
     switch (rtcm_profile) {
         case LORA_RTCM_PROFILE_RTK_MINIMAL:
             return "rtk_minimal";
+        case LORA_RTCM_PROFILE_RTK_GPS_ONLY:
+            return "rtk_gps_only";
+        case LORA_RTCM_PROFILE_RTK_FULL:
+            return "rtk_full";
         case LORA_RTCM_PROFILE_CUSTOM:
             return "custom";
         default:
@@ -134,12 +153,14 @@ const char *lora_rtcm_profile_name(lora_rtcm_profile_t rtcm_profile)
 const char *lora_duty_cycle_policy_name(lora_duty_cycle_policy_t policy)
 {
     switch (policy) {
-        case LORA_DUTY_CYCLE_POLICY_CONFIGURABLE:
-            return "configurable";
-        case LORA_DUTY_CYCLE_POLICY_REGION_SPECIFIC:
-            return "region_specific";
-        case LORA_DUTY_CYCLE_POLICY_CUSTOM_USER_DEFINED:
-            return "custom_user_defined";
+        case LORA_DUTY_CYCLE_POLICY_NONE:
+            return "none";
+        case LORA_DUTY_CYCLE_POLICY_DUTY_CYCLE:
+            return "duty_cycle";
+        case LORA_DUTY_CYCLE_POLICY_LBT_PLACEHOLDER:
+            return "lbt_placeholder";
+        case LORA_DUTY_CYCLE_POLICY_CUSTOM:
+            return "custom";
         default:
             return "unknown";
     }

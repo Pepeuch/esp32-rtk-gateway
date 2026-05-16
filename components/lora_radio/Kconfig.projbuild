@@ -78,6 +78,12 @@ choice LORA_RTCM_PROFILE
 config LORA_RTCM_PROFILE_RTK_MINIMAL
     bool "rtk_minimal"
 
+config LORA_RTCM_PROFILE_RTK_GPS_ONLY
+    bool "rtk_gps_only"
+
+config LORA_RTCM_PROFILE_RTK_FULL
+    bool "rtk_full"
+
 config LORA_RTCM_PROFILE_CUSTOM
     bool "custom"
 

@@ -73,6 +73,9 @@ static const char *device_role_name(void);
 static void lora_cb(lora_radio_event_t event, const uint8_t *data, size_t len, void *ctx);
 static void lora_transport_rtcm_rx_hook(const uint8_t *data, size_t len);
 static esp_err_t lora_build_default_config(lora_radio_config_t *config);
+#if CONFIG_RTK_DEVICE_ROLE_BASE || CONFIG_RTK_DEVICE_ROLE_DUAL_DEBUG
+static rtcm_profile_id_t rtcm_profile_id_from_lora_profile(lora_rtcm_profile_t profile);
+#endif
 
 #if CONFIG_RTK_DEVICE_ROLE_BASE || CONFIG_RTK_DEVICE_ROLE_DUAL_DEBUG
 static void rtk_lora_uart_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data);
@@ -214,6 +217,23 @@ static esp_err_t lora_build_default_config(lora_radio_config_t *config)
     return ESP_OK;
 }
 
+#if CONFIG_RTK_DEVICE_ROLE_BASE || CONFIG_RTK_DEVICE_ROLE_DUAL_DEBUG
+static rtcm_profile_id_t rtcm_profile_id_from_lora_profile(lora_rtcm_profile_t profile)
+{
+    switch (profile) {
+        case LORA_RTCM_PROFILE_RTK_GPS_ONLY:
+            return RTCM_PROFILE_RTK_GPS_ONLY;
+        case LORA_RTCM_PROFILE_RTK_FULL:
+            return RTCM_PROFILE_RTK_FULL;
+        case LORA_RTCM_PROFILE_CUSTOM:
+            return RTCM_PROFILE_CUSTOM;
+        case LORA_RTCM_PROFILE_RTK_MINIMAL:
+        default:
+            return RTCM_PROFILE_RTK_MINIMAL;
+    }
+}
+#endif
+
 void app_main(void)
 {
     status_led_init();
@@ -321,23 +341,40 @@ void app_main(void)
             ESP_LOGE(TAG, "LoRa RX start failed: %s", esp_err_to_name(lora_err));
         } else {
 #if CONFIG_RTK_DEVICE_ROLE_BASE || CONFIG_RTK_DEVICE_ROLE_DUAL_DEBUG
-            const rtk_lora_pipeline_config_t pipeline_cfg = {
-                .uart_num = BOARD_GNSS_UART_NUM,
-                .uart_rx_pin = BOARD_GNSS_UART_RX_PIN,
-                .uart_tx_pin = BOARD_GNSS_UART_TX_PIN,
-                .pps_pin = BOARD_GNSS_PPS_PIN,
-                .uart_baud_rate = config_get_u32(CONF_ITEM(KEY_CONFIG_UART_BAUD_RATE)),
-                .stream_id = 1,
-                .max_lora_payload = LORA_TRANSPORT_DEFAULT_MAX_PAYLOAD,
-            };
-
-            lora_err = rtk_lora_pipeline_init(&pipeline_cfg);
-            if (lora_err != ESP_OK) {
-                ESP_LOGE(TAG, "RTK LoRa pipeline init failed: %s", esp_err_to_name(lora_err));
+            const lora_region_profile_t *region_profile = lora_region_get_profile(lora_cfg.region);
+            if (region_profile == NULL) {
+                ESP_LOGE(TAG, "LoRa region profile missing for base pipeline");
             } else {
-                lora_err = uart_register_read_handler(rtk_lora_uart_handler);
+                const rtk_lora_pipeline_config_t pipeline_cfg = {
+                    .uart_num = BOARD_GNSS_UART_NUM,
+                    .uart_rx_pin = BOARD_GNSS_UART_RX_PIN,
+                    .uart_tx_pin = BOARD_GNSS_UART_TX_PIN,
+                    .pps_pin = BOARD_GNSS_PPS_PIN,
+                    .uart_baud_rate = config_get_u32(CONF_ITEM(KEY_CONFIG_UART_BAUD_RATE)),
+                    .stream_id = 1,
+                    .max_lora_payload = LORA_TRANSPORT_DEFAULT_MAX_PAYLOAD,
+                    .rtcm_profile_id = rtcm_profile_id_from_lora_profile(lora_cfg.rtcm_profile),
+                    .region_name = region_profile->name,
+                    .duty_cycle_policy = region_profile->duty_cycle_policy,
+                    .duty_cycle_window_s = region_profile->duty_cycle_window_s_placeholder,
+                    .max_airtime_per_window_ms = region_profile->max_airtime_per_window_ms_placeholder,
+                    .duty_cycle_warning_threshold_percent = region_profile->duty_cycle_warning_threshold_percent,
+                    .frequency_hz = lora_cfg.frequency_hz,
+                    .bandwidth_hz = lora_cfg.bandwidth_hz,
+                    .spreading_factor = lora_cfg.spreading_factor,
+                    .coding_rate = lora_cfg.coding_rate,
+                    .preamble_len = lora_cfg.preamble_len,
+                    .crc_on = lora_cfg.crc_on,
+                };
+
+                lora_err = rtk_lora_pipeline_init(&pipeline_cfg);
                 if (lora_err != ESP_OK) {
-                    ESP_LOGE(TAG, "RTK LoRa UART handler register failed: %s", esp_err_to_name(lora_err));
+                    ESP_LOGE(TAG, "RTK LoRa pipeline init failed: %s", esp_err_to_name(lora_err));
+                } else {
+                    lora_err = uart_register_read_handler(rtk_lora_uart_handler);
+                    if (lora_err != ESP_OK) {
+                        ESP_LOGE(TAG, "RTK LoRa UART handler register failed: %s", esp_err_to_name(lora_err));
+                    }
                 }
             }
 #endif

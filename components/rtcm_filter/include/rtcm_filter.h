@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "esp_err.h"
+#include "rtcm_profiles.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -27,6 +28,8 @@ typedef struct {
     uint16_t message_type;
     bool enabled;
     uint32_t min_interval_ms;
+    rtcm_priority_t priority;
+    uint32_t recommended_max_age_ms;
 } rtcm_filter_rule_t;
 
 typedef struct {
@@ -37,13 +40,17 @@ typedef struct {
 typedef struct {
     rtcm_filter_rule_state_t rules[RTCM_FILTER_MAX_RULES];
     size_t rule_count;
+    rtcm_profile_id_t profile_id;
+    rtcm_unknown_action_t unknown_action;
 } rtcm_filter_t;
 
 typedef struct {
     rtcm_filter_decision_t decision;
     uint16_t message_type;
+    rtcm_priority_t priority;
     uint16_t payload_length;
     uint32_t delay_ms;
+    uint32_t recommended_max_age_ms;
     const uint8_t *frame;
     size_t frame_len;
 } rtcm_filter_result_t;
@@ -66,10 +73,14 @@ esp_err_t rtcm3_stream_push_byte(rtcm3_stream_parser_t *parser,
                                  size_t *frame_len);
 
 void rtcm_filter_init(rtcm_filter_t *filter);
+esp_err_t rtcm_filter_init_with_profile(rtcm_filter_t *filter, rtcm_profile_id_t profile_id);
 esp_err_t rtcm_filter_reset(rtcm_filter_t *filter);
+esp_err_t rtcm_filter_reset_with_profile(rtcm_filter_t *filter, rtcm_profile_id_t profile_id);
 esp_err_t rtcm_filter_set_rule(rtcm_filter_t *filter, uint16_t message_type, bool enabled, uint32_t min_interval_ms);
 esp_err_t rtcm_filter_get_frame_info(const uint8_t *frame, size_t frame_len, uint16_t *message_type, uint16_t *payload_length);
 esp_err_t rtcm_filter_evaluate(rtcm_filter_t *filter, const uint8_t *frame, size_t frame_len, rtcm_filter_result_t *result);
+esp_err_t rtcm_filter_mark_sent(rtcm_filter_t *filter, uint16_t message_type);
+const char *rtcm_filter_decision_name(rtcm_filter_decision_t decision);
 
 #ifdef __cplusplus
 }

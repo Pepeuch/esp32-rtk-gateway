@@ -4,6 +4,7 @@ idf_component_register(
     INCLUDE_DIRS
         "include"
     REQUIRES
+        duty_cycle
         driver
         freertos
         lora_radio

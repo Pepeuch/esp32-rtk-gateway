@@ -14,6 +14,7 @@ set(app_requires
     board_config
     bootloader
     bootloader_support
+    duty_cycle
     driver
     esp_eth
     esp_bootloader_format
