@@ -31,6 +31,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+    
+      - name: Cache ESP-IDF tools
+        uses: actions/cache@v4
+        with:
+          path: ~/.espressif
+          key: esp-idf-${{ runner.os }}-${{ env.IDF_VERSION }}
 
       - name: Build ESP-IDF firmware
         uses: espressif/esp-idf-ci-action@v1
