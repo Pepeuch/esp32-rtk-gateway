@@ -242,6 +242,23 @@ Longer-term exploration:
   - [ ] `idf.py size-components`
 - [ ] Ne pas toucher aux options WiFi/flash/log IRAM tant que le firmware n’est pas stabilisé en usage réel
 
+## TODO réseau / WebUI
+
+- [ ] Tester avec un autre câble Ethernet
+- [ ] Tester sur un autre switch/port
+- [ ] Vérifier vitesse/négociation du lien
+- [ ] Garder DHCP timeout à 30 s pour le moment
+- [ ] Vérifier les fichiers WebUI manquants (/c/*.js)
+- [ ] Vérifier génération SPIFFS complète
+- [ ] Audit mémoire WebUI/config.html
+- [ ] MQTT runtime control
+- [ ] LoRa TX demand-driven
+- [ ] Runtime TX timeout automatique
+- [ ] API WebUI enable/disable TX
+- [ ] MQTT topics:
+  - [ ] rtk/base/tx/set
+  - [ ] rtk/base/tx/status
+- [ ] Préparer futur protocole rover → base LoRa
 
 ## Legacy Notes
 
