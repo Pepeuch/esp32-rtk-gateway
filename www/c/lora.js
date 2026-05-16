@@ -106,7 +106,11 @@
                 .append($('<span>', { class: 'capability-pill', text: 'Role ' + (capabilities.device_role || 'unknown') }))
                 .append($('<span>', { class: 'capability-pill', text: 'Region ' + (lora.region || '-') }))
                 .append($('<span>', { class: 'capability-pill', text: 'Chip ' + (lora.chip_family || '-') }))
-                .append($('<span>', { class: 'capability-pill', text: 'RTCM ' + (lora.rtcm_profile || '-') }));
+                .append($('<span>', { class: 'capability-pill', text: 'RTCM ' + (lora.rtcm_profile || '-') }))
+                .append($('<span>', {
+                    class: 'capability-pill',
+                    text: lora.tx_enabled ? 'LoRa TX enabled' : 'LoRa TX disabled'
+                }));
 
             this.updatePolicyInfo();
             this.updateValidation();

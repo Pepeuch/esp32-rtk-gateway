@@ -33,6 +33,7 @@ typedef struct {
     uint8_t coding_rate;
     uint16_t preamble_len;
     bool crc_on;
+    bool tx_enabled;
 } rtk_lora_pipeline_config_t;
 
 typedef struct {

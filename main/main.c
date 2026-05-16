@@ -70,6 +70,12 @@
 
 static const char *TAG = "MAIN";
 
+#ifdef CONFIG_RTK_LORA_TX_ENABLED
+#define RTK_LORA_TX_ENABLED_BUILD 1
+#else
+#define RTK_LORA_TX_ENABLED_BUILD 0
+#endif
+
 static char *reset_reason_name(esp_reset_reason_t reason);
 static const char *device_role_name(void);
 static void lora_cb(lora_radio_event_t event, const uint8_t *data, size_t len, void *ctx);
@@ -385,6 +391,7 @@ void app_main(void)
                     .coding_rate = lora_cfg.coding_rate,
                     .preamble_len = lora_cfg.preamble_len,
                     .crc_on = lora_cfg.crc_on,
+                    .tx_enabled = RTK_LORA_TX_ENABLED_BUILD,
                 };
 
                 BOOT_STEP("rtk_lora_pipeline_init:start");

@@ -9,6 +9,12 @@
 #include "memory_policy.h"
 #include "network.h"
 
+#ifdef CONFIG_RTK_LORA_TX_ENABLED
+#define RTK_LORA_TX_ENABLED_BUILD 1
+#else
+#define RTK_LORA_TX_ENABLED_BUILD 0
+#endif
+
 static size_t capabilities_max_ntrip_slots(bool ethernet_active, bool psram_available)
 {
     if (ethernet_active) {
@@ -60,6 +66,7 @@ void capabilities_get(platform_capabilities_t *capabilities)
     capabilities->wifi_only = !capabilities->ethernet_active;
     capabilities->advanced_diagnostics = capabilities->ethernet_active && capabilities->psram_available;
     capabilities->has_lora_radio = BOARD_HAS_LORA_RADIO && CONFIG_LORA_FEATURE_ENABLED;
+    capabilities->lora_tx_enabled = capabilities->has_lora_radio && RTK_LORA_TX_ENABLED_BUILD;
     capabilities->configured_ntrip_slots = 5;
     capabilities->max_ntrip_slots = capabilities_max_ntrip_slots(
         capabilities->ethernet_active,

@@ -380,12 +380,14 @@ static void capabilities_json_fill(cJSON *cap)
     cJSON_AddBoolToObject(cap, "advanced_diagnostics", capabilities.advanced_diagnostics);
     cJSON_AddBoolToObject(cap, "safe_mode", capabilities.safe_mode);
     cJSON_AddBoolToObject(cap, "has_lora_radio", capabilities.has_lora_radio);
+    cJSON_AddBoolToObject(cap, "lora_tx_enabled", capabilities.lora_tx_enabled);
     cJSON_AddNumberToObject(cap, "max_ntrip_slots", capabilities.max_ntrip_slots);
     cJSON_AddNumberToObject(cap, "configured_ntrip_slots", capabilities.configured_ntrip_slots);
     cJSON_AddStringToObject(cap, "device_role", capabilities.device_role);
 
     cJSON *lora = cJSON_AddObjectToObject(cap, "lora");
     cJSON_AddBoolToObject(lora, "supported", capabilities.has_lora_radio);
+    cJSON_AddBoolToObject(lora, "tx_enabled", capabilities.lora_tx_enabled);
     cJSON_AddStringToObject(lora, "region", capabilities.lora_region);
     cJSON_AddStringToObject(lora, "chip_family", capabilities.lora_chip_family);
     cJSON_AddStringToObject(lora, "radio_profile", capabilities.lora_radio_profile);

@@ -17,6 +17,7 @@ typedef struct platform_capabilities {
     bool advanced_diagnostics;
     bool safe_mode;
     bool has_lora_radio;
+    bool lora_tx_enabled;
     size_t max_ntrip_slots;
     size_t configured_ntrip_slots;
     size_t heap_total_bytes;

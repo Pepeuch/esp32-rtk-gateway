@@ -221,6 +221,28 @@ Longer-term exploration:
 - [ ] Add duty-cycle manager
 - [ ] Add RTCM profile selection per region
 
+## TODO IRAM / mémoire
+
+- [ ] Retirer `IRAM_ATTR` de `lora_dio1_isr`
+- [ ] Rebuild et vérifier `idf.py size`
+- [ ] Boot test complet :
+  - [ ] W5500 Ethernet
+  - [ ] DHCP
+  - [ ] WebUI
+  - [ ] LoRa init
+  - [ ] RTCM pipeline
+- [ ] Garder W5500 ISR inchangé pour l’instant
+- [ ] Reporter l’optimisation Kconfig IRAM à plus tard
+- [ ] Tester plus tard, une option à la fois :
+  - [ ] `CONFIG_RINGBUF_PLACE_FUNCTIONS_INTO_FLASH`
+  - [ ] `CONFIG_HEAP_PLACE_FUNCTION_INTO_FLASH`
+  - [ ] `CONFIG_FREERTOS_PLACE_FUNCTIONS_INTO_FLASH`
+- [ ] Comparer avant/après avec :
+  - [ ] `idf.py size`
+  - [ ] `idf.py size-components`
+- [ ] Ne pas toucher aux options WiFi/flash/log IRAM tant que le firmware n’est pas stabilisé en usage réel
+
+
 ## Legacy Notes
 
 This project has evolved through several phases:

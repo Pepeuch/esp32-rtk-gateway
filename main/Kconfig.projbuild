@@ -31,6 +31,15 @@ config ETHERNET_DHCP_TIMEOUT_MS
         before starting WiFi fallback. This is only a firmware policy timeout,
         not a guarantee about network behavior.
 
+config RTK_LORA_TX_ENABLED
+    bool "Enable RTK LoRa TX publishing"
+    default n
+    help
+        When disabled, the base RTK pipeline still parses GNSS UART RTCM,
+        runs filtering, and can initialize the LoRa radio, but it will drop
+        outgoing LoRa packets before radio transmission. Enable this only
+        when LoRa publication is explicitly desired.
+
 choice GNSS_RECEIVER_DEFAULT
     prompt "Default GNSS receiver family"
     default GNSS_RECEIVER_DEFAULT_AUTO

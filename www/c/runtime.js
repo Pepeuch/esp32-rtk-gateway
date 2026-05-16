@@ -41,6 +41,15 @@
                 .append($('<span>', { class: 'capability-pill', text: cap.psram_available ? 'PSRAM' : 'No PSRAM' }))
                 .append($('<span>', { class: 'capability-pill', text: cap.ethernet_active ? 'Ethernet active' : 'Wi-Fi only' }))
                 .append($('<span>', { class: 'capability-pill', text: cap.has_lora_radio ? 'LoRa available' : 'LoRa unavailable' }));
+
+            if (cap.has_lora_radio) {
+                this.capabilitiesSummary.append(
+                    $('<span>', {
+                        class: 'capability-pill',
+                        text: cap.lora_tx_enabled ? 'LoRa TX enabled' : 'LoRa TX disabled'
+                    })
+                );
+            }
         },
 
         renderWifiStatus: function(wifi) {

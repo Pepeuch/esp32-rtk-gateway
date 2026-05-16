@@ -148,7 +148,7 @@ esp_err_t rtk_lora_pipeline_init(const rtk_lora_pipeline_config_t *config)
 
     ESP_LOGI(TAG,
              "GNSS UART ready uart=%d rx=%d tx=%d pps=%d baud=%" PRIu32
-             " lora_payload_max=%u region=%s rtcm_profile=%s policy=%s budget_ms=%" PRIu32 "/%" PRIu32,
+             " lora_payload_max=%u region=%s rtcm_profile=%s policy=%s tx_enabled=%d budget_ms=%" PRIu32 "/%" PRIu32,
              s_pipeline.config.uart_num,
              s_pipeline.config.uart_rx_pin,
              s_pipeline.config.uart_tx_pin,
@@ -158,6 +158,7 @@ esp_err_t rtk_lora_pipeline_init(const rtk_lora_pipeline_config_t *config)
              s_pipeline.config.region_name != NULL ? s_pipeline.config.region_name : "UNKNOWN",
              rtk_lora_profile_name(s_pipeline.config.rtcm_profile_id),
              lora_duty_cycle_policy_name(s_pipeline.config.duty_cycle_policy),
+             s_pipeline.config.tx_enabled,
              duty_cycle_get_remaining_ms(),
              s_pipeline.config.max_airtime_per_window_ms);
 
@@ -343,6 +344,18 @@ static void rtk_lora_tx_task(void *ctx)
         esp_err_t err;
 
         if (xQueueReceive(s_pipeline.tx_queue, &packet, portMAX_DELAY) != pdTRUE) {
+            continue;
+        }
+
+        if (!s_pipeline.config.tx_enabled) {
+            ESP_LOGW(TAG,
+                     "RTK LoRa TX disabled: dropping frame before radio send frame_seq=%u fragment=%u/%u type=%u priority=%s bytes=%u",
+                     packet.frame_seq,
+                     packet.fragment_index + 1U,
+                     packet.fragment_count,
+                     packet.message_type,
+                     rtcm_priority_name(packet.priority),
+                     (unsigned)packet.packet_len);
             continue;
         }
 
