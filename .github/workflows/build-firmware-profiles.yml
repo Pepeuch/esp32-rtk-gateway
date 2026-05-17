@@ -12,14 +12,14 @@ on:
       known_profile:
         description: "Known profile preset"
         required: true
-        default: "waveshare_esp32s3_eth-base-eu868-unicore-sx126x-w5500-16mb-8mb"
+        default: "waveshare_esp32s3_eth-base-eu868-unicore-sx1262-w5500-16mb-8mb"
         type: choice
         options:
-          - waveshare_esp32s3_eth-base-eu868-unicore-sx126x-w5500-16mb-8mb
-          - waveshare_esp32s3_eth-base-eu868-ublox-sx126x-w5500-16mb-8mb
-          - mammotion_esp32s3-base-eu868-unicore-sx126x-none-16mb-8mb
+          - waveshare_esp32s3_eth-base-eu868-unicore-sx1262-w5500-16mb-8mb
+          - waveshare_esp32s3_eth-base-eu868-ublox-sx1262-w5500-16mb-8mb
+          - mammotion_esp32s3_rtk-base-eu868-unicore-llcc68-none-8mb-none
           - generic_esp32_eth-base-eu868-ublox-none-lan8720-4mb-none
-          - waveshare_esp32s3_eth-rover-eu868-unicore-sx126x-none-16mb-8mb
+          - waveshare_esp32s3_eth-rover-eu868-unicore-sx1262-none-16mb-8mb
       profile_json:
         description: "Optional raw profile JSON string. When set, it overrides known_profile."
         required: false

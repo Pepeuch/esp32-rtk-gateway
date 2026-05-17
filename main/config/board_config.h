@@ -20,8 +20,8 @@
 
 #if defined(CONFIG_BOARD_WAVESHARE_ESP32S3_ETH)
 #include "boards/board_waveshare_esp32s3_eth.h"
-#elif defined(CONFIG_BOARD_MAMMOTION_ESP32S3)
-#include "boards/board_mammotion_esp32s3.h"
+#elif defined(CONFIG_BOARD_MAMMOTION_ESP32S3_RTK)
+#include "boards/board_mammotion_esp32s3_rtk.h"
 #elif defined(CONFIG_BOARD_GENERIC_ESP32C3)
 #include "boards/board_generic_esp32c3.h"
 #elif defined(CONFIG_BOARD_GENERIC_ESP32C6)

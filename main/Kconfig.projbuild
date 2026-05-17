@@ -5,8 +5,8 @@ choice APP_BOARD_TYPE
 config BOARD_WAVESHARE_ESP32S3_ETH
     bool "Waveshare ESP32-S3-ETH"
 
-config BOARD_MAMMOTION_ESP32S3
-    bool "Mammotion ESP32-S3"
+config BOARD_MAMMOTION_ESP32S3_RTK
+    bool "Mammotion ESP32-S3 RTK"
 
 config BOARD_GENERIC_ESP32C3
     bool "Generic ESP32-C3"
