@@ -67,12 +67,12 @@ Note:
 - [ ] Retirer `IRAM_ATTR` de `lora_dio1_isr`
 - [ ] Rebuild et vérifier `idf.py size`
 - [ ] Boot test complet :
-  - [ ] W5500 Ethernet
-  - [ ] DHCP
-  - [ ] WebUI
+  - [x] W5500 Ethernet
+  - [x] DHCP
+  - [x] WebUI
   - [ ] LoRa init
   - [ ] RTCM pipeline
-- [ ] Garder W5500 ISR inchangé pour l’instant
+- [x] Garder W5500 ISR inchangé pour l’instant
 - [ ] Reporter l’optimisation Kconfig IRAM à plus tard
 - [ ] Tester plus tard, une option à la fois :
   - [ ] `CONFIG_RINGBUF_PLACE_FUNCTIONS_INTO_FLASH`
@@ -83,10 +83,7 @@ Note:
   - [ ] `idf.py size-components`
 - [ ] Ne pas toucher aux options WiFi/flash/log IRAM tant que le firmware n’est pas stabilisé en usage réel
 
-## TODO réseau / WebUI
-
-- [ ] Tester avec un autre câble Ethernet
-- [ ] Tester sur un autre switch/port
+## TODO NET
 - [ ] Vérifier vitesse/négociation du lien
 - [ ] Garder DHCP timeout à 30 s pour le moment
 - [x] Vérifier les fichiers WebUI manquants (/c/*.js)
