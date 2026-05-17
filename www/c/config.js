@@ -1,5 +1,7 @@
 (function(global) {
-    const app = global.ConfigPage || (global.ConfigPage = {});
+    const app = global.WebUI || global.ConfigPage || {};
+    global.WebUI = app;
+    global.ConfigPage = app;
 
     app.state = app.state || {
         currentQosState: 'normal',
@@ -124,7 +126,7 @@
                 const submit = form.find(':submit').prop('disabled', true);
                 const data = JSON.stringify(form.serializeObject());
 
-                $.post('config', data).done(function() {
+                $.post('/config', data).done(function() {
                     $('#restarting-modal').modal('show');
                     setTimeout(function() {
                         app.state.reloadOnStatus = true;
@@ -180,6 +182,8 @@
                     });
                 }
             });
+
+            app.hideLegacyConfigCards();
         };
 
         app.checkDisableIfs();
@@ -193,7 +197,7 @@
         });
 
         if (projectVersionText.length) {
-            $.getJSON('config').done(function(data) {
+            $.getJSON('/config').done(function(data) {
                 projectVersionText.text(data.version);
                 projectVersionText.attr('href', 'https://github.com/Pepeuch/esp32-rtk-gateway')
                     .removeClass('text-muted')
@@ -205,6 +209,16 @@
 
         app.bindCommonInputs();
         return app;
+    };
+
+    app.hideLegacyConfigCards = function() {
+        $('.legacy-config-card').each(function() {
+            const card = $(this);
+            card.addClass('panel-hidden');
+            card.find(':input').each(function() {
+                $(this).prop('disabled', true).addClass('disabled');
+            });
+        });
     };
 
     app.loadConfig = function(data) {
@@ -237,6 +251,7 @@
         });
 
         app.checkDisableIfs();
+        app.hideLegacyConfigCards();
     };
 
     app.bindCommonInputs = function() {
@@ -263,7 +278,7 @@
             wifiNetworksScanButton.prop('disabled', true);
             wifiNetworksDropdownButton.prop('disabled', true);
 
-            $.getJSON('wifi/scan').always(function() {
+            $.getJSON('/wifi/scan').always(function() {
                 wifiNetworksScanButton.prop('disabled', false);
                 wifiNetworksDropdownButton.prop('disabled', false);
             }).done(function(networks) {
@@ -330,9 +345,8 @@
         const showBaseOnly = role === 'base' || role === 'dual_debug';
         const hasLora = !!capabilities.has_lora_radio;
 
-        $('#base-panel-card').toggleClass('panel-hidden', !showBaseOnly);
-        $('#ntrip-runtime-card').toggleClass('panel-hidden', !showBaseOnly);
-        $('.ntrip-config-card').toggleClass('panel-hidden', !showBaseOnly);
+        $('.base-role-card').toggleClass('panel-hidden', !showBaseOnly);
         $('#lora-panel-root').toggleClass('panel-hidden', !hasLora);
+        app.hideLegacyConfigCards();
     };
 })(window);

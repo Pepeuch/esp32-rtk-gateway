@@ -32,12 +32,32 @@
             this.summary
                 .append($('<span>', { class: 'capability-pill', text: gnss.receiver_type || 'unknown' }))
                 .append($('<span>', { class: 'capability-pill', text: gnss.model || 'unknown model' }))
+                .append($('<span>', { class: 'capability-pill', text: 'Profile ' + (gnss.profile || 'none') }))
                 .append($('<span>', { class: 'capability-pill', text: gnss.fix_type || 'unknown fix' }))
                 .append($('<span>', { class: 'capability-pill', text: (gnss.satellites_used || 0) + ' used / ' + (gnss.satellites_visible || 0) + ' visible' }))
                 .append($('<span>', { class: 'capability-pill', text: 'RTK ' + (gnss.rtk_status || 'unknown') }))
                 .append($('<span>', { class: 'capability-pill', text: 'CN0 ' + (gnss.cn0_mean || 0) + '/' + (gnss.cn0_max || 0) }))
                 .append($('<span>', { class: 'capability-pill', text: 'HDOP ' + (((gnss.hdop_centi || 0) / 100).toFixed(2)) }))
                 .append($('<span>', { class: 'capability-pill', text: gnss.rtcm_alive && !gnss.rtcm_stale ? 'RTCM alive' : (gnss.rtcm_stale ? 'RTCM stale' : 'RTCM idle') }));
+
+            if (gnss.profile_pending) {
+                this.summary.append($('<span>', { class: 'capability-pill', text: 'Profile pending' }));
+            }
+        },
+
+        renderProfileStatus: function(profileState) {
+            if (!this.profileStatus.length || !profileState) return;
+
+            const profile = profileState.profile || profileState.selected_profile || 'none';
+            const pending = !!profileState.profile_pending || !!profileState.command_busy;
+            const queueDepth = typeof profileState.command_queue_depth === 'number' ? profileState.command_queue_depth : 0;
+            const lastCommandStatus = profileState.last_command_status || profileState.apply_status || 'idle';
+
+            this.profileStatus.empty()
+                .append($('<span>', { class: 'capability-pill', text: profile }))
+                .append($('<span>', { class: 'capability-pill', text: pending ? 'Applying' : 'Idle' }))
+                .append($('<span>', { class: 'capability-pill', text: 'Queue ' + queueDepth }))
+                .append($('<span>', { class: 'capability-pill', text: lastCommandStatus }));
         },
 
         renderDiagnostics: function(diagnostics) {
@@ -184,40 +204,34 @@
 
         refreshDiagnostics: function() {
             const self = this;
-            $.getJSON('api/gnss/diagnostics').done((data) => self.renderDiagnostics(data));
+            $.getJSON('/api/gnss/diagnostics').done((data) => self.renderDiagnostics(data));
         },
 
         refreshSatellites: function() {
             const self = this;
-            $.getJSON('api/gnss/satellites').done((data) => self.renderSatellites(data));
+            $.getJSON('/api/gnss/satellites').done((data) => self.renderSatellites(data));
         },
 
         refreshBaseStatus: function() {
             const self = this;
-            $.getJSON('api/gnss/base/status').done((data) => self.renderBaseStatus(data));
+            $.getJSON('/api/gnss/base/status').done((data) => self.renderBaseStatus(data));
         },
 
         refreshRawConsole: function() {
             const self = this;
-            $.getJSON('api/gnss/receiver/raw').done(function(data) {
+            $.getJSON('/api/gnss/receiver/raw').done(function(data) {
                 if (!data) return;
                 if (self.rawConsole.length) {
                     self.rawConsole.val(data.raw || '');
                     self.rawConsole.scrollTop(self.rawConsole[0].scrollHeight);
                 }
-                if (self.profileStatus.length) {
-                    self.profileStatus.empty()
-                        .append($('<span>', { class: 'capability-pill', text: data.profile || 'none' }))
-                        .append($('<span>', { class: 'capability-pill', text: data.command_busy ? 'Applying' : 'Idle' }))
-                        .append($('<span>', { class: 'capability-pill', text: 'Queue ' + (data.command_queue_depth || 0) }))
-                        .append($('<span>', { class: 'capability-pill', text: data.last_command_status || 'idle' }));
-                }
+                self.renderProfileStatus(data);
             });
         },
 
         loadProfiles: function() {
             const self = this;
-            $.getJSON('api/gnss/profiles').done(function(data) {
+            $.getJSON('/api/gnss/profiles').done(function(data) {
                 if (!data || !Array.isArray(data.profiles) || !self.profileSelect.length) return;
 
                 const select = self.profileSelect[0];
@@ -243,6 +257,12 @@
                 $('#base-survey-duration').val(data.base_survey_duration_s || 300);
                 $('#base-survey-accuracy').val(data.base_survey_accuracy_mm || 5000);
                 $('#base-rtcm-output').prop('checked', !!data.base_rtcm_output);
+                self.renderProfileStatus({
+                    selected_profile: data.selected_profile,
+                    profile_pending: false,
+                    command_queue_depth: 0,
+                    apply_status: 'loaded'
+                });
             });
         },
 
@@ -252,10 +272,11 @@
             $('#gnss-detect').on('click', function() {
                 const button = $(this);
                 button.prop('disabled', true);
-                $.ajax({ url: 'api/gnss/detect', method: 'POST', dataType: 'json' })
+                $.ajax({ url: '/api/gnss/detect', method: 'POST', dataType: 'json' })
                     .done(function(data) {
                         if (data) {
                             self.renderSummary(data);
+                            self.renderProfileStatus(data);
                             self.refreshViews();
                             self.loadProfiles();
                         }
@@ -267,7 +288,7 @@
                 const button = $(this);
                 button.prop('disabled', true);
                 $.ajax({
-                    url: 'api/gnss/profile/apply',
+                    url: '/api/gnss/profile/apply',
                     method: 'POST',
                     contentType: 'application/json',
                     data: JSON.stringify({
@@ -283,6 +304,12 @@
                         agnss_enable: $('#gnss-agnss-enable').is(':checked')
                     })
                 }).done(function() {
+                    self.renderProfileStatus({
+                        profile: $('#gnss-profile').val(),
+                        command_busy: true,
+                        command_queue_depth: 0,
+                        last_command_status: 'queued'
+                    });
                     self.refreshViews();
                     self.loadProfiles();
                 }).always(function() {
@@ -297,7 +324,7 @@
                 if (!command) return;
                 button.prop('disabled', true);
                 $.ajax({
-                    url: 'api/gnss/command',
+                    url: '/api/gnss/command',
                     method: 'POST',
                     contentType: 'application/json',
                     data: JSON.stringify({ command: command })
@@ -313,7 +340,7 @@
                 const button = $(this);
                 button.prop('disabled', true);
                 $.ajax({
-                    url: 'api/gnss/base/start-survey',
+                    url: '/api/gnss/base/start-survey',
                     method: 'POST',
                     contentType: 'application/json',
                     data: JSON.stringify({
@@ -332,7 +359,7 @@
             $('#base-stop-survey').on('click', function() {
                 const button = $(this);
                 button.prop('disabled', true);
-                $.post('api/gnss/base/stop-survey').done(function() {
+                $.post('/api/gnss/base/stop-survey').done(function() {
                     self.refreshViews();
                     self.loadProfiles();
                 }).always(function() {
@@ -344,7 +371,7 @@
                 const button = $(this);
                 button.prop('disabled', true);
                 $.ajax({
-                    url: 'api/gnss/base/apply-fixed',
+                    url: '/api/gnss/base/apply-fixed',
                     method: 'POST',
                     contentType: 'application/json',
                     data: JSON.stringify({
@@ -364,7 +391,7 @@
             $('#base-clear').on('click', function() {
                 const button = $(this);
                 button.prop('disabled', true);
-                $.post('api/gnss/base/clear').done(function() {
+                $.post('/api/gnss/base/clear').done(function() {
                     self.refreshViews();
                     self.loadProfiles();
                 }).always(function() {

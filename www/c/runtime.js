@@ -329,7 +329,7 @@
             const self = this;
 
             $.ajax({
-                url: 'status',
+                url: '/status',
                 dataType: 'json',
                 timeout: 2000
             }).done(function(data) {

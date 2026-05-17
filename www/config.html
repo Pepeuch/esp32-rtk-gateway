@@ -91,11 +91,11 @@
     </style>
 </head>
 <body class="bg-light" data-page="config">
-    <div class="container">
-        <div class="d-flex justify-content-between align-items-center flex-wrap pt-4 mb-4">
+    <div class="container py-4">
+        <div class="d-flex justify-content-between align-items-center flex-wrap mb-4">
             <div>
                 <h2 class="mb-1">ESP32 RTK Gateway <a id="project-version" href="https://github.com/Pepeuch/esp32-rtk-gateway" class="text-muted small"></a></h2>
-                <p class="lead mb-0">Adjust the settings below and then click on "Submit". The device will restart with the new settings applied. If you have adjusted WiFi settings the device may be moved onto a new IP address, or require you to reconnect to its access point.</p>
+                <p class="lead mb-0">Connected configuration only. Save applies persisted network settings and the device will restart if needed.</p>
             </div>
             <div id="top-nav"></div>
         </div>
@@ -183,19 +183,9 @@
                     </table>
                 </div>
                 <div class="gnss-satellite-status small text-muted mt-2">Waiting for GNSS data...</div>
-                <div class="mt-3">
-                    <label>Receiver Raw Console</label>
-                    <textarea class="form-control" id="gnss-raw-console" rows="8" readonly></textarea>
-                </div>
-                <div class="input-group mt-2">
-                    <input type="text" class="form-control" id="gnss-command-input" placeholder="Manual Unicore ASCII command">
-                    <div class="input-group-append">
-                        <button type="button" class="btn btn-outline-secondary" id="gnss-command-send">Send</button>
-                    </div>
-                </div>
             </div>
         </div>
-        <div class="card mb-3" id="base-panel-card">
+        <div class="card mb-3 base-role-card" id="base-panel-card">
             <div class="card-header">Base Station</div>
             <div class="card-body py-3">
                 <div class="gnss-base-summary small text-muted">Loading base station status...</div>
@@ -238,7 +228,7 @@
                 </div>
             </div>
         </div>
-        <div class="card mb-4" id="ntrip-runtime-card">
+        <div class="card mb-4 base-role-card" id="ntrip-runtime-card">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <span>Persistent NTRIP Slots</span>
                 <div>
@@ -249,22 +239,6 @@
             <div class="card-body">
                 <p class="small text-muted mb-3">Persistent NTRIP slots are generated from runtime capabilities. ESP32-S3 profiles expose 5 slots, while smaller boards can expose fewer without changing this page.</p>
                 <div class="ntrip-runtime-summary small text-muted mb-3">Loading runtime monitoring...</div>
-                <div class="form-row mb-3">
-                    <div class="col-md-3">
-                        <label>Fake RTCM rate (Hz)</label>
-                        <input type="number" class="form-control" id="fake-rtcm-rate" value="5" min="1" max="100">
-                    </div>
-                    <div class="col-md-3">
-                        <label>Fake RTCM packet size</label>
-                        <input type="number" class="form-control" id="fake-rtcm-size" value="180" min="24" max="512">
-                    </div>
-                    <div class="col-md-3 d-flex align-items-end">
-                        <button type="button" class="btn btn-outline-secondary w-100" id="fake-rtcm-start">Start Fake RTCM</button>
-                    </div>
-                    <div class="col-md-3 d-flex align-items-end">
-                        <button type="button" class="btn btn-outline-secondary w-100" id="fake-rtcm-stop">Stop Fake RTCM</button>
-                    </div>
-                </div>
                 <div id="ntrip-slot-editor"></div>
             </div>
         </div>
@@ -590,7 +564,7 @@
                             </div>
                         </div>
                     </div>
-                    <div class="card mb-3 border border-warning">
+                    <div class="card mb-3 border border-warning legacy-config-card">
                         <div class="card-header">
                             UART (main communication)
                             <small class="uart-stats stream-stats" data-stream="uart"></small>
@@ -719,7 +693,7 @@
             <div class="row">
                 <div class="col-xl-6">
 
-                    <div class="card mb-3 legacy-ntrip-card">
+                    <div class="card mb-3 legacy-ntrip-card legacy-config-card">
                         <div class="card-header">
                             NTRIP server A
                             <small class="ntrip-server-stats stream-stats" data-stream="ntrip_server"></small>
@@ -779,7 +753,7 @@
                             </div>
                         </div>
                     </div>
-                    <div class="card mb-3 legacy-ntrip-card">
+                    <div class="card mb-3 legacy-ntrip-card legacy-config-card">
                         <div class="card-header">
                             NTRIP server B
                             <small class="ntrip-server-2-stats stream-stats" data-stream="ntrip_server_2"></small>
@@ -839,7 +813,7 @@
                             </div>
                         </div>
                     </div>
-                    <div class="card mb-3">
+                    <div class="card mb-3 legacy-config-card">
                         <div class="card-header">
                             NTRIP client
                             <small class="ntrip-client-stats stream-stats" data-stream="ntrip_client"></small>
@@ -905,7 +879,7 @@
 
                 <div class="col-xl-6">
             
-                        <div class="card mb-3 ntrip-config-card">
+                        <div class="card mb-3 ntrip-config-card legacy-config-card">
                             <div class="card-header">
                                 Socket server
                                 <small class="socket-server-stats stream-stats" data-stream="socket_server"></small>
@@ -934,7 +908,7 @@
                                 </div>
                             </div>
                         </div>
-                        <div class="card mb-3">
+                        <div class="card mb-3 legacy-config-card">
                             <div class="card-header">
                                 Socket client
                                 <small class="socket-client-stats stream-stats" data-stream="socket_client"></small>
@@ -976,7 +950,7 @@
                                 </div>
                             </div>
                         </div>
-                        <div class="card mb-3">
+                        <div class="card mb-3 legacy-config-card">
                             <div class="card-header">
                                 NTRIP caster
                                 <small class="ntrip-caster-stats stream-stats" data-stream="ntrip_caster"></small>
@@ -1061,7 +1035,7 @@
         };
 
         $(function() {
-            const app = window.ConfigPage || {};
+            const app = window.WebUI || window.ConfigPage || {};
 
             if (typeof app.initForm === 'function') {
                 app.initForm();

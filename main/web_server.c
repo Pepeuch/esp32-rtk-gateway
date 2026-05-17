@@ -1304,6 +1304,36 @@ static esp_err_t config_get_handler(httpd_req_t *req) {
     return json_response(req, root);
 }
 
+static bool config_payload_has_legacy_ntrip_keys(const cJSON *root)
+{
+    static const char *const legacy_keys[] = {
+        KEY_CONFIG_NTRIP_SERVER_ACTIVE,
+        KEY_CONFIG_NTRIP_SERVER_HOST,
+        KEY_CONFIG_NTRIP_SERVER_PORT,
+        KEY_CONFIG_NTRIP_SERVER_MOUNTPOINT,
+        KEY_CONFIG_NTRIP_SERVER_USERNAME,
+        KEY_CONFIG_NTRIP_SERVER_PASSWORD,
+        KEY_CONFIG_NTRIP_SERVER_2_ACTIVE,
+        KEY_CONFIG_NTRIP_SERVER_2_HOST,
+        KEY_CONFIG_NTRIP_SERVER_2_PORT,
+        KEY_CONFIG_NTRIP_SERVER_2_MOUNTPOINT,
+        KEY_CONFIG_NTRIP_SERVER_2_USERNAME,
+        KEY_CONFIG_NTRIP_SERVER_2_PASSWORD,
+    };
+
+    if (root == NULL) {
+        return false;
+    }
+
+    for (size_t i = 0; i < sizeof(legacy_keys) / sizeof(legacy_keys[0]); i++) {
+        if (cJSON_HasObjectItem((cJSON *)root, legacy_keys[i])) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static esp_err_t config_post_handler(httpd_req_t *req) {
     if (check_auth(req) == ESP_FAIL) return ESP_FAIL;
 
@@ -1413,11 +1443,14 @@ static esp_err_t config_post_handler(httpd_req_t *req) {
         }
     }
 
+    bool sync_legacy_ntrip = config_payload_has_legacy_ntrip_keys(root);
     cJSON_Delete(root);
 
-    if (ntrip_slots_sync_from_legacy() != ESP_OK) {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Could not sync legacy NTRIP config");
-        return ESP_FAIL;
+    if (sync_legacy_ntrip) {
+        if (ntrip_slots_sync_from_legacy() != ESP_OK) {
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Could not sync legacy NTRIP config");
+            return ESP_FAIL;
+        }
     }
 
     config_commit();

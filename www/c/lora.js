@@ -36,7 +36,7 @@
         renderShell: function() {
             const card = $('<div>', { class: 'card mb-3', id: 'lora-panel-card' });
             const body = $('<div>', { class: 'card-body py-3' });
-            const info = $('<div>', { class: 'component-note mb-3', text: 'Build-time LoRa/RTCM radio preview. UI wiring is ready; persistence can be added later without changing this panel structure.' });
+            const info = $('<div>', { class: 'component-note mb-3', text: 'Read-only LoRa build/runtime status. This firmware does not currently expose a WebUI save endpoint for LoRa radio settings.' });
             const summary = $('<div>', { class: 'lora-summary small text-muted mb-3', text: 'Waiting for platform capabilities...' });
             const roleRow = $('<div>', { class: 'form-row' })
                 .append(selectField('lora-device-role', 'Device role', [
@@ -82,6 +82,7 @@
 
             card.append($('<div>', { class: 'card-header', text: 'LoRa / RTCM Radio' }));
             body.append(info).append(summary).append(roleRow).append(configRow).append(rtcmRow).append(validation);
+            body.find('input, select').prop('disabled', true);
             card.append(body);
             this.root.empty().append(card);
         },
@@ -178,11 +179,6 @@
             this.root.on('change input', '#lora-region, #lora-frequency-hz', function() {
                 self.updatePolicyInfo();
                 self.updateValidation();
-            });
-            this.root.on('change', '#lora-device-role', function() {
-                const selectedRole = ($(this).val() || 'base').toLowerCase();
-                const capabilities = Object.assign({}, app.state.capabilities || {}, { device_role: selectedRole });
-                app.applyRoleVisibility(capabilities);
             });
         }
     };
