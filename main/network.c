@@ -4,6 +4,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include <inttypes.h>
+#include <stdio.h>
 
 static const char *TAG = "NETWORK";
 
@@ -85,6 +86,21 @@ int64_t network_get_ethernet_ip_time_us(void)
 int64_t network_get_ethernet_ip_latency_us(void)
 {
     return network_state_get_ethernet_ip_latency_us();
+}
+
+bool network_get_ethernet_ip4_string(char *buffer, size_t buffer_size)
+{
+    if (buffer == NULL || buffer_size == 0 || global_netif == NULL) {
+        return false;
+    }
+
+    esp_netif_ip_info_t ip_info = {0};
+    if (esp_netif_get_ip_info(global_netif, &ip_info) != ESP_OK) {
+        return false;
+    }
+
+    snprintf(buffer, buffer_size, IPSTR, IP2STR(&ip_info.ip));
+    return true;
 }
 
 bool network_is_ethernet(void){

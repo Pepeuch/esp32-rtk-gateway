@@ -1,32 +1,32 @@
 (function(global) {
-    const app = global.WebUI || global.ConfigPage || {};
-    global.WebUI = app;
-    global.ConfigPage = app;
+    const WebUI = global.WebUI = global.WebUI || {};
+    const util = WebUI.util;
 
     const links = [
-        { href: '/dashboard.html', label: 'Dashboard', id: 'dashboard' },
-        { href: '/config.html', label: 'Config', id: 'config' },
-        { href: '/advanced.html', label: 'Advanced', id: 'advanced' },
-        { href: '/log.html', label: 'Logs', id: 'log' }
+        { id: 'dashboard', label: 'Dashboard', href: '/dashboard.html' },
+        { id: 'config', label: 'Config', href: '/config.html' },
+        { id: 'advanced', label: 'Advanced', href: '/advanced.html' },
+        { id: 'logs', label: 'Logs', href: '/log.html' }
     ];
 
-    function renderNav(page, targetSelector) {
-        const target = $(targetSelector || '#top-nav');
-        if (!target.length) return;
+    WebUI.nav = {
+        render: function(activePage) {
+            const target = util.q('#top-nav');
+            if (!target) {
+                return;
+            }
 
-        target.empty();
-
-        links.forEach(function(link) {
-            const active = link.id === page;
-            target.append($('<a>', {
-                href: link.href,
-                class: 'btn btn-sm ' + (active ? 'btn-primary' : 'btn-outline-secondary') + ' mr-2 mb-2',
-                text: link.label,
-                'aria-current': active ? 'page' : null
+            target.className = 'page-nav';
+            util.setChildren(target, links.map(function(link) {
+                return util.make('a', {
+                    class: 'btn ' + (link.id === activePage ? 'btn-primary' : 'btn-outline-secondary'),
+                    text: link.label,
+                    attrs: {
+                        href: link.href,
+                        'aria-current': link.id === activePage ? 'page' : null
+                    }
+                });
             }));
-        });
-    }
-
-    app.renderNav = renderNav;
-    global.renderNav = renderNav;
+        }
+    };
 })(window);

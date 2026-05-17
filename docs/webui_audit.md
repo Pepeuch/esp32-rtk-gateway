@@ -11,71 +11,99 @@ Audit target:
 - `www/config.html`
 - `www/advanced.html`
 - `www/log.html`
+- `www/app-lite.css`
+- `www/app-lite.js`
 - `www/c/*.js`
 - `main/web_server.c`
 
 Goal:
 
-- inventory the current WebUI pages, JS modules, and API calls
-- compare WebUI calls with firmware handlers actually registered
-- identify legacy paths, stale UI, duplicated logic, and NTRIP slot regressions
+- inventory the current WebUI surface
+- compare UI calls with firmware handlers actually registered
+- identify dead or misleading controls
+- identify remaining legacy assumptions
+- define the exact rebuild plan before refactoring
 
-This report captures the state observed before the remediation changes in the same patch series.
+This report captures the state of the repository before the full stabilization pass described in the user request.
 
-## 1. Pages
+## Pages
 
-| Page | Purpose in current source | Notes |
+| Page | Current role | Notes |
 | --- | --- | --- |
-| `index.html` | root redirect | immediate redirect to `/dashboard.html`; no nav |
-| `dashboard.html` | runtime dashboard | uses shared nav and modular runtime/GNSS/NTRIP/LoRa renderers |
-| `config.html` | mixed config + runtime + legacy controls | shared nav exists, but page still mixes new GNSS/NTRIP/LoRa modules with large legacy form blocks |
-| `advanced.html` | developer/debug tools | shared nav exists; some page-local runtime rendering remains inline |
-| `log.html` | live log stream | shared nav exists |
+| `www/index.html` | root redirect | redirects immediately to `/dashboard.html` |
+| `www/dashboard.html` | runtime dashboard | already split from config, but still depends on older shared modules and compatibility glue |
+| `www/config.html` | persistent config + some runtime panels | NTRIP legacy cards are removed from active HTML, but the page still carries mixed responsibilities and old module assumptions |
+| `www/advanced.html` | debug/developer tools | still contains page-local JS instead of a dedicated module |
+| `www/log.html` | live logs | still contains page-local polling logic instead of a dedicated module |
 
-## 2. JS Modules
+## JS Modules
 
-| File | Used by | Current role |
+| File | Current use | Notes |
 | --- | --- | --- |
-| `www/app-lite.js` | dashboard, config, advanced, log | mini DOM/AJAX/helper layer replacing jQuery/Bootstrap behaviors |
-| `www/c/nav.js` | dashboard, config, advanced, log | shared top navigation renderer |
-| `www/c/runtime.js` | dashboard, config, advanced | capabilities, status, Wi-Fi status, QoS, stream stats, dashboard summaries |
-| `www/c/gnss.js` | dashboard, config, advanced | GNSS summary, diagnostics, satellites, base status, profiles, raw console, commands |
-| `www/c/ntrip.js` | dashboard, config | NTRIP slot editor, runtime summary, dashboard slot summary, restart, mock/fake RTCM hooks |
-| `www/c/lora.js` | dashboard, config | LoRa status/config preview panel |
-| `www/c/config.js` | config | legacy form load/save, Wi-Fi scan, disable-if logic, role-based visibility |
+| `www/app-lite.js` | mini DOM/AJAX/helper layer | custom helper, not third-party, but pages are still written in a jQuery-like style instead of plain module APIs |
+| `www/c/config.js` | config form load/save and Wi-Fi scan | still a large mixed-responsibility file |
+| `www/c/gnss.js` | GNSS summary, diagnostics, profiles, base actions, raw console | useful backend coverage, but mixed dashboard/config/advanced rendering paths |
+| `www/c/lora.js` | LoRa panel rendering | currently renders pseudo-config style controls even though there is no save endpoint |
+| `www/c/nav.js` | shared nav renderer | already shared, but naming/API need normalization |
+| `www/c/ntrip.js` | dynamic NTRIP slots and runtime rendering | mostly aligned with firmware, but still mixes config/runtime/debug concerns |
+| `www/c/runtime.js` | capabilities/status/system rendering | mixes platform, dashboard, config, and helper logic |
 
-## 3. Page -> JS Mapping
+## CSS Files
 
-| Page | JS files |
+| File | Current use | Notes |
+| --- | --- | --- |
+| `www/app-lite.css` | global styling | custom lightweight CSS, not Bootstrap itself; contains many Bootstrap-like utility names and is safe to keep as the single shared stylesheet |
+
+## Current Page -> Asset Mapping
+
+| Page | Assets currently loaded |
 | --- | --- |
-| `advanced.html` | `app-lite.js`, `c/runtime.js`, `c/gnss.js`, `c/nav.js` |
-| `config.html` | `app-lite.js`, `c/config.js`, `c/gnss.js`, `c/ntrip.js`, `c/lora.js`, `c/runtime.js`, `c/nav.js` |
-| `dashboard.html` | `app-lite.js`, `c/runtime.js`, `c/gnss.js`, `c/ntrip.js`, `c/lora.js`, `c/nav.js` |
-| `log.html` | `app-lite.js`, `c/nav.js` |
-| `index.html` | none |
+| `index.html` | inline redirect only |
+| `dashboard.html` | `app-lite.js`, `app-lite.css`, `c/runtime.js`, `c/gnss.js`, `c/ntrip.js`, `c/lora.js`, `c/nav.js` |
+| `config.html` | `app-lite.js`, `app-lite.css`, `c/config.js`, `c/gnss.js`, `c/ntrip.js`, `c/lora.js`, `c/runtime.js`, `c/nav.js` |
+| `advanced.html` | `app-lite.js`, `app-lite.css`, `c/runtime.js`, `c/gnss.js`, `c/nav.js` |
+| `log.html` | `app-lite.js`, `app-lite.css`, `c/nav.js` |
 
-## 4. WebUI API Calls
+## API Endpoints Used By Current WebUI
 
-Normalized endpoint list used by the WebUI:
+Current UI calls found in `www/`:
 
-| WebUI caller | Endpoints |
-| --- | --- |
-| `www/c/runtime.js` | `/api/capabilities`, `/status` |
-| `www/c/config.js` | `/config`, `/wifi/scan` |
-| `www/c/gnss.js` | `/api/gnss/diagnostics`, `/api/gnss/satellites`, `/api/gnss/base/status`, `/api/gnss/receiver/raw`, `/api/gnss/profiles`, `/api/gnss/detect`, `/api/gnss/profile/apply`, `/api/gnss/command`, `/api/gnss/base/start-survey`, `/api/gnss/base/stop-survey`, `/api/gnss/base/apply-fixed`, `/api/gnss/base/clear` |
-| `www/c/ntrip.js` | `/api/ntrip/runtime`, `/api/ntrip`, `/api/ntrip/restart`, `/api/dev/fake-rtcm/start`, `/api/dev/fake-rtcm/stop`, `/api/dev/ntrip/mock` |
-| `www/advanced.html` inline script | `/status`, `/api/ntrip/runtime`, `/api/dev/fake-rtcm/start`, `/api/dev/fake-rtcm/stop`, `/api/dev/ntrip/selftest/start`, `/api/dev/ntrip/selftest/result` |
-| `www/log.html` inline script | `/log` |
+- `/config`
+- `/status`
+- `/api/capabilities`
+- `/api/gnss/status`
+- `/api/gnss/satellites`
+- `/api/gnss/diagnostics`
+- `/api/gnss/base/status`
+- `/api/gnss/base/start-survey`
+- `/api/gnss/base/stop-survey`
+- `/api/gnss/base/apply-fixed`
+- `/api/gnss/base/clear`
+- `/api/gnss/profiles`
+- `/api/gnss/profile/apply`
+- `/api/gnss/command`
+- `/api/gnss/receiver/raw`
+- `/api/gnss/detect`
+- `/api/ntrip`
+- `/api/ntrip/runtime`
+- `/api/ntrip/restart`
+- `/api/dev/fake-rtcm/start`
+- `/api/dev/fake-rtcm/stop`
+- `/api/dev/ntrip/mock`
+- `/api/dev/ntrip/selftest/start`
+- `/api/dev/ntrip/selftest/result`
+- `/wifi/scan`
+- `/log`
 
-Notes:
+Current path problems:
 
-- Some calls use absolute paths (`/api/...`, `/status`).
-- Some calls use relative paths (`api/...`, `status`, `config`, `wifi/scan`, `log`).
-- Those relative paths currently work only because every page is served from the root path. They are valid today but fragile.
+- API path style is inconsistent across modules.
+- Some code still uses page-local fetch wrappers instead of one shared API module.
+- Inline page scripts still duplicate fetch logic.
 
-## 5. Firmware Endpoints Implemented
+## API Endpoints Implemented In `main/web_server.c`
 
-Handlers registered in `main/web_server.c`:
+Registered handlers found in firmware:
 
 - `/config` GET/POST
 - `/status` GET
@@ -112,204 +140,313 @@ Handlers registered in `main/web_server.c`:
 - `/wifi/scan` GET
 - `/*` GET static files
 
-## 6. WebUI vs Firmware Comparison
+## Firmware Payloads Relevant To The Rebuild
 
-### Missing endpoints
+### `/api/capabilities`
 
-None found for the currently referenced WebUI endpoints.
+Backed by `capabilities_json_fill()` and currently exposes:
 
-### Implemented but currently unused by WebUI
+- `chip_family`
+- `network_profile`
+- `is_esp32`
+- `is_esp32s3`
+- `psram_available`
+- `ethernet_supported`
+- `ethernet_active`
+- `wifi_only`
+- `advanced_diagnostics`
+- `safe_mode`
+- `has_lora_radio`
+- `lora_tx_enabled`
+- `max_ntrip_slots`
+- `configured_ntrip_slots`
+- `device_role`
+- `lora.*`
+- `memory.*`
 
-- `/api/status`
-- `/api/config`
-- `/api/gnss/status`
-- `/api/gnss/capabilities`
-- `/api/ntrip/enable/*`
-- `/api/ntrip/disable/*`
-- `/core_dump`
-- `/heap_info`
+### `/status`
 
-### Wrong paths
+Backed by `status_get_handler()` and currently exposes:
 
-No currently broken path mismatch was found in source, but path style is inconsistent:
+- `uptime`
+- `heap.*`
+- `psram.*`
+- `streams.*`
+- `sockets[]`
+- `wifi.ap.*`
+- `wifi.sta.*`
+- `active_socket_count`
+- `max_socket_count`
+- `qos.*`
+- `capabilities.*`
+- `ntrip.*`
+- `gnss.*`
+- `buffers.*`
 
-- absolute: `/api/...`, `/status`
-- relative: `api/...`, `status`, `config`, `wifi/scan`, `log`
+### `/api/gnss/profiles`
 
-This is functional today but should be normalized.
+Backed by `gnss_profiles_json_fill()` and currently exposes:
 
-## 7. NTRIP Slot Audit
+- current receiver profile state
+- receiver baud
+- NMEA rate
+- RTCM output
+- RTK timeout
+- DGPS timeout
+- constellation mask
+- AGNSS enable
+- signal mask
+- supported profile list
+- base config defaults
 
-### Firmware model
+### `/api/gnss/base/status`
 
-- `NTRIP_SLOT_COUNT` is `5`
-- runtime descriptors exist for `slot0` through `slot4`
-- default names are `NTRIP Server A` through `NTRIP Server E`
-- `ntrip_post_handler()` requires a full array of exactly 5 slots
-- `ntrip_slots_max_allowed()` returns `capabilities.max_ntrip_slots`
+Backed by `gnss_base_status_json_fill()` and currently exposes:
 
-### Capabilities source
+- configured mode
+- active profile
+- receiver mode
+- fixed/survey status
+- coordinates
+- survey targets/progress
+- RTCM output
+- `last_action_status`
+- `disabled_reason`
 
-`main/capabilities.c` computes:
+### `/api/ntrip`
 
-- `max_ntrip_slots = BOARD_NTRIP_MAX_SLOTS_PSRAM` when PSRAM is available
-- otherwise `BOARD_NTRIP_MAX_SLOTS_NO_PSRAM`
+Backed by `ntrip_slots_json_fill()` and currently exposes:
 
-For `board_waveshare_esp32s3_eth.h`:
+- `max_slots`
+- `configured_slots`
+- `requested_enabled_slots`
+- `slots[]` with:
+  - index, id, role, name
+  - implemented, enabled, running, allowed_by_platform
+  - host, port, mountpoint, username, masked password
+  - has_password, ntrip_version, use_tls
+  - status, bytes, packets, reconnects, uptime
+  - ringbuffer metrics
+  - last HTTP code, stale, mock mode, last error, disabled reason
 
-- no PSRAM: `4`
-- PSRAM: `5`
+Important:
 
-Implication:
+- `POST /api/ntrip` expects a full array of exactly `NTRIP_SLOT_COUNT` slots.
+- Platform exposure is governed by `max_ntrip_slots`.
 
-- a Waveshare ESP32-S3 ETH build reports `5` only when the runtime sees PSRAM as available
-- if the dashboard ever reports `4`, the current source would do that only when PSRAM is not available at runtime or the wrong profile/board is flashed
+### `/api/ntrip/runtime`
 
-### Frontend dynamic editor
+Backed by `ntrip_runtime_info_json_fill()` and currently exposes:
 
-`www/c/ntrip.js` already supports dynamic slot rendering:
+- fake RTCM state
+- safe mode
+- active slot count
+- heap/PSRAM snapshots
+- ringbuffer totals
+- dropped packets
+- socket counts
+- Ethernet/Wi-Fi readiness
+- QoS state/reason
 
-- labels A-E
-- capability-driven slot count
-- full 5-slot payload save
-- fallback to 5 on ESP32-S3 / unknown capability state
+## Fields Displayed But Not Properly Backed Today
 
-### Why Config still looks like “2 servers”
+These are the main UI correctness issues still present before the rebuild:
 
-There are two separate causes:
+1. LoRa pseudo-config controls
+   - The current LoRa UI presents form-like fields.
+   - There is no firmware save endpoint for LoRa settings.
+   - This should be rendered read-only unless a real POST path exists.
 
-1. `config.html` still contains legacy “NTRIP server A” and “NTRIP server B” cards after the new dynamic editor.
-2. `config_post_handler()` still calls `ntrip_slots_sync_from_legacy()` after every `/config` save, and that sync reads only slots `0` and `1` from legacy config keys.
+2. LoRa runtime availability
+   - Firmware exposes LoRa build capability through `/api/capabilities`.
+   - Firmware does not currently expose a dedicated `lora_ready` or `init_failed` WebUI field.
+   - The UI can reliably show “supported” and “TX enabled/disabled”, but not the real post-init radio state.
 
-That means the page still exposes two competing NTRIP architectures:
+3. Page-local debug actions
+   - Advanced page inline JS directly wires fake RTCM and self-test.
+   - This works, but it bypasses a shared module contract and makes regressions easier.
 
-- new 5-slot API: `/api/ntrip`
-- old 2-slot config form: `/config` + legacy keys
+4. Log page inline polling logic
+   - Functional, but not modularized.
 
-This is the main structural source of the recurring NTRIP regressions.
+## Firmware Fields Available But Underused Or Not Displayed Cleanly
 
-## 8. Findings
+1. `/api/status` already includes:
+   - `streams`
+   - `buffers`
+   - `sockets`
+   - `wifi.ap`
+   - `wifi.sta`
+   - `qos`
+   These should drive the dashboard and remove duplicated summary logic.
 
-### Critical
+2. `/api/gnss/status` already includes:
+   - `firmware`
+   - `mode`
+   - `parser_errors`
+   - `command_queue_depth`
+   - `command_busy`
+   - `last_command_status`
+   - `raw_buffer_*`
+   These should be surfaced more consistently.
 
-1. `config.html` still ships both the new 5-slot NTRIP editor and the old A/B-only NTRIP cards.
-   - Dynamic editor root: `#ntrip-slot-editor`
-   - Legacy cards still present: `NTRIP server A`, `NTRIP server B`
-   - User-visible result: the page still reads like a 2-slot UI even when firmware supports 5
+3. `/api/gnss/diagnostics` already includes:
+   - high precision position
+   - horizontal/vertical accuracy
+   - relative position / heading
+   - constellation diagnostic summaries
 
-2. `/config` save still has a legacy NTRIP side effect.
-   - `config_post_handler()` unconditionally calls `ntrip_slots_sync_from_legacy()`
-   - `ntrip_slots_sync_from_legacy()` only reads slots `0` and `1`
-   - This keeps the old 2-slot model alive and can reintroduce drift between the general config form and `/api/ntrip`
+4. `/api/ntrip` and `/api/ntrip/runtime` already include:
+   - `allowed_by_platform`
+   - `requested_enabled_slots`
+   - `active_slot_count`
+   - ringbuffer totals
+   - stale / reconnect / HTTP code / disabled reason
 
-### High
+5. `/core_dump` and `/heap_info` exist and can be linked from Advanced.
 
-3. `config.js` role visibility is coupled to the wrong CSS class.
-   - `applyRoleVisibility()` toggles `.ntrip-config-card`
-   - That class is used by unrelated cards such as Wi-Fi, Admin, Socket server
-   - A base/rover role switch can therefore hide unrelated config sections
+## Legacy / Regression Risks Still Relevant
 
-4. `config.html` still includes developer/debug actions that belong on Advanced.
-   - Fake RTCM controls are embedded in the config NTRIP card
-   - Each slot card also exposes mock-mode controls
-   - These are debug/runtime tools, not persistent config
+1. Current architecture is still patch-shaped.
+   - Page-local scripts remain in `advanced.html` and `log.html`.
+   - Shared logic is split across large files with overlapping responsibilities.
 
-5. GNSS profile status is sourced inconsistently.
-   - The current profile label shown in the UI is refreshed mainly through `/api/gnss/receiver/raw`
-   - `/api/gnss/status` and `/api/gnss/profiles` already expose profile state directly
-   - If raw-console polling is skipped, delayed, or QoS-rejected, the visible profile state can look wrong or stale
+2. There is still too much state/render duplication.
+   - runtime + GNSS + NTRIP each partly render dashboard/config/advanced concerns.
 
-### Medium
+3. The old `/config` universe still exists in firmware.
+   - Legacy NTRIP A/B keys remain in backend config storage and interfaces.
+   - The guard in `config_post_handler()` now avoids syncing legacy NTRIP unless legacy keys are posted, which is good, but the UI should stop depending on that whole model.
 
-6. The LoRa panel on Config is not a real config path.
-   - `www/c/lora.js` renders editable controls
-   - no matching save endpoint exists
-   - the panel currently behaves as a build/runtime preview, not persisted configuration
+4. `app-lite.js` is not a blocker, but the current WebUI still behaves like a mini jQuery app instead of a clean module-based embedded UI.
 
-7. `advanced.html` still contains page-local runtime rendering logic instead of using only shared renderers.
-   - shared nav is used
-   - shared GNSS module is used
-   - but runtime summary and self-test rendering remain inline in the page
+## Exact Planned Changes
 
-8. Utility logic is duplicated between `config.js` and `runtime.js`.
-   - shared helpers are redefined defensively in both files
-   - not immediately broken, but it increases regression risk
+### File structure
 
-9. API path style is inconsistent.
-   - current root layout masks the problem
-   - future path changes or sub-path hosting would break relative calls first
+Refactor the WebUI to the requested target structure:
 
-### Low
+- `www/index.html`
+- `www/dashboard.html`
+- `www/config.html`
+- `www/advanced.html`
+- `www/log.html`
+- `www/app-lite.css`
+- `www/app-lite.js`
+- `www/c/api.js`
+- `www/c/nav.js`
+- `www/c/runtime.js`
+- `www/c/dashboard.js`
+- `www/c/config.js`
+- `www/c/gnss.js`
+- `www/c/ntrip.js`
+- `www/c/lora.js`
+- `www/c/log.js`
+- `www/c/advanced.js`
 
-10. No legacy `incarvr6`, `esp32-ntrip`, `releases_api_url`, or `releases_html_url` references were found in the current repo scan.
+### Architecture
 
-11. All four main user pages already use the shared nav renderer.
-   - `dashboard.html`
-   - `config.html`
-   - `advanced.html`
-   - `log.html`
+1. Create one shared namespace:
+   - `window.WebUI`
 
-12. `index.html` is intentionally a redirect-only page and does not render nav.
+2. Create one shared nav API only:
+   - `window.WebUI.nav.render("dashboard" | "config" | "advanced" | "logs")`
 
-## 9. Fields Displayed But Not Backed
+3. Create one shared API layer only:
+   - `WebUI.api.get(path)`
+   - `WebUI.api.post(path, data)`
+   - `WebUI.api.tryGet(path, fallback)`
 
-Current UI fields that are not backed by a persistence/save path:
+4. Remove page-local fetch wrappers and move all polling/action logic into:
+   - `dashboard.js`
+   - `config.js`
+   - `advanced.js`
+   - `log.js`
 
-- LoRa editable controls in `www/c/lora.js`
-  - role
-  - region
-  - chip family
-  - frequency
-  - TX power
-  - radio profile
-  - RTCM profile
+### Page rebuild
 
-Current UI fields that are only partially meaningful:
+1. `dashboard.html`
+   - runtime only
+   - no config forms
+   - no debug actions
 
-- NTRIP `Use TLS (future)`
-  - stored by `/api/ntrip`
-  - not presented as an active transport feature in the rest of the UI
+2. `config.html`
+   - persistent config only
+   - network config
+   - GNSS profile/apply
+   - base config/actions
+   - dynamic NTRIP slots only
+   - LoRa read-only unless a save endpoint exists
 
-## 10. Firmware Fields Available But Not Surfaced Well
+3. `advanced.html`
+   - raw console
+   - fake RTCM
+   - NTRIP self-test
+   - NTRIP mock tools
+   - deep diagnostics
+   - core dump / heap info links if available
 
-Useful firmware fields currently underused in the UI:
+4. `log.html`
+   - shared nav
+   - live logs
+   - reconnect/refresh action if useful
 
-- GNSS:
-  - `profile`
-  - `profile_pending`
-  - `firmware`
-  - `mode`
-  - `last_command_status`
-- capabilities:
-  - memory totals/minimums
-- Wi-Fi:
-  - IPv6 addresses
-- NTRIP:
-  - `max_slots`
-  - `requested_enabled_slots`
-  - `allowed_by_platform`
-- optional diagnostics endpoints:
-  - `/api/gnss/capabilities`
-  - `/heap_info`
-  - `/core_dump`
+### Hard deletions / normalizations
 
-## 11. Recommended Fix Set
+1. Remove all active legacy ConfigPage assumptions from page bootstrap and module bootstrap.
 
-Minimal targeted changes to make the WebUI match the firmware:
+2. Remove all relative API calls.
 
-1. Remove legacy NTRIP cards from the visible Config UI.
-2. Make `/config` -> legacy NTRIP sync conditional, or remove it from the normal save path.
-3. Keep Config focused on:
-   - network basic
-   - GNSS basic/profile
-   - dynamic NTRIP slots
-   - LoRa status/config preview with honest labeling
-   - save/reboot
-4. Move Fake RTCM and mock-mode controls to Advanced only.
-5. Source GNSS profile display from `/api/gnss/profiles` and/or `/api/gnss/status`, not only raw console polling.
-6. Normalize all WebUI API calls to absolute `/...` paths.
-7. Add a static checker for:
-   - missing assets
-   - unknown endpoints
-   - missing shared nav on main pages
-   - reintroduced legacy strings
+3. Remove any UI control that does not map to:
+   - `/config`
+   - `/api/gnss/*`
+   - `/api/ntrip*`
+   - `/api/dev/*`
+   - `/wifi/scan`
+   - `/log`
+   - `/core_dump`
+   - `/heap_info`
+
+4. Keep legacy backend config keys untouched unless needed, but isolate them from the active UI.
+
+5. Keep `/config` NTRIP isolation intact:
+   - general config save must not resync NTRIP unless legacy keys are submitted
+
+### Static validation
+
+Extend `scripts/check_webui_assets.sh` so it fails on:
+
+- missing assets
+- missing shared nav on dashboard/config/advanced/log
+- `ConfigPage`
+- `autoTab`
+- `incarvr6`
+- `esp32-ntrip`
+- `legacy-ntrip-card`
+- `legacy-config-card`
+- literal `NTRIP server A`
+- literal `NTRIP server B`
+- relative API calls
+- calls to endpoints not registered in `main/web_server.c`
+
+### Small backend fixes if required
+
+If needed during the rebuild:
+
+- add a small status field for true LoRa runtime readiness if a safe existing signal is available
+- otherwise keep LoRa strictly capability/read-only in UI text and do not pretend that runtime availability is known
+
+## Acceptance Focus For This Rebuild
+
+The rebuild should leave the repo with:
+
+- one shared nav path
+- one shared API path
+- no page-local nav logic
+- no `ConfigPage`
+- no `autoTab`
+- no active legacy A/B NTRIP model in HTML
+- no dead LoRa save controls
+- no missing assets
+- no UI call to a non-existent endpoint
+- a config page that renders the dynamic NTRIP slot count from firmware capabilities

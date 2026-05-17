@@ -1,1050 +1,282 @@
-<html>
+<!doctype html>
+<html lang="en">
 <head>
+    <meta charset="utf-8">
     <title>ESP32 RTK Gateway Config</title>
-    <script src="app-lite.js"></script>
-    <link rel="stylesheet" href="app-lite.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/app-lite.css">
     <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
-    <style>
-        input::-webkit-outer-spin-button,
-        input::-webkit-inner-spin-button {
-            /* display: none; <- Crashes Chrome on hover */
-            -webkit-appearance: none;
-            appearance: none;
-            margin: 0; /* <-- Apparently some margin are still there even though it's hidden */
-        }
-    
-        input[type=number] {
-            -moz-appearance:textfield; /* Firefox */
-            appearance: textfield;
-        }
-    
-        input[type=color] {
-            -webkit-appearance: none;
-            appearance: none;
-            border: none;
-            width: 20px;
-            border-radius: 5px;
-        }
-
-        .card .card-body {
-            transition: all ease-in-out 0.25s;
-        }
-
-        .card .card-body.disabled {
-            opacity: 0.75;
-            filter: blur(5px);
-            pointer-events: none;
-        }
-
-        footer {
-            padding: 20px 0;
-        }
-
-        .tooltip-inner {
-            max-width: 95vw;
-            width: 300px;
-        }
-
-        .capability-pill {
-            display: inline-block;
-            margin: 0 8px 8px 0;
-            padding: 4px 10px;
-            border-radius: 999px;
-            background: #eef3f7;
-            font-size: 0.875rem;
-        }
-
-        .slot-badge {
-            display: inline-block;
-            padding: 2px 8px;
-            border-radius: 999px;
-            font-size: 0.75rem;
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
-        }
-
-        .slot-badge.ok {
-            background: #dff3e4;
-            color: #19692c;
-        }
-
-        .slot-badge.warn {
-            background: #fff3cd;
-            color: #856404;
-        }
-
-        .slot-badge.error {
-            background: #f8d7da;
-            color: #842029;
-        }
-
-        .slot-badge.muted {
-            background: #eceff3;
-            color: #51606f;
-        }
-
-        .ntrip-slot-meta {
-            font-size: 0.85rem;
-            color: #6c757d;
-        }
-
-    </style>
 </head>
-<body class="bg-light" data-page="config">
-    <div class="container py-4">
-        <div class="d-flex justify-content-between align-items-center flex-wrap mb-4">
+<body class="bg-light">
+    <div class="page-shell">
+        <header class="page-header">
             <div>
-                <h2 class="mb-1">ESP32 RTK Gateway <a id="project-version" href="https://github.com/Pepeuch/esp32-rtk-gateway" class="text-muted small"></a></h2>
-                <p class="lead mb-0">Connected configuration only. Save applies persisted network settings and the device will restart if needed.</p>
+                <h1 class="page-title">ESP32 RTK Gateway</h1>
+                <p class="lead mb-0">Persistent configuration backed only by the firmware endpoints that exist today.</p>
             </div>
             <div id="top-nav"></div>
-        </div>
-        <div class="card mb-3">
-            <div class="card-header">Platform Capabilities</div>
-            <div class="card-body py-3">
-                <div class="capabilities-summary small text-muted">Loading platform profile...</div>
-                <div class="ntrip-slots-summary mt-2"></div>
-            </div>
-        </div>
-        <div id="lora-panel-root" class="panel-hidden"></div>
-        <div class="card mb-3" id="gnss-panel-card">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <span>GNSS Receiver</span>
-                <button type="button" class="btn btn-sm btn-outline-secondary" id="gnss-detect">Detect</button>
-            </div>
-            <div class="card-body py-3">
-                <div class="gnss-summary small text-muted">Loading GNSS status...</div>
-                <div class="gnss-profile-status small text-muted mt-3"></div>
-                <div class="form-row mt-3">
-                    <div class="col-md-4">
-                        <label>Profile</label>
-                        <select class="form-control" id="gnss-profile"></select>
-                    </div>
-                    <div class="col-md-2">
-                        <label>Baud</label>
-                        <input type="number" class="form-control" id="gnss-baud" value="115200" min="9600" step="1200">
-                    </div>
-                    <div class="col-md-2">
-                        <label>NMEA Hz</label>
-                        <input type="number" class="form-control" id="gnss-nmea-rate" value="1" min="1" max="10">
-                    </div>
-                    <div class="col-md-2">
-                        <label>RTK timeout</label>
-                        <input type="number" class="form-control" id="gnss-rtk-timeout" value="60" min="1" max="600">
-                    </div>
-                    <div class="col-md-2">
-                        <label>DGPS timeout</label>
-                        <input type="number" class="form-control" id="gnss-dgps-timeout" value="120" min="1" max="600">
-                    </div>
+        </header>
+
+        <main class="page-main stack">
+            <section class="card">
+                <div class="card-header">Platform Capabilities</div>
+                <div class="card-body">
+                    <div id="config-capabilities" class="small text-muted">Loading capabilities...</div>
                 </div>
-                <div class="form-row mt-2">
-                    <div class="col-md-4">
-                        <label>Constellation mask</label>
-                        <input type="number" class="form-control" id="gnss-constellation-mask" value="0">
-                    </div>
-                    <div class="col-md-4">
-                        <label>Signal mask</label>
-                        <input type="text" class="form-control" id="gnss-signal-mask" value="">
-                    </div>
-                    <div class="col-md-2 d-flex align-items-end">
-                        <div class="custom-control custom-switch">
-                            <input type="checkbox" class="custom-control-input" id="gnss-rtcm-output" checked>
-                            <label class="custom-control-label" for="gnss-rtcm-output">RTCM output</label>
-                        </div>
-                    </div>
-                    <div class="col-md-2 d-flex align-items-end">
-                        <div class="custom-control custom-switch">
-                            <input type="checkbox" class="custom-control-input" id="gnss-agnss-enable">
-                            <label class="custom-control-label" for="gnss-agnss-enable">AGNSS</label>
-                        </div>
-                    </div>
-                </div>
-                <div class="mt-3">
-                    <button type="button" class="btn btn-sm btn-primary" id="gnss-profile-apply">Apply Profile</button>
-                    <small class="text-muted ml-2">Profile apply is queued asynchronously and may take a few seconds.</small>
-                </div>
-                <div class="gnss-diagnostics-summary small text-muted mt-3"></div>
-                <div class="gnss-constellation-summary small text-muted mt-2"></div>
-                <div class="table-responsive mt-3">
-                    <table class="table table-sm table-striped mb-0 gnss-satellite-table">
-                        <thead>
-                            <tr>
-                                <th>Constellation</th>
-                                <th>PRN</th>
-                                <th>El</th>
-                                <th>Az</th>
-                                <th>CN0</th>
-                                <th>Sig</th>
-                                <th>Used</th>
-                                <th>Age</th>
-                            </tr>
-                        </thead>
-                        <tbody></tbody>
-                    </table>
-                </div>
-                <div class="gnss-satellite-status small text-muted mt-2">Waiting for GNSS data...</div>
-            </div>
-        </div>
-        <div class="card mb-3 base-role-card" id="base-panel-card">
-            <div class="card-header">Base Station</div>
-            <div class="card-body py-3">
-                <div class="gnss-base-summary small text-muted">Loading base station status...</div>
-                <div class="gnss-base-status small text-muted mt-2"></div>
-                <div class="form-row mt-3">
-                    <div class="col-md-4">
-                        <label>Latitude</label>
-                        <input type="number" class="form-control" id="base-latitude" value="0" step="0.0000001">
-                    </div>
-                    <div class="col-md-4">
-                        <label>Longitude</label>
-                        <input type="number" class="form-control" id="base-longitude" value="0" step="0.0000001">
-                    </div>
-                    <div class="col-md-4">
-                        <label>Altitude (mm)</label>
-                        <input type="number" class="form-control" id="base-altitude-mm" value="0" step="1">
-                    </div>
-                </div>
-                <div class="form-row mt-2">
-                    <div class="col-md-4">
-                        <label>Survey duration (s)</label>
-                        <input type="number" class="form-control" id="base-survey-duration" value="300" min="30" step="30">
-                    </div>
-                    <div class="col-md-4">
-                        <label>Survey accuracy (mm)</label>
-                        <input type="number" class="form-control" id="base-survey-accuracy" value="5000" min="100" step="100">
-                    </div>
-                    <div class="col-md-4 d-flex align-items-end">
-                        <div class="custom-control custom-switch">
-                            <input type="checkbox" class="custom-control-input" id="base-rtcm-output" checked>
-                            <label class="custom-control-label" for="base-rtcm-output">RTCM output</label>
-                        </div>
-                    </div>
-                </div>
-                <div class="mt-3">
-                    <button type="button" class="btn btn-sm btn-primary" id="base-start-survey">Start Survey</button>
-                    <button type="button" class="btn btn-sm btn-outline-secondary ml-2" id="base-stop-survey">Stop Survey</button>
-                    <button type="button" class="btn btn-sm btn-outline-secondary ml-2" id="base-apply-fixed">Apply Fixed</button>
-                    <button type="button" class="btn btn-sm btn-outline-danger ml-2" id="base-clear">Clear</button>
-                </div>
-            </div>
-        </div>
-        <div class="card mb-4 base-role-card" id="ntrip-runtime-card">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <span>Persistent NTRIP Slots</span>
-                <div>
-                    <button type="button" class="btn btn-sm btn-outline-secondary mr-2" id="restart-ntrip-runtime">Restart Runtime</button>
-                    <button type="button" class="btn btn-sm btn-primary" id="save-ntrip-slots">Save</button>
-                </div>
-            </div>
-            <div class="card-body">
-                <p class="small text-muted mb-3">Persistent NTRIP slots are generated from runtime capabilities. ESP32-S3 profiles expose 5 slots, while smaller boards can expose fewer without changing this page.</p>
-                <div class="ntrip-runtime-summary small text-muted mb-3">Loading runtime monitoring...</div>
-                <div id="ntrip-slot-editor"></div>
-            </div>
-        </div>
-        <form class="needs-validation" id="form" novalidate>
-            <div class="row mb-1">
-                <div class="col-xl-6">
-                    <div class="card mb-3 ntrip-config-card">
-                        <div class="card-header">
-                            WiFi
-                            <small class="wifi-sta-status"></small>
-                            <div class="custom-control custom-switch d-inline float-right">
-                                <input type="checkbox" name="w_sta_active" value="1" checked class="custom-control-input" id="switch-wifi-sta">
-                                <label class="custom-control-label" for="switch-wifi-sta"></label>
+            </section>
+
+            <section class="card">
+                <div class="card-header">Network Config</div>
+                <div class="card-body stack">
+                    <div id="cfg-ethernet-status" class="small text-muted">Loading network status...</div>
+
+                    <form id="network-config-form" class="stack">
+                        <section class="subsection">
+                            <h2 class="section-title">WiFi STA</h2>
+                            <div class="field-grid">
+                                <label class="checkbox-row">
+                                    <input type="checkbox" id="cfg-wifi-sta-enabled" class="form-check-input">
+                                    <span>Enabled</span>
+                                </label>
+                                <label class="field-stack">
+                                    <span class="small text-muted">SSID</span>
+                                    <input type="text" id="cfg-wifi-sta-ssid" class="form-control" maxlength="32">
+                                </label>
+                                <label class="field-stack">
+                                    <span class="small text-muted">Password</span>
+                                    <input type="password" id="cfg-wifi-sta-password" class="form-control" autocomplete="new-password">
+                                </label>
+                                <label class="checkbox-row">
+                                    <input type="checkbox" id="cfg-wifi-sta-dhcp" class="form-check-input" checked>
+                                    <span>Use DHCP</span>
+                                </label>
                             </div>
-                            <div class="d-inline mr-1 float-right">
-                                <input type="color" name="w_sta_color" data-disable-if="#switch-wifi-sta" value="#ffffff" id="color-wifi-sta">
+                            <div class="toolbar">
+                                <button type="button" class="btn btn-outline-secondary" id="cfg-wifi-sta-scan">Scan nearby WiFi</button>
                             </div>
-                        </div>
-                        <div class="card-body" data-disable-if="#switch-wifi-sta">
-                            <div class="form-row mb-3">
-                                <div class="col-8">
-                                    <label>SSID</label>
-                                    <div class="input-group">
-                                        <input type="text" name="w_sta_ssid" class="wifi-networks-ssid form-control" maxlength="32" required>
-                                        <div class="input-group-append">
-                                            <button type="button" class="wifi-networks-dropdown btn btn-outline-secondary dropdown-toggle dropdown-toggle-split" data-toggle="dropdown" disabled></button>
-                                            <div class="wifi-networks dropdown-menu">
-                                                <h6 class="dropdown-header">Open networks</h6>
-                                                <span class="wifi-networks-open">
-                                                </span>
-                                                <h6 class="dropdown-header">Secured networks</h6>
-                                                <span class="wifi-networks-secured">
-                                                </span>
-                                            </div>
-                                        </div>
-                                        <div class="input-group-append">
-                                            <button type="button" class="wifi-networks-scan btn btn-outline-secondary">Scan</button>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="col">
-                                    <label>Password</label>
-                                    <input type="hidden" name="w_sta_pass" class="wifi-networks-pass-empty" value="" disabled>
-                                    <div class="input-group">
-                                        <input type="password" name="w_sta_pass" class="wifi-networks-pass form-control">
-                                    </div>
-                                </div>
+                            <div id="wifi-scan-results" class="toolbar"></div>
+                            <div id="cfg-wifi-sta-static-fields" class="field-grid hidden">
+                                <label class="field-stack">
+                                    <span class="small text-muted">Static IP</span>
+                                    <input type="text" id="cfg-wifi-sta-ip" class="form-control" placeholder="192.168.1.10">
+                                </label>
+                                <label class="field-stack">
+                                    <span class="small text-muted">Gateway</span>
+                                    <input type="text" id="cfg-wifi-sta-gateway" class="form-control" placeholder="192.168.1.1">
+                                </label>
+                                <label class="field-stack">
+                                    <span class="small text-muted">Subnet</span>
+                                    <input type="number" id="cfg-wifi-sta-subnet" class="form-control" min="8" max="30" value="24">
+                                </label>
+                                <label class="field-stack">
+                                    <span class="small text-muted">DNS A</span>
+                                    <input type="text" id="cfg-wifi-sta-dns-a" class="form-control" placeholder="1.1.1.1">
+                                </label>
+                                <label class="field-stack">
+                                    <span class="small text-muted">DNS B</span>
+                                    <input type="text" id="cfg-wifi-sta-dns-b" class="form-control" placeholder="1.0.0.1">
+                                </label>
                             </div>
-                            <div class="form-row mb-3">
-                                <div class="col-6">
-                                    <label class="d-block">Scan mode <small class="text-muted" data-toggle="tooltip" title="In fast scan mode, WiFi channels are scanned sequentially and a connection is made to the first matching SSID.<br><br>In all channel mode, every channel is scanned and if multiple matching SSIDs are found, the one with the strongest signal is chosen, but the process can be significantly slower.<br><br>This is useful in environments where there are a number of APs with the same SSID covering a large area. If you only have a single AP, fast mode is preferred.">?</small></label>
-                                    <div class="btn-group btn-group-toggle d-flex" data-toggle="buttons">
-                                        <label class="btn btn-outline-secondary">
-                                            <input type="radio" name="w_sta_scan_mode" value="0" checked> Fast
-                                        </label>
-                                        <label class="btn btn-outline-secondary">
-                                            <input type="radio" name="w_sta_scan_mode" value="1"> All Channels
-                                        </label>
-                                    </div>
-                                </div>
-                                <div class="col-6">
-                                    <label class="d-block">IP config <small class="text-muted" data-toggle="tooltip" title="In DHCP mode, IPs will automatically be configured by the network upon successful connection.<br><br>In static mode, the IPs are hardcoded and must be set up correctly for the given WiFi network, but the connection is faster.">?</small></label>
-                                    <div class="btn-group btn-group-toggle d-flex" data-toggle="buttons">
-                                        <label class="btn btn-outline-success">
-                                            <input type="radio" name="w_sta_static" value="0" checked> DHCP
-                                        </label>
-                                        <label class="btn btn-outline-warning">
-                                            <input type="radio" name="w_sta_static" value="1"> Static
-                                        </label>
-                                    </div>
-                                </div>
+                        </section>
+
+                        <section class="subsection">
+                            <h2 class="section-title">WiFi AP</h2>
+                            <div class="field-grid">
+                                <label class="checkbox-row">
+                                    <input type="checkbox" id="cfg-wifi-ap-enabled" class="form-check-input">
+                                    <span>Enabled</span>
+                                </label>
+                                <label class="field-stack">
+                                    <span class="small text-muted">SSID</span>
+                                    <input type="text" id="cfg-wifi-ap-ssid" class="form-control" maxlength="32">
+                                </label>
+                                <label class="checkbox-row">
+                                    <input type="checkbox" id="cfg-wifi-ap-hidden" class="form-check-input">
+                                    <span>Hidden SSID</span>
+                                </label>
+                                <label class="field-stack">
+                                    <span class="small text-muted">Security</span>
+                                    <select id="cfg-wifi-ap-security" class="custom-select">
+                                        <option value="0">Open</option>
+                                        <option value="2">WPA-PSK</option>
+                                        <option value="3">WPA2-PSK</option>
+                                        <option value="4">WPA/WPA2-PSK</option>
+                                    </select>
+                                </label>
+                                <label class="field-stack" id="cfg-wifi-ap-password-row">
+                                    <span class="small text-muted">Password</span>
+                                    <input type="password" id="cfg-wifi-ap-password" class="form-control" autocomplete="new-password">
+                                </label>
+                                <label class="field-stack">
+                                    <span class="small text-muted">Gateway</span>
+                                    <input type="text" id="cfg-wifi-ap-gateway" class="form-control" placeholder="192.168.4.1">
+                                </label>
+                                <label class="field-stack">
+                                    <span class="small text-muted">Subnet</span>
+                                    <input type="number" id="cfg-wifi-ap-subnet" class="form-control" min="24" max="30" value="24">
+                                </label>
                             </div>
-                            <div data-disable-if="input[type='radio'][name='w_sta_static']" data-disable-if-condition="[value=0]:checked" class="form-row mb-3">
-                                <div class="col">
-                                    <label>IP address</label>
-                                    <div class="input-group">
-                                        <input type="number" name="w_sta_ip" value="192" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
-                                        <div class="input-group-append input-group-prepend">
-                                            <span class="input-group-text px-1">.</span>
-                                        </div>
-                                        <input type="number" name="w_sta_ip" value="168" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
-                                        <div class="input-group-append input-group-prepend">
-                                            <span class="input-group-text px-1">.</span>
-                                        </div>
-                                        <input type="number" name="w_sta_ip" value="0" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
-                                        <div class="input-group-append input-group-prepend">
-                                            <span class="input-group-text px-1">.</span>
-                                        </div>
-                                        <input type="number" name="w_sta_ip" value="100" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
-                                    </div>
-                                </div>
-                                <div class="col-7">
-                                    <label>Gateway and subnet</label>
-                                    <div class="input-group">
-                                        <input type="number" name="w_sta_gw" value="192" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
-                                        <div class="input-group-append input-group-prepend">
-                                            <span class="input-group-text px-1">.</span>
-                                        </div>
-                                        <input type="number" name="w_sta_gw" value="168" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
-                                        <div class="input-group-append input-group-prepend">
-                                            <span class="input-group-text px-1">.</span>
-                                        </div>
-                                        <input type="number" name="w_sta_gw" value="4" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
-                                        <div class="input-group-append input-group-prepend">
-                                            <span class="input-group-text px-1">.</span>
-                                        </div>
-                                        <input type="number" name="w_sta_gw" value="1" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
-                                        <div class="input-group-append input-group-prepend">
-                                            <span class="input-group-text px-1">/</span>
-                                        </div>
-                                        <select name="w_sta_subnet" class="custom-select px-2" required>
-                                            <option value="8">8</option>
-                                            <option value="9">9</option>
-                                            <option value="10">10</option>
-                                            <option value="11">11</option>
-                                            <option value="12">12</option>
-                                            <option value="13">13</option>
-                                            <option value="14">14</option>
-                                            <option value="15">15</option>
-                                            <option value="16">16</option>
-                                            <option value="17">17</option>
-                                            <option value="18">18</option>
-                                            <option value="19">19</option>
-                                            <option value="20">20</option>
-                                            <option value="21">21</option>
-                                            <option value="22">22</option>
-                                            <option value="23">23</option>
-                                            <option value="24" selected>24</option>
-                                            <option value="25">25</option>
-                                            <option value="26">26</option>
-                                            <option value="27">27</option>
-                                            <option value="28">28</option>
-                                            <option value="29">29</option>
-                                            <option value="30">30</option>
-                                        </select>
-                                    </div>
-                                </div>
-                            </div>
-                            <div data-disable-if="input[type='radio'][name='w_sta_static']" data-disable-if-condition="[value=0]:checked" class="form-row mb-3">
-                                <div class="col">
-                                    <label>DNS</label>
-                                    <div class="input-group">
-                                        <input type="number" name="w_sta_dns_a" value="1" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
-                                        <div class="input-group-append input-group-prepend">
-                                            <span class="input-group-text px-1">.</span>
-                                        </div>
-                                        <input type="number" name="w_sta_dns_a" value="1" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
-                                        <div class="input-group-append input-group-prepend">
-                                            <span class="input-group-text px-1">.</span>
-                                        </div>
-                                        <input type="number" name="w_sta_dns_a" value="1" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
-                                        <div class="input-group-append input-group-prepend">
-                                            <span class="input-group-text px-1">.</span>
-                                        </div>
-                                        <input type="number" name="w_sta_dns_a" value="1" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
-                                    </div>
-                                </div>
-                                <div class="col">
-                                    <label>Backup DNS</label>
-                                    <div class="input-group">
-                                        <input type="number" name="w_sta_dns_b" value="1" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
-                                        <div class="input-group-append input-group-prepend">
-                                            <span class="input-group-text px-1">.</span>
-                                        </div>
-                                        <input type="number" name="w_sta_dns_b" value="0" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
-                                        <div class="input-group-append input-group-prepend">
-                                            <span class="input-group-text px-1">.</span>
-                                        </div>
-                                        <input type="number" name="w_sta_dns_b" value="0" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
-                                        <div class="input-group-append input-group-prepend">
-                                            <span class="input-group-text px-1">.</span>
-                                        </div>
-                                        <input type="number" name="w_sta_dns_b" value="1" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="card mb-3 ntrip-config-card">
-                        <div class="card-header">
-                            Admin (this page)
-                        </div>
-                        <div class="card-body">
-                            <div class="form-row mb-3">
-                                <div class="col-4">
-                                    <label>Auth method</label>
-                                    <select name="adm_auth" class="custom-select">
-                                        <option value="0" selected>Open</option>
+                        </section>
+
+                        <section class="subsection">
+                            <h2 class="section-title">Admin Access</h2>
+                            <div class="field-grid">
+                                <label class="field-stack">
+                                    <span class="small text-muted">Auth method</span>
+                                    <select id="cfg-admin-auth" class="custom-select">
+                                        <option value="0">Open</option>
                                         <option value="1">Hotspot devices only</option>
                                         <option value="2">Username/password</option>
-                                        <!--<option value="3">Button press</option>-->
                                     </select>
-                                </div>
-                                <div class="col-4">
-                                    <label>Username</label>
-                                    <input type="text" name="adm_user" data-disable-if="select[name='adm_auth'] > option[value!='2']" data-disable-if-condition=":selected" class="form-control" maxlength="32" required/>
-                                </div>
-                                <div class="col-4">
-                                    <label>Password</label>
-                                    <input type="password" name="adm_pass" data-disable-if="select[name='adm_auth'] > option[value!='2']" data-disable-if-condition=":selected" class="form-control" maxlength="64" required/>
-                                </div>
+                                </label>
                             </div>
-                        </div>
-                    </div>
-                    <!--
-                    <div class="card mb-3 ntrip-config-card">
-                        <div class="card-header">
-                            Bluetooth
-                            <div class="custom-control custom-switch d-inline float-right">
-                                <input type="checkbox" name="bt_active" value="1" class="custom-control-input" id="switch-bluetooth">
-                                <label class="custom-control-label" for="switch-wifi-bluetooth"></label>
+                            <div id="cfg-admin-credentials" class="field-grid hidden">
+                                <label class="field-stack">
+                                    <span class="small text-muted">Username</span>
+                                    <input type="text" id="cfg-admin-user" class="form-control" maxlength="32">
+                                </label>
+                                <label class="field-stack">
+                                    <span class="small text-muted">Password</span>
+                                    <input type="password" id="cfg-admin-pass" class="form-control" autocomplete="new-password">
+                                </label>
                             </div>
-                        </div>
-                        <div class="card-body" data-disable-if="#switch-bluetooth">
-                            <div class="form-row mb-3">
-                                <div class="col-8">
-                                    <label>Device name</label>
-                                    <div class="input-group">
-                                        <input type="text" name="bt_dev_name" class="form-control" maxlength="32" required>
-                                        <div class="input-group-append btn-group-toggle" data-toggle="buttons">
-                                            <label class="btn btn-outline-secondary active">
-                                                <input type="checkbox" name="bt_dev_vis" value="1" checked> Discoverable
-                                            </label>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="col">
-                                    <label>Pin code</label>
-                                    <div class="input-group">
-                                        <input type="number" name="bt_pin_code" class="form-control text-center" maxlength="1" min="0" max="9" pattern="[0-9]" oninput="autoTab(this)" required/>
-                                        <input type="number" name="bt_pin_code" class="form-control text-center" maxlength="1" min="0" max="9" pattern="[0-9]" oninput="autoTab(this)" required/>
-                                        <input type="number" name="bt_pin_code" class="form-control text-center" maxlength="1" min="0" max="9" pattern="[0-9]" oninput="autoTab(this)" required/>
-                                        <input type="number" name="bt_pin_code" class="form-control text-center" maxlength="1" min="0" max="9" pattern="[0-9]" oninput="autoTab(this)" required/>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    -->
-                </div>
-                <div class="col-xl-6">
-                    <div class="card mb-3">
-                        <div class="card-header">
-                            WiFi hotspot
-                            <small class="wifi-ap-status"></small>
-                            <div class="custom-control custom-switch d-inline float-right active">
-                                <input type="checkbox" name="w_ap_active" value="1" checked class="custom-control-input" id="switch-wifi-ap">
-                                <label class="custom-control-label" for="switch-wifi-ap"></label>
-                            </div>
-                            <div class="d-inline mr-1 float-right">
-                                <input type="color" name="w_ap_color" data-disable-if="#switch-wifi-ap" value="#ffffff" id="color-wifi-ap">
-                            </div>
-                        </div>
-                        <div class="card-body" data-disable-if="#switch-wifi-ap">
-                            <div class="form-row mb-3">
-                                <div class="col-6">
-                                    <label>SSID</label>
-                                    <div class="input-group">
-                                        <input type="text" name="w_ap_ssid" class="form-control" maxlength="32">
-                                        <div class="input-group-append btn-group-toggle" data-toggle="buttons">
-                                            <label class="btn btn-outline-warning">
-                                                <input type="checkbox" name="w_ap_ssid_hid" value="1"> Hidden
-                                            </label>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="col-6">
-                                    <label>Security</label>
-                                    <div class="input-group">
-                                        <input type="password" name="w_ap_pass" data-disable-if="select[name='w_ap_auth_mode'] > option[value='0']" data-disable-if-condition=":selected" class="form-control" style="flex-grow: 2" >
-                                        <select name="w_ap_auth_mode" class="custom-select">
-                                            <option value="0" selected>Open</option>
-                                            <option value="1">WEP</option>
-                                            <option value="2">WPA-PSK</option>
-                                            <option value="3">WPA2-PSK</option>
-                                            <option value="4">WPA/2-PSK (recommended)</option>
-                                            <option value="4">WPA2 Enterprise</option>
-                                        </select>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="form-row mb-3">
-                                <div class="col-6">
-                                    <label>Gateway and subnet</label>
-                                    <div class="input-group">
-                                        <div class="input-group-prepend">
-                                            <span class="input-group-text px-1">192.168.</span>
-                                        </div>
-                                        <input type="hidden" name="w_ap_gw" value="192">
-                                        <input type="hidden" name="w_ap_gw" value="168">
-                                        <input type="number" name="w_ap_gw" value="4" maxlength="3" min="0" max="255" required class="form-control text-center px-1">
-                                        <div class="input-group-append input-group-prepend">
-                                            <span class="input-group-text px-1">.</span>
-                                        </div>
-                                        <input type="number" name="w_ap_gw" value="1" maxlength="3" min="1" max="254" required class="form-control text-center px-1">
-                                        <div class="input-group-append input-group-prepend">
-                                            <span class="input-group-text px-1">/</span>
-                                        </div>
-                                        <select name="w_ap_subnet" class="custom-select px-2" required>
-                                            <option value="24" selected>24</option>
-                                            <option value="25">25</option>
-                                            <option value="26">26</option>
-                                            <option value="27">27</option>
-                                            <option value="28">28</option>
-                                            <option value="29">29</option>
-                                            <option value="30">30</option>
-                                        </select>
-                                    </div>
-                                </div>
-                                <div class="col">
-                                    <label>Min/max IP address</label>
-                                    <div class="input-group">
-                                        <div class="input-group-prepend">
-                                            <span class="wifi-ap-ip-prefix input-group-text">192.168.4.</span>
-                                        </div>
-                                        <input type="number" name="w_ap_ip_min" value="1" disabled class="form-control text-center px-1">
-                                        <div class="input-group-append input-group-prepend">
-                                            <span class="input-group-text">-</span>
-                                        </div>
-                                        <input type="number" name="w_ap_ip_max" value="254" disabled class="form-control text-center px-1">
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="card mb-3 border border-warning legacy-config-card">
-                        <div class="card-header">
-                            UART (main communication)
-                            <small class="uart-stats stream-stats" data-stream="uart"></small>
-                            <div class="d-inline float-right">
-                                <a href="javascript:void(0)" id="switch-uart">Configure</a>
-                            </div>
-                        </div>
-                        <div class="card-body" data-disable-if="#switch-uart" data-disable-if-condition=":visible">
-                            <div class="form-row mb-3">
-                                <div class="col-8">
-                                    <label class="d-block">UART controller</label>
-                                    <div class="btn-group btn-group-toggle d-flex" data-toggle="buttons">
-                                        <label class="btn btn-outline-secondary active">
-                                            <input type="radio" name="uart_num" value="0" checked> UART&nbsp;0
-                                        </label>
-                                        <label class="btn btn-outline-secondary">
-                                            <input type="radio" name="uart_num" value="1"> UART&nbsp;1
-                                        </label>
-                                        <label class="btn btn-outline-secondary">
-                                            <input type="radio" name="uart_num" value="2"> UART&nbsp;2
-                                        </label>
-                                    </div>
-                                </div>
-                                <div class="col">
-                                    <label>TX pin</label>
-                                    <input type="number" name="uart_tx_pin" class="form-control" placeholder="1" value="1" required>
-                                </div>
-                                <div class="col">
-                                    <label>RX pin</label>
-                                    <input type="number" name="uart_rx_pin" class="form-control" placeholder="3" value="3" required>
-                                </div>
-                            </div>
-                            <div class="form-row mb-3">
-                                <div class="col-md-4 col-6">
-                                    <label>Baud rate</label>
-                                    <div class="input-group">
-                                        <select name="uart_baud_rate" class="custom-select" required>
-                                            <option value="9600">9600</option>
-                                            <option value="19200">19200</option>
-                                            <option value="38400">38400</option>
-                                            <option value="57600">57600</option>
-                                            <option value="115200" selected>115200</option>
-                                            <option value="230400">230400</option>
-                                            <option value="460800">460800</option>
-                                            <option value="921600">921600</option>
-                                        </select>
-                                        <div class="input-group-append">
-                                            <span class="input-group-text px-2">baud</span>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="col-md col-6">
-                                    <label>Data bits</label>
-                                    <div class="input-group">
-                                        <select name="uart_data_bits" class="custom-select" required>
-                                            <option value="0">5</option>
-                                            <option value="1">6</option>
-                                            <option value="2">7</option>
-                                            <option value="3" selected>8</option>
-                                        </select>
-                                        <div class="input-group-append">
-                                            <span class="input-group-text px-2">bits</span>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="col-md col-6">
-                                    <label>Stop bits</label>
-                                    <div class="input-group">
-                                        <select name="uart_stop_bits" class="custom-select" required>
-                                            <option value="1" selected>1</option>
-                                            <option value="2">1.5</option>
-                                            <option value="3">2</option>
-                                        </select>
-                                        <div class="input-group-append">
-                                            <span class="input-group-text px-2">bits</span>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="col-md col-6">
-                                    <label>Parity</label>
-                                    <select name="uart_parity" class="custom-select px-2" required>
-                                        <option value="0" selected>Disabled</option>
-                                        <option value="2">Even</option>
-                                        <option value="3">Odd</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="form-row">
-                                <div class="col-3">
-                                    <label class="d-block">Log forward  <small class="text-muted" data-toggle="tooltip" title="If enabled, log messages (normally sent to UART1, and visible on the /log.html page) are forwarded to the main UART, primarily for debugging purposes. This setting can interfere with normal communication over UART0.">?</small></label>
-                                    <div class="btn-group btn-group-toggle d-flex" data-toggle="buttons">
-                                        <label class="btn btn-outline-warning">
-                                            <input type="checkbox" value="1" name="uart_log_fwd"> Print
-                                        </label>
-                                    </div>
-                                </div>
-                                <div class="col-5">
-                                    <label class="d-block">Flow control</label>
-                                    <div class="btn-group btn-group-toggle d-flex" data-toggle="buttons">
-                                        <label class="btn btn-outline-success">
-                                            <input type="checkbox" value="1" name="uart_fc_rts"> RTS
-                                        </label>
-                                        <label class="btn btn-outline-primary">
-                                            <input type="checkbox" value="1" name="uart_fc_cts"> CTS
-                                        </label>
-                                    </div>
-                                </div>
-                                <div class="col">
-                                    <label>RTS pin</label>
-                                    <input type="number" name="uart_rts_pin" data-disable-if="input[type='checkbox'][name='uart_fc_rts']" class="form-control" placeholder="22" value="22" required>
-                                </div>
-                                <div class="col">
-                                    <label>CTS pin</label>
-                                    <input type="number" name="uart_cts_pin" data-disable-if="input[type='checkbox'][name='uart_fc_cts']" class="form-control" placeholder="19" value="19" required>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="row mb-3">
-                <div class="col">
-                    <input type="submit" class="form-control">
-                </div>
-            </div>
-            <div class="row">
-                <div class="col-xl-6">
+                        </section>
 
-                    <div class="card mb-3 legacy-ntrip-card legacy-config-card">
-                        <div class="card-header">
-                            NTRIP server A
-                            <small class="ntrip-server-stats stream-stats" data-stream="ntrip_server"></small>
-                            <div class="custom-control custom-switch d-inline float-right">
-                                <input type="checkbox" name="ntr_srv_active" value="1" class="custom-control-input" id="switch-ntrip-server">
-                                <label class="custom-control-label" for="switch-ntrip-server"></label>
-                            </div>
-                            <div class="d-inline mr-1 float-right">
-                                <input type="color" name="ntr_srv_color" data-disable-if="#switch-ntrip-server" value="#ffffff" id="color-ntrip-server">
-                            </div>
+                        <div class="toolbar">
+                            <button type="submit" class="btn btn-primary">Save Network / Admin</button>
                         </div>
-                        <div class="card-body" data-disable-if="#switch-ntrip-server">
-                            <div class="form-row mb-3">
-                                <div class="col">
-                                    <label>Host and port</label>
-                                    <div class="input-group">
-                                        <input type="text" name="ntr_srv_host" class="form-control" style="flex-grow: 3" required>
-                                        <div class="input-group-append input-group-prepend">
-                                            <span class="input-group-text">:</span>
-                                        </div>
-                                        <input type="number" name="ntr_srv_port" maxlength="5" min="0" max="65535" class="form-control" required>
-                                    </div>
-                                </div>
-                                <div class="col">
-                                    <label>Mountpoint</label>
-                                    <div class="input-group">
-                                        <input type="text" name="ntr_srv_mp" class="form-control" maxlength="32" required>
-                                        <!--<div class="input-group-append">
-                                            <button type="button" class="btn btn-outline-secondary dropdown-toggle dropdown-toggle-split" data-toggle="dropdown"></button>
-                                            <div class="dropdown-menu">
-                                                <a class="dropdown-item" href="#">Action</a>
-                                                <a class="dropdown-item" href="#">Another action</a>
-                                                <a class="dropdown-item" href="#">Something else here</a>
-                                                <div role="separator" class="dropdown-divider"></div>
-                                                <a class="dropdown-item" href="#">Separated link</a>
-                                            </div>
-                                        </div>
-                                        <div class="input-group-append">
-                                            <button type="button" class="btn btn-outline-secondary">Search</button>
-                                        </div>-->
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="form-row mb-3">
-                                <div class="col">
-                                    <label>Username</label>
-                                    <div class="input-group">
-                                        <input type="text" name="ntr_srv_user" class="form-control">
-                                    </div>
-                                </div>
-                                <div class="col">
-                                    <label>Password</label>
-                                    <div class="input-group">
-                                        <input type="password" name="ntr_srv_pass" class="form-control">
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="card mb-3 legacy-ntrip-card legacy-config-card">
-                        <div class="card-header">
-                            NTRIP server B
-                            <small class="ntrip-server-2-stats stream-stats" data-stream="ntrip_server_2"></small>
-                            <div class="custom-control custom-switch d-inline float-right">
-                                <input type="checkbox" name="ntr_srv2_active" value="1" class="custom-control-input" id="switch-ntrip-server-2">
-                                <label class="custom-control-label" for="switch-ntrip-server-2"></label>
-                            </div>
-                            <div class="d-inline mr-1 float-right">
-                                <input type="color" name="ntr_srv2_color" data-disable-if="#switch-ntrip-server-2" value="#ffffff" id="color-ntrip-server-2">
-                            </div>
-                        </div>
-                        <div class="card-body" data-disable-if="#switch-ntrip-server-2">
-                            <div class="form-row mb-3">
-                                <div class="col">
-                                    <label>Host and port</label>
-                                    <div class="input-group">
-                                        <input type="text" name="ntr_srv2_host" class="form-control" style="flex-grow: 3" required>
-                                        <div class="input-group-append input-group-prepend">
-                                            <span class="input-group-text">:</span>
-                                        </div>
-                                        <input type="number" name="ntr_srv2_port" maxlength="5" min="0" max="65535" class="form-control" required>
-                                    </div>
-                                </div>
-                                <div class="col">
-                                    <label>Mountpoint</label>
-                                    <div class="input-group">
-                                        <input type="text" name="ntr_srv2_mp" class="form-control" maxlength="32" required>
-                                        <!--<div class="input-group-append">
-                                            <button type="button" class="btn btn-outline-secondary dropdown-toggle dropdown-toggle-split" data-toggle="dropdown"></button>
-                                            <div class="dropdown-menu">
-                                                <a class="dropdown-item" href="#">Action</a>
-                                                <a class="dropdown-item" href="#">Another action</a>
-                                                <a class="dropdown-item" href="#">Something else here</a>
-                                                <div role="separator" class="dropdown-divider"></div>
-                                                <a class="dropdown-item" href="#">Separated link</a>
-                                            </div>
-                                        </div>
-                                        <div class="input-group-append">
-                                            <button type="button" class="btn btn-outline-secondary">Search</button>
-                                        </div>-->
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="form-row mb-3">
-                                <div class="col">
-                                    <label>Username</label>
-                                    <div class="input-group">
-                                        <input type="text" name="ntr_srv2_user" class="form-control">
-                                    </div>
-                                </div>
-                                <div class="col">
-                                    <label>Password</label>
-                                    <div class="input-group">
-                                        <input type="password" name="ntr_srv2_pass" class="form-control">
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="card mb-3 legacy-config-card">
-                        <div class="card-header">
-                            NTRIP client
-                            <small class="ntrip-client-stats stream-stats" data-stream="ntrip_client"></small>
-                            <div class="custom-control custom-switch d-inline float-right">
-                                <input type="checkbox" name="ntr_cli_active" value="1" class="custom-control-input" id="switch-ntrip-client">
-                                <label class="custom-control-label" for="switch-ntrip-client"></label>
-                            </div>
-                            <div class="d-inline mr-1 float-right">
-                                <input type="color" name="ntr_cli_color" data-disable-if="#switch-ntrip-client" value="#ffffff" id="color-ntrip-client">
-                            </div>
-                        </div>
-                        <div class="card-body" data-disable-if="#switch-ntrip-client">
-                            <div class="form-row mb-3">
-                                <div class="col">
-                                    <label>Host and port</label>
-                                    <div class="input-group">
-                                        <input type="text" name="ntr_cli_host" class="form-control" style="flex-grow: 3" required>
-                                        <div class="input-group-append input-group-prepend">
-                                            <span class="input-group-text">:</span>
-                                        </div>
-                                        <input type="number" name="ntr_cli_port" maxlength="5" min="0" max="65535" class="form-control" required>
-                                    </div>
-                                </div>
-                                <div class="col">
-                                    <label>Mountpoint</label>
-                                    <div class="input-group">
-                                        <input type="text" name="ntr_cli_mp" class="form-control" maxlength="32" required>
-                                        <!--<div class="input-group-append">
-                                            <button type="button" class="btn btn-outline-secondary dropdown-toggle dropdown-toggle-split" data-toggle="dropdown"></button>
-                                            <div class="dropdown-menu">
-                                                <a class="dropdown-item" href="#">Action</a>
-                                                <a class="dropdown-item" href="#">Another action</a>
-                                                <a class="dropdown-item" href="#">Something else here</a>
-                                                <div role="separator" class="dropdown-divider"></div>
-                                                <a class="dropdown-item" href="#">Separated link</a>
-                                            </div>
-                                        </div>
-                                        <div class="input-group-append">
-                                            <button type="button" class="btn btn-outline-secondary">Search</button>
-                                        </div>-->
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="form-row mb-3">
-                                <div class="col">
-                                    <label>Username</label>
-                                    <div class="input-group">
-                                        <input type="text" name="ntr_cli_user" class="form-control">
-                                    </div>
-                                </div>
-                                <div class="col">
-                                    <label>Password</label>
-                                    <div class="input-group">
-                                        <input type="password" name="ntr_cli_pass" class="form-control">
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
+                        <div id="network-save-status" class="small text-muted">This form saves only `/config` fields still present on this page.</div>
+                    </form>
                 </div>
-            
+            </section>
 
-                <div class="col-xl-6">
-            
-                        <div class="card mb-3 ntrip-config-card legacy-config-card">
-                            <div class="card-header">
-                                Socket server
-                                <small class="socket-server-stats stream-stats" data-stream="socket_server"></small>
-                                <div class="custom-control custom-switch d-inline float-right">
-                                    <input type="checkbox" name="sck_srv_active" value="1" class="custom-control-input" id="switch-socket-server">
-                                    <label class="custom-control-label" for="switch-socket-server"></label>
-                                </div>
-                                <div class="d-inline mr-1 float-right">
-                                    <input type="color" name="sck_srv_color" data-disable-if="#switch-socket-server" value="#ffffff" id="color-socket-server">
-                                </div>
-                            </div>
-                            <div class="card-body" data-disable-if="#switch-socket-server">
-                                <div class="form-row mb-3">
-                                    <div class="col">
-                                        <label>TCP port</label>
-                                        <div class="input-group">
-                                            <input type="number" name="sck_srv_t_port" maxlength="5" min="0" max="65535" class="form-control" required>
-                                        </div>
-                                    </div>
-                                    <div class="col">
-                                        <label>UDP port</label>
-                                        <div class="input-group">
-                                            <input type="number" name="sck_srv_u_port" maxlength="5" min="0" max="65535" class="form-control" required>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="card mb-3 legacy-config-card">
-                            <div class="card-header">
-                                Socket client
-                                <small class="socket-client-stats stream-stats" data-stream="socket_client"></small>
-                                <div class="custom-control custom-switch d-inline float-right">
-                                    <input type="checkbox" name="sck_cli_active" value="1" class="custom-control-input" id="switch-socket-client">
-                                    <label class="custom-control-label" for="switch-socket-client"></label>
-                                </div>
-                                <div class="d-inline mr-1 float-right">
-                                    <input type="color" name="sck_cli_color" data-disable-if="#switch-socket-client" value="#ffffff" id="color-socket-client">
-                                </div>
-                            </div>
-                            <div class="card-body" data-disable-if="#switch-socket-client">
-                                <div class="form-row mb-3">
-                                    <div class="col-8">
-                                        <label>Host and port</label>
-                                        <div class="input-group">
-                                            <div class="btn-group btn-group-toggle d-flex input-group-prepend" data-toggle="buttons">
-                                                <label class="btn btn-outline-secondary active">
-                                                    <input type="radio" name="sck_cli_type" value="1" checked> TCP
-                                                </label>
-                                                <label class="btn btn-outline-secondary">
-                                                    <input type="radio" name="sck_cli_type" value="0"> UDP
-                                                </label>
-                                            </div>
-                                            <input type="text" name="sck_cli_host" class="form-control" style="flex-grow: 3" required>
-                                            <div class="input-group-append input-group-prepend">
-                                                <span class="input-group-text">:</span>
-                                            </div>
-                                            <input type="number" name="sck_cli_port" maxlength="5" min="0" max="65535" class="form-control" required>
-                                        </div>
-                                    </div>
-                                    <div class="col-4">
-                                        <label>Connect message</label>
-                                        <div class="input-group">
-                                            <input type="text" name="sck_cli_msg_unformatted" class="form-control" value="">
-                                            <input type="hidden" name="sck_cli_msg" data-formatted="true">
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="card mb-3 legacy-config-card">
-                            <div class="card-header">
-                                NTRIP caster
-                                <small class="ntrip-caster-stats stream-stats" data-stream="ntrip_caster"></small>
-                                <div class="custom-control custom-switch d-inline float-right">
-                                    <input type="checkbox" name="ntr_cst_active" value="1" class="custom-control-input" id="switch-ntrip-caster">
-                                    <label class="custom-control-label" for="switch-ntrip-caster"></label>
-                                </div>
-                                <div class="d-inline mr-1 float-right">
-                                    <input type="color" name="ntr_cst_color" data-disable-if="#switch-ntrip-caster" value="#ffffff" id="color-ntrip-caster">
-                                </div>
-                            </div>
-                            <div class="card-body" data-disable-if="#switch-ntrip-caster">
-                                <div class="form-row mb-3">
-                                    <div class="col">
-                                        <label>Port</label>
-                                        <div class="input-group">
-                                            <input type="number" name="ntr_cst_port" maxlength="5" min="0" max="65535" class="form-control" required>
-                                        </div>
-                                    </div>
-                                    <div class="col">
-                                        <label>Mountpoint</label>
-                                        <div class="input-group">
-                                            <input type="text" name="ntr_cst_mp" class="form-control" maxlength="32" required>
-                                        </div>
-                                    </div>
-                                    <div class="col">
-                                        <label>Username</label>
-                                        <div class="input-group">
-                                            <input type="text" name="ntr_cst_user" class="form-control">
-                                        </div>
-                                    </div>
-                                    <div class="col">
-                                        <label>Password</label>
-                                        <div class="input-group">
-                                            <input type="password" name="ntr_cst_pass" class="form-control">
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
+            <section class="card">
+                <div class="card-header">GNSS Config</div>
+                <div class="card-body stack">
+                    <div id="cfg-gnss-summary" class="small text-muted">Loading GNSS status...</div>
+                    <div id="cfg-gnss-profile-status" class="small text-muted">Waiting for profile state...</div>
+                    <div class="toolbar">
+                        <button type="button" class="btn btn-outline-secondary" id="gnss-detect">Detect Receiver</button>
+                    </div>
+                    <div class="field-grid">
+                        <label class="field-stack">
+                            <span class="small text-muted">Profile</span>
+                            <select id="gnss-profile" class="custom-select"></select>
+                        </label>
+                        <label class="field-stack">
+                            <span class="small text-muted">Baud</span>
+                            <input type="number" id="gnss-baud" class="form-control" min="9600" step="1200">
+                        </label>
+                        <label class="field-stack">
+                            <span class="small text-muted">NMEA rate (Hz)</span>
+                            <input type="number" id="gnss-nmea-rate" class="form-control" min="1" max="10">
+                        </label>
+                        <label class="field-stack">
+                            <span class="small text-muted">RTK timeout (s)</span>
+                            <input type="number" id="gnss-rtk-timeout" class="form-control" min="1" max="600">
+                        </label>
+                        <label class="field-stack">
+                            <span class="small text-muted">DGPS timeout (s)</span>
+                            <input type="number" id="gnss-dgps-timeout" class="form-control" min="1" max="600">
+                        </label>
+                        <label class="field-stack">
+                            <span class="small text-muted">Constellation mask</span>
+                            <input type="number" id="gnss-constellation-mask" class="form-control">
+                        </label>
+                        <label class="field-stack">
+                            <span class="small text-muted">Signal mask</span>
+                            <input type="text" id="gnss-signal-mask" class="form-control">
+                        </label>
+                        <label class="checkbox-row">
+                            <input type="checkbox" id="gnss-rtcm-output" class="form-check-input">
+                            <span>RTCM output</span>
+                        </label>
+                        <label class="checkbox-row">
+                            <input type="checkbox" id="gnss-agnss-enable" class="form-check-input">
+                            <span>AGNSS enable</span>
+                        </label>
+                    </div>
+                    <div class="toolbar">
+                        <button type="button" class="btn btn-primary" id="gnss-profile-apply">Apply GNSS Profile</button>
+                    </div>
+                    <div id="gnss-config-status" class="small text-muted">GNSS profile changes use `/api/gnss/profile/apply`.</div>
                 </div>
-    
-            </div>
-        </form>
+            </section>
+
+            <section class="card">
+                <div class="card-header">Base Station Config</div>
+                <div class="card-body stack">
+                    <div id="cfg-base-summary" class="small text-muted">Loading base station state...</div>
+                    <div id="base-mode-note" class="small text-muted">Current mode: loading...</div>
+                    <div class="field-grid">
+                        <label class="field-stack">
+                            <span class="small text-muted">Latitude</span>
+                            <input type="number" id="base-latitude" class="form-control" step="0.0000001">
+                        </label>
+                        <label class="field-stack">
+                            <span class="small text-muted">Longitude</span>
+                            <input type="number" id="base-longitude" class="form-control" step="0.0000001">
+                        </label>
+                        <label class="field-stack">
+                            <span class="small text-muted">Altitude (mm)</span>
+                            <input type="number" id="base-altitude-mm" class="form-control" step="1">
+                        </label>
+                        <label class="field-stack">
+                            <span class="small text-muted">Survey duration (s)</span>
+                            <input type="number" id="base-survey-duration" class="form-control" min="30" step="30">
+                        </label>
+                        <label class="field-stack">
+                            <span class="small text-muted">Survey accuracy (mm)</span>
+                            <input type="number" id="base-survey-accuracy" class="form-control" min="100" step="100">
+                        </label>
+                        <label class="checkbox-row">
+                            <input type="checkbox" id="base-rtcm-output" class="form-check-input">
+                            <span>RTCM output</span>
+                        </label>
+                    </div>
+                    <div class="toolbar">
+                        <button type="button" class="btn btn-primary" id="base-start-survey">Start Survey</button>
+                        <button type="button" class="btn btn-outline-secondary" id="base-stop-survey">Stop Survey</button>
+                        <button type="button" class="btn btn-outline-secondary" id="base-apply-fixed">Apply Fixed</button>
+                        <button type="button" class="btn btn-outline-danger" id="base-clear">Clear</button>
+                    </div>
+                    <div id="base-config-status" class="small text-muted">Base actions are backed by `/api/gnss/base/*`.</div>
+                </div>
+            </section>
+
+            <section class="card">
+                <div class="card-header">NTRIP Persistent Slots</div>
+                <div class="card-body stack">
+                    <div id="cfg-ntrip-summary" class="small text-muted">Loading NTRIP slot runtime...</div>
+                    <div id="ntrip-slot-editor"></div>
+                    <div class="toolbar">
+                        <button type="button" class="btn btn-primary" id="save-ntrip-slots">Save NTRIP Slots</button>
+                        <button type="button" class="btn btn-outline-secondary" id="restart-ntrip-runtime">Restart NTRIP Runtime</button>
+                    </div>
+                    <div id="ntrip-save-status" class="small text-muted">NTRIP slots are stored through `/api/ntrip`, not `/config`.</div>
+                </div>
+            </section>
+
+            <section class="card">
+                <div class="card-header">LoRa Status</div>
+                <div class="card-body">
+                    <div id="cfg-lora-status" class="small text-muted">Loading LoRa status...</div>
+                </div>
+            </section>
+        </main>
     </div>
-    <footer id="footer" class="bg-dark">
-        <div class="container">
-            <div class="text-center text-light">
-                <small>&copy; 2024 - <a href="https://github.com/Pepeuch/esp32-rtk-gateway" class="text-white">Project</a> - Uptime <span class="uptime">loading...</span> - Heap <span class="heap">loading...</span></small>
-            </div>
-        </div>
-    </footer>
-    <div class="modal fade" id="restarting-modal">
-        <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h4 class="modal-title">Waiting for restart...</h4>
-                </div>
-                <div class="modal-body">
-                    <p>The ESP32 RTK Gateway has been restarted to apply the new configuration.</p>
-                    <p>Please wait a few seconds, and this page will automatically reload.</p>
-                    <p>If you have made changes to the WiFi connection, or are using the ESP32's WiFi hotspot, you may need to check your device's WiFi connection, or read the new IP address from a serial terminal.</p>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-danger" onclick="window.location.reload()">Reload</button>
-                </div>
-            </div>
-        </div>
-    </div>
-    <script src="c/config.js"></script>
-    <script src="c/gnss.js"></script>
-    <script src="c/ntrip.js"></script>
-    <script src="c/lora.js"></script>
-    <script src="c/runtime.js"></script>
-    <script src="c/nav.js"></script>
 
+    <script src="/c/api.js"></script>
+    <script src="/c/nav.js"></script>
+    <script src="/c/runtime.js"></script>
+    <script src="/c/gnss.js"></script>
+    <script src="/c/ntrip.js"></script>
+    <script src="/c/lora.js"></script>
+    <script src="/c/config.js"></script>
     <script>
-        window.autoTab = function(target) {
-            if (window.ConfigPage && typeof window.ConfigPage.autoTab === 'function') {
-                window.ConfigPage.autoTab(target);
-            }
-        };
-
-        $(function() {
-            const app = window.WebUI || window.ConfigPage || {};
-
-            if (typeof app.initForm === 'function') {
-                app.initForm();
-            }
-            if (typeof window.renderNav === 'function') window.renderNav('config');
-            if (app.gnss && typeof app.gnss.init === 'function') app.gnss.init();
-            if (app.ntrip && typeof app.ntrip.init === 'function') app.ntrip.init();
-            if (app.lora && typeof app.lora.init === 'function') app.lora.init();
-            if (app.runtimeStatus && typeof app.runtimeStatus.init === 'function') app.runtimeStatus.init();
+        window.addEventListener('DOMContentLoaded', function() {
+            window.WebUI.nav.render('config');
+            window.WebUI.configPage.init();
         });
     </script>
 </body>

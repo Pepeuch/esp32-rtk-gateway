@@ -1,403 +1,323 @@
 (function(global) {
-    const app = global.WebUI || global.ConfigPage || {};
-    global.WebUI = app;
-    global.ConfigPage = app;
+    const WebUI = global.WebUI = global.WebUI || {};
+    const util = WebUI.util;
+    const api = WebUI.api;
 
-    app.gnss = {
-        init: function() {
-            this.summary = $('.gnss-summary');
-            this.diagnosticsSummary = $('.gnss-diagnostics-summary');
-            this.constellationSummary = $('.gnss-constellation-summary');
-            this.satelliteTable = $('.gnss-satellite-table tbody');
-            this.satelliteStatus = $('.gnss-satellite-status');
-            this.profileStatus = $('.gnss-profile-status');
-            this.profileSelect = $('#gnss-profile');
-            this.rawConsole = $('#gnss-raw-console');
-            this.baseSummary = $('.gnss-base-summary');
-            this.baseStatus = $('.gnss-base-status');
-            this.bindEvents();
-        },
+    function factList(items) {
+        const rows = items.filter(function(item) {
+            return item && item.value != null && item.value !== '';
+        }).map(function(item) {
+            return util.make('div', { class: 'kv-row' }, [
+                util.make('div', { class: 'kv-label', text: item.label }),
+                util.make('div', { class: 'kv-value' + (item.tone ? ' text-' + item.tone : ''), text: String(item.value) })
+            ]);
+        });
 
-        renderSummary: function(gnss) {
-            if (!this.summary.length || !gnss) return;
-            this.summary.empty();
+        return rows.length
+            ? util.make('div', { class: 'kv-list' }, rows)
+            : util.make('div', { class: 'empty-state', text: 'No GNSS data available.' });
+    }
 
-            if (!gnss.detected) {
-                this.summary
-                    .append($('<div>', { class: 'small font-weight-bold mb-2', text: 'GNSS receiver' }))
-                    .append($('<div>', { class: 'small text-muted', text: 'Not connected' }));
-                return;
-            }
+    function pillRow(values) {
+        return util.make('div', { class: 'pill-list' }, values.filter(Boolean).map(function(value) {
+            return util.pill(value);
+        }));
+    }
 
-            this.summary
-                .append($('<span>', { class: 'capability-pill', text: gnss.receiver_type || 'unknown' }))
-                .append($('<span>', { class: 'capability-pill', text: gnss.model || 'unknown model' }))
-                .append($('<span>', { class: 'capability-pill', text: 'Profile ' + (gnss.profile || 'none') }))
-                .append($('<span>', { class: 'capability-pill', text: gnss.fix_type || 'unknown fix' }))
-                .append($('<span>', { class: 'capability-pill', text: (gnss.satellites_used || 0) + ' used / ' + (gnss.satellites_visible || 0) + ' visible' }))
-                .append($('<span>', { class: 'capability-pill', text: 'RTK ' + (gnss.rtk_status || 'unknown') }))
-                .append($('<span>', { class: 'capability-pill', text: 'CN0 ' + (gnss.cn0_mean || 0) + '/' + (gnss.cn0_max || 0) }))
-                .append($('<span>', { class: 'capability-pill', text: 'HDOP ' + (((gnss.hdop_centi || 0) / 100).toFixed(2)) }))
-                .append($('<span>', { class: 'capability-pill', text: gnss.rtcm_alive && !gnss.rtcm_stale ? 'RTCM alive' : (gnss.rtcm_stale ? 'RTCM stale' : 'RTCM idle') }));
+    function latitudeFromE7(value) {
+        return (Number(value || 0) / 10000000).toFixed(7);
+    }
 
-            if (gnss.profile_pending) {
-                this.summary.append($('<span>', { class: 'capability-pill', text: 'Profile pending' }));
-            }
-        },
+    function longitudeFromE7(value) {
+        return (Number(value || 0) / 10000000).toFixed(7);
+    }
 
-        renderProfileStatus: function(profileState) {
-            if (!this.profileStatus.length || !profileState) return;
+    function accuracyText(value) {
+        const numeric = Number(value || 0);
+        return numeric ? (numeric + ' mm') : '-';
+    }
 
-            const profile = profileState.profile || profileState.selected_profile || 'none';
-            const pending = !!profileState.profile_pending || !!profileState.command_busy;
-            const queueDepth = typeof profileState.command_queue_depth === 'number' ? profileState.command_queue_depth : 0;
-            const lastCommandStatus = profileState.last_command_status || profileState.apply_status || 'idle';
+    function setInputValue(selector, value) {
+        const element = util.q(selector);
+        if (element && value != null) {
+            element.value = value;
+        }
+    }
 
-            this.profileStatus.empty()
-                .append($('<span>', { class: 'capability-pill', text: profile }))
-                .append($('<span>', { class: 'capability-pill', text: pending ? 'Applying' : 'Idle' }))
-                .append($('<span>', { class: 'capability-pill', text: 'Queue ' + queueDepth }))
-                .append($('<span>', { class: 'capability-pill', text: lastCommandStatus }));
-        },
-
-        renderDiagnostics: function(diagnostics) {
-            if (!this.diagnosticsSummary.length || !diagnostics) return;
-            this.diagnosticsSummary.empty();
-
-            if (!diagnostics.detected) {
-                this.diagnosticsSummary.append($('<div>', { class: 'small text-muted', text: 'No GNSS data' }));
-                return;
-            }
-
-            this.diagnosticsSummary
-                .append($('<span>', { class: 'capability-pill', text: 'Fix ' + (diagnostics.fix_type || 'unknown') }))
-                .append($('<span>', { class: 'capability-pill', text: 'Quality ' + (diagnostics.fix_quality || 0) }))
-                .append($('<span>', { class: 'capability-pill', text: 'RTK ' + (diagnostics.rtk_status || 'unknown') }))
-                .append($('<span>', { class: 'capability-pill', text: 'RTCM ' + (diagnostics.rtcm_state || 'idle') }))
-                .append($('<span>', { class: 'capability-pill', text: 'Diff age ' + (diagnostics.diff_age || 0) }))
-                .append($('<span>', { class: 'capability-pill', text: 'Base ' + (diagnostics.base_id || '-') }))
-                .append($('<span>', { class: 'capability-pill', text: 'Antenna ' + (diagnostics.antenna_status || 'unknown') }))
-                .append($('<span>', { class: 'capability-pill', text: 'Jamming ' + (diagnostics.jamming_status || 'unknown') }))
-                .append($('<span>', { class: 'capability-pill', text: 'HW ' + (diagnostics.hardware_status || 'unknown') }))
-                .append($('<span>', { class: 'capability-pill', text: 'Parser ' + (diagnostics.parser_errors || 0) }))
-                .append($('<span>', { class: 'capability-pill', text: 'Last ' + (diagnostics.last_message_ms || 0) + 'ms' }));
-
-            if (typeof diagnostics.agc_main === 'number' && diagnostics.agc_main >= 0) {
-                this.diagnosticsSummary.append($('<span>', { class: 'capability-pill', text: 'AGC main ' + diagnostics.agc_main }));
-            }
-            if (typeof diagnostics.agc_aux === 'number' && diagnostics.agc_aux >= 0) {
-                this.diagnosticsSummary.append($('<span>', { class: 'capability-pill', text: 'AGC aux ' + diagnostics.agc_aux }));
-            }
-        },
-
-        renderSatellites: function(payload) {
-            if (!this.satelliteTable.length || !this.satelliteStatus.length) return;
-            this.satelliteTable.empty();
-            this.satelliteStatus.empty();
-            this.constellationSummary.empty();
-
-            if (!payload || !payload.detected) {
-                this.satelliteStatus.text('No GNSS data');
-                this.constellationSummary.append($('<div>', {
-                    class: 'small text-muted',
-                    text: 'Connect a receiver to populate satellite diagnostics.'
-                }));
-                return;
-            }
-
-            const satellites = Array.isArray(payload.satellites) ? payload.satellites.slice() : [];
-            this.constellationSummary
-                .append($('<span>', { class: 'capability-pill', text: (payload.total_visible || 0) + ' visible' }))
-                .append($('<span>', { class: 'capability-pill', text: (payload.total_used || 0) + ' used' }))
-                .append($('<span>', { class: 'capability-pill', text: 'CN0 ' + (payload.cn0_mean || 0) + '/' + (payload.cn0_max || 0) }))
-                .append($('<span>', { class: 'capability-pill', text: 'Fix ' + (payload.fix_type || 'unknown') }))
-                .append($('<span>', { class: 'capability-pill', text: 'RTK ' + (payload.rtk_status || 'unknown') }));
-
-            if (Array.isArray(payload.constellations)) {
-                payload.constellations.forEach((entry) => {
-                    if (!entry || !entry.visible) return;
-                    this.constellationSummary.append($('<span>', {
-                        class: 'capability-pill',
-                        text: entry.name + ' ' + entry.visible + '/' + (entry.used || 0) + ' CN0 ' + (entry.cn0_mean || 0) + '/' + (entry.cn0_max || 0)
-                    }));
-                });
-            }
-
-            if (!satellites.length) {
-                this.satelliteStatus.text('Receiver connected, waiting for satellite details');
-                return;
-            }
-
-            satellites.sort((a, b) => {
-                if (!!b.used !== !!a.used) return (b.used ? 1 : 0) - (a.used ? 1 : 0);
-                return (b.cn0 || 0) - (a.cn0 || 0);
-            });
-
-            satellites.forEach((sat) => {
-                this.satelliteTable.append($('<tr>')
-                    .append($('<td>', { text: sat.constellation || 'unknown' }))
-                    .append($('<td>', { text: sat.prn || sat.svid || 0 }))
-                    .append($('<td>', { text: sat.elevation || 0 }))
-                    .append($('<td>', { text: sat.azimuth || 0 }))
-                    .append($('<td>', { text: sat.cn0 || 0 }))
-                    .append($('<td>', { text: sat.signal_id || '-' }))
-                    .append($('<td>', { text: sat.used ? 'yes' : 'no' }))
-                    .append($('<td>', { text: (sat.last_seen_ms || 0) + 'ms' })));
-            });
-
-            this.satelliteStatus.text((payload.total_visible || satellites.length) + ' visible, ' + (payload.total_used || 0) + ' used');
-        },
-
-        renderBaseStatus: function(base) {
-            if (!this.baseSummary.length || !this.baseStatus.length) return;
-            this.baseSummary.empty();
-            this.baseStatus.empty();
-
-            const disabled = !base || !base.detected;
-            $('#base-start-survey, #base-stop-survey, #base-apply-fixed, #base-clear').prop('disabled', disabled);
-
-            if (!base || !base.detected) {
-                this.baseSummary.append($('<div>', { class: 'small text-muted', text: 'No GNSS receiver detected' }));
-                this.baseStatus.text(base && base.disabled_reason ? base.disabled_reason : 'Base controls are disabled until a receiver is connected.');
-                return;
-            }
-
-            this.baseSummary
-                .append($('<span>', { class: 'capability-pill', text: 'Mode ' + (base.configured_mode || 'rover') }))
-                .append($('<span>', { class: 'capability-pill', text: 'Profile ' + (base.active_profile || 'none') }))
-                .append($('<span>', { class: 'capability-pill', text: 'RTCM ' + (base.rtcm_output ? 'on' : 'off') }))
-                .append($('<span>', { class: 'capability-pill', text: 'Survey ' + (base.survey_running ? 'running' : 'idle') }))
-                .append($('<span>', { class: 'capability-pill', text: 'Target ' + (base.survey_duration_target_s || 0) + 's / ' + (base.survey_accuracy_target_mm || 0) + 'mm' }));
-
-            if (base.has_fixed_position) {
-                this.baseSummary
-                    .append($('<span>', { class: 'capability-pill', text: 'Lat ' + ((base.latitude_e7 || 0) / 10000000).toFixed(7) }))
-                    .append($('<span>', { class: 'capability-pill', text: 'Lon ' + ((base.longitude_e7 || 0) / 10000000).toFixed(7) }))
-                    .append($('<span>', { class: 'capability-pill', text: 'Alt ' + ((base.altitude_mm || 0) / 1000).toFixed(3) + 'm' }));
-            }
-
-            this.baseStatus.text(base.survey_running
-                ? 'Survey running: ' + (base.survey_elapsed_s || 0) + 's elapsed, ' + (base.survey_progress_percent || 0) + '% complete.'
-                : (base.last_action_status || 'Idle'));
-
-            $('#base-latitude').val(((base.latitude_e7 || 0) / 10000000).toFixed(7));
-            $('#base-longitude').val(((base.longitude_e7 || 0) / 10000000).toFixed(7));
-            $('#base-altitude-mm').val(base.altitude_mm || 0);
-            $('#base-survey-duration').val(base.survey_duration_target_s || 300);
-            $('#base-survey-accuracy').val(base.survey_accuracy_target_mm || 5000);
-            $('#base-rtcm-output').prop('checked', !!base.rtcm_output);
-        },
-
-        refreshViews: function() {
-            const self = this;
-            self.refreshDiagnostics();
-            self.refreshSatellites();
-            self.refreshBaseStatus();
-            self.refreshRawConsole();
-        },
-
-        refreshDashboardViews: function() {
-            this.refreshDiagnostics();
-            this.refreshSatellites();
-            this.refreshBaseStatus();
-        },
-
-        refreshDiagnostics: function() {
-            const self = this;
-            $.getJSON('/api/gnss/diagnostics').done((data) => self.renderDiagnostics(data));
-        },
-
-        refreshSatellites: function() {
-            const self = this;
-            $.getJSON('/api/gnss/satellites').done((data) => self.renderSatellites(data));
-        },
-
-        refreshBaseStatus: function() {
-            const self = this;
-            $.getJSON('/api/gnss/base/status').done((data) => self.renderBaseStatus(data));
-        },
-
-        refreshRawConsole: function() {
-            const self = this;
-            $.getJSON('/api/gnss/receiver/raw').done(function(data) {
-                if (!data) return;
-                if (self.rawConsole.length) {
-                    self.rawConsole.val(data.raw || '');
-                    self.rawConsole.scrollTop(self.rawConsole[0].scrollHeight);
-                }
-                self.renderProfileStatus(data);
-            });
+    WebUI.gnss = {
+        loadStatus: function() {
+            return api.get('/api/gnss/status');
         },
 
         loadProfiles: function() {
-            const self = this;
-            $.getJSON('/api/gnss/profiles').done(function(data) {
-                if (!data || !Array.isArray(data.profiles) || !self.profileSelect.length) return;
-
-                const select = self.profileSelect[0];
-                if (select) {
-                    select.replaceChildren();
-                    data.profiles.forEach(function(profile) {
-                        const option = document.createElement('option');
-                        option.value = profile.name || '';
-                        option.textContent = profile.label || profile.name || 'profile';
-                        option.selected = !!profile.selected;
-                        select.appendChild(option);
-                    });
-                }
-
-                $('#gnss-baud').val(data.receiver_baud || 115200);
-                $('#gnss-nmea-rate').val(data.nmea_rate_hz || 1);
-                $('#gnss-rtk-timeout').val(data.rtk_timeout || 60);
-                $('#gnss-dgps-timeout').val(data.dgps_timeout || 120);
-                $('#gnss-constellation-mask').val(data.constellation_mask || 0);
-                $('#gnss-signal-mask').val(data.signal_mask || '');
-                $('#gnss-rtcm-output').prop('checked', !!data.rtcm_output);
-                $('#gnss-agnss-enable').prop('checked', !!data.agnss_enable);
-                $('#base-survey-duration').val(data.base_survey_duration_s || 300);
-                $('#base-survey-accuracy').val(data.base_survey_accuracy_mm || 5000);
-                $('#base-rtcm-output').prop('checked', !!data.base_rtcm_output);
-                self.renderProfileStatus({
-                    selected_profile: data.selected_profile,
-                    profile_pending: false,
-                    command_queue_depth: 0,
-                    apply_status: 'loaded'
-                });
-            });
+            return api.get('/api/gnss/profiles');
         },
 
-        bindEvents: function() {
-            const self = this;
+        loadDiagnostics: function() {
+            return api.get('/api/gnss/diagnostics');
+        },
 
-            $('#gnss-detect').on('click', function() {
-                const button = $(this);
-                button.prop('disabled', true);
-                $.ajax({ url: '/api/gnss/detect', method: 'POST', dataType: 'json' })
-                    .done(function(data) {
-                        if (data) {
-                            self.renderSummary(data);
-                            self.renderProfileStatus(data);
-                            self.refreshViews();
-                            self.loadProfiles();
-                        }
-                    })
-                    .always(function() { button.prop('disabled', false); });
+        loadSatellites: function() {
+            return api.get('/api/gnss/satellites');
+        },
+
+        loadBaseStatus: function() {
+            return api.get('/api/gnss/base/status');
+        },
+
+        loadRawConsole: function() {
+            return api.get('/api/gnss/receiver/raw', { timeoutMs: 5000 });
+        },
+
+        detect: function() {
+            return api.post('/api/gnss/detect', {});
+        },
+
+        applyProfile: function(payload) {
+            return api.post('/api/gnss/profile/apply', payload, { timeoutMs: 8000 });
+        },
+
+        startSurvey: function(payload) {
+            return api.post('/api/gnss/base/start-survey', payload, { timeoutMs: 8000 });
+        },
+
+        stopSurvey: function() {
+            return api.post('/api/gnss/base/stop-survey', undefined, { timeoutMs: 8000 });
+        },
+
+        applyFixed: function(payload) {
+            return api.post('/api/gnss/base/apply-fixed', payload, { timeoutMs: 8000 });
+        },
+
+        clearBase: function() {
+            return api.post('/api/gnss/base/clear', undefined, { timeoutMs: 8000 });
+        },
+
+        renderOverview: function(target, gnss) {
+            if (!target) {
+                return;
+            }
+            if (!gnss || !gnss.success) {
+                util.setChildren(target, util.make('div', { class: 'empty-state', text: 'GNSS status unavailable.' }));
+                return;
+            }
+            if (!gnss.detected) {
+                util.setChildren(target, util.make('div', { class: 'empty-state', text: 'No GNSS receiver detected.' }));
+                return;
+            }
+
+            util.setChildren(target, [
+                pillRow([
+                    gnss.receiver_type || 'unknown receiver',
+                    gnss.profile ? ('Profile ' + gnss.profile) : 'Profile none',
+                    gnss.fix_type || 'fix unknown',
+                    gnss.rtk_status ? ('RTK ' + gnss.rtk_status) : 'RTK unknown',
+                    String(gnss.satellites_used || 0) + '/' + String(gnss.satellites_visible || 0) + ' sats'
+                ]),
+                factList([
+                    { label: 'Receiver type', value: gnss.receiver_type || '-' },
+                    { label: 'Model', value: gnss.model || '-' },
+                    { label: 'Firmware', value: gnss.firmware || '-' },
+                    { label: 'Profile', value: gnss.profile || '-' },
+                    { label: 'Fix type', value: gnss.fix_type || '-' },
+                    { label: 'Carrier / RTK', value: gnss.rtk_status || '-' },
+                    { label: 'Satellites', value: String(gnss.satellites_used || 0) + ' used / ' + String(gnss.satellites_visible || 0) + ' visible' },
+                    { label: 'Parser errors', value: gnss.parser_errors != null ? gnss.parser_errors : '-' },
+                    { label: 'Last command status', value: gnss.last_command_status || '-' }
+                ])
+            ]);
+        },
+
+        renderProfileStatus: function(target, profileState, gnssStatus) {
+            if (!target) {
+                return;
+            }
+            const profile = (profileState && profileState.selected_profile) || (gnssStatus && gnssStatus.profile) || 'none';
+            const queueDepth = gnssStatus && gnssStatus.command_queue_depth != null ? gnssStatus.command_queue_depth : 0;
+            const pending = !!(gnssStatus && (gnssStatus.profile_pending || gnssStatus.command_busy));
+            const lastCommandStatus = (gnssStatus && gnssStatus.last_command_status) || 'idle';
+
+            util.setChildren(target, [
+                pillRow([
+                    profile ? ('Profile ' + profile) : 'Profile none',
+                    pending ? 'Apply pending' : 'Idle',
+                    'Queue ' + queueDepth,
+                    lastCommandStatus
+                ])
+            ]);
+        },
+
+        renderDiagnostics: function(target, diagnostics) {
+            if (!target) {
+                return;
+            }
+            if (!diagnostics || !diagnostics.success) {
+                util.setChildren(target, util.make('div', { class: 'empty-state', text: 'GNSS diagnostics unavailable.' }));
+                return;
+            }
+
+            util.setChildren(target, [
+                pillRow([
+                    diagnostics.antenna_status ? ('Antenna ' + diagnostics.antenna_status) : null,
+                    diagnostics.jamming_status ? ('Jamming ' + diagnostics.jamming_status) : null,
+                    diagnostics.rtcm_state ? ('RTCM ' + diagnostics.rtcm_state) : null,
+                    diagnostics.fix_type ? ('Fix ' + diagnostics.fix_type) : null
+                ]),
+                factList([
+                    { label: 'Antenna', value: diagnostics.antenna_status || '-' },
+                    { label: 'AGC main', value: diagnostics.agc_main != null ? diagnostics.agc_main : '-' },
+                    { label: 'AGC aux', value: diagnostics.agc_aux != null ? diagnostics.agc_aux : '-' },
+                    { label: 'Jamming', value: diagnostics.jamming_status || '-' },
+                    { label: 'Parser errors', value: diagnostics.parser_errors != null ? diagnostics.parser_errors : '-' },
+                    { label: 'Last command status', value: diagnostics.last_command_status || '-' },
+                    { label: 'Horizontal accuracy', value: accuracyText(diagnostics.horizontal_accuracy_mm) },
+                    { label: 'Vertical accuracy', value: accuracyText(diagnostics.vertical_accuracy_mm) },
+                    { label: 'Diff age', value: diagnostics.diff_age != null ? diagnostics.diff_age : '-' },
+                    { label: 'Base ID', value: diagnostics.base_id || '-' }
+                ])
+            ]);
+        },
+
+        renderSatellites: function(targets, satellites) {
+            if (!targets || !targets.summary || !targets.tableBody || !targets.status) {
+                return;
+            }
+            if (!satellites || !satellites.success) {
+                util.setChildren(targets.summary, util.make('div', { class: 'empty-state', text: 'Satellite data unavailable.' }));
+                util.setChildren(targets.tableBody, []);
+                if (targets.tableWrap) {
+                    util.show(targets.tableWrap, false);
+                }
+                util.setText(targets.status, 'No satellite data.');
+                return;
+            }
+
+            util.setChildren(targets.summary, [
+                pillRow((satellites.constellations || []).map(function(entry) {
+                    return entry.name + ' ' + entry.used + '/' + entry.visible;
+                }))
+            ]);
+
+            const rows = (satellites.satellites || []).map(function(entry) {
+                return util.make('tr', {}, [
+                    util.make('td', { text: entry.constellation || '-' }),
+                    util.make('td', { text: entry.prn != null ? entry.prn : '-' }),
+                    util.make('td', { text: entry.elevation != null ? entry.elevation : '-' }),
+                    util.make('td', { text: entry.azimuth != null ? entry.azimuth : '-' }),
+                    util.make('td', { text: entry.cn0 != null ? entry.cn0 : '-' }),
+                    util.make('td', { text: entry.signal_id != null ? entry.signal_id : '-' }),
+                    util.make('td', { text: entry.used ? 'yes' : 'no' }),
+                    util.make('td', { text: entry.last_seen_ms != null ? entry.last_seen_ms : '-' })
+                ]);
             });
 
-            $('#gnss-profile-apply').on('click', function() {
-                const button = $(this);
-                button.prop('disabled', true);
-                $.ajax({
-                    url: '/api/gnss/profile/apply',
-                    method: 'POST',
-                    contentType: 'application/json',
-                    data: JSON.stringify({
-                        profile: $('#gnss-profile').val(),
-                        persist: true,
-                        receiver_baud: parseInt($('#gnss-baud').val() || '115200', 10),
-                        nmea_rate_hz: parseInt($('#gnss-nmea-rate').val() || '1', 10),
-                        rtk_timeout: parseInt($('#gnss-rtk-timeout').val() || '60', 10),
-                        dgps_timeout: parseInt($('#gnss-dgps-timeout').val() || '120', 10),
-                        constellation_mask: parseInt($('#gnss-constellation-mask').val() || '0', 10),
-                        signal_mask: $('#gnss-signal-mask').val(),
-                        rtcm_output: $('#gnss-rtcm-output').is(':checked'),
-                        agnss_enable: $('#gnss-agnss-enable').is(':checked')
-                    })
-                }).done(function() {
-                    self.renderProfileStatus({
-                        profile: $('#gnss-profile').val(),
-                        command_busy: true,
-                        command_queue_depth: 0,
-                        last_command_status: 'queued'
+            util.setChildren(targets.tableBody, rows);
+            if (targets.tableWrap) {
+                util.show(targets.tableWrap, rows.length > 0);
+            }
+            util.setText(
+                targets.status,
+                rows.length
+                    ? ('Showing ' + rows.length + ' satellites, ' + String(satellites.total_used || 0) + ' used.')
+                    : 'No satellite table rows available.'
+            );
+        },
+
+        renderBaseStatus: function(target, status) {
+            if (!target) {
+                return;
+            }
+            if (!status || !status.success) {
+                util.setChildren(target, util.make('div', { class: 'empty-state', text: 'Base station status unavailable.' }));
+                return;
+            }
+
+            util.setChildren(target, [
+                pillRow([
+                    status.configured_mode ? ('Mode ' + status.configured_mode) : null,
+                    status.active_profile ? ('Profile ' + status.active_profile) : null,
+                    status.survey_running ? 'Survey running' : (status.has_fixed_position ? 'Fixed position' : 'No fixed position')
+                ]),
+                factList([
+                    { label: 'Configured mode', value: status.configured_mode || '-' },
+                    { label: 'Active profile', value: status.active_profile || '-' },
+                    { label: 'Receiver mode', value: status.receiver_mode || '-' },
+                    { label: 'Survey running', value: status.survey_running ? 'yes' : 'no' },
+                    { label: 'Fixed position', value: status.has_fixed_position ? 'yes' : 'no' },
+                    { label: 'Latitude', value: latitudeFromE7(status.latitude_e7) },
+                    { label: 'Longitude', value: longitudeFromE7(status.longitude_e7) },
+                    { label: 'Altitude', value: String(status.altitude_mm || 0) + ' mm' },
+                    { label: 'Survey progress', value: String(status.survey_progress_percent || 0) + '%' },
+                    { label: 'Last action', value: status.last_action_status || '-' },
+                    { label: 'Disabled reason', value: status.disabled_reason || '-' }
+                ])
+            ]);
+        },
+
+        populateProfileForm: function(root, profilesPayload, gnssStatus) {
+            if (!root || !profilesPayload) {
+                return;
+            }
+
+            const profileSelect = util.q('#gnss-profile', root);
+            if (profileSelect) {
+                const options = (profilesPayload.profiles || []).map(function(profile) {
+                    return util.make('option', {
+                        value: profile.name,
+                        text: profile.label || profile.name
                     });
-                    self.refreshViews();
-                    self.loadProfiles();
-                }).always(function() {
-                    button.prop('disabled', false);
                 });
-            });
+                util.setChildren(profileSelect, options);
+                profileSelect.value = profilesPayload.selected_profile || (gnssStatus && gnssStatus.profile) || '';
+            }
 
-            $('#gnss-command-send').on('click', function() {
-                const input = $('#gnss-command-input');
-                const button = $(this);
-                const command = input.val();
-                if (!command) return;
-                button.prop('disabled', true);
-                $.ajax({
-                    url: '/api/gnss/command',
-                    method: 'POST',
-                    contentType: 'application/json',
-                    data: JSON.stringify({ command: command })
-                }).done(function() {
-                    input.val('');
-                    self.refreshViews();
-                }).always(function() {
-                    button.prop('disabled', false);
-                });
-            });
+            setInputValue('#gnss-baud', profilesPayload.receiver_baud != null ? profilesPayload.receiver_baud : '');
+            setInputValue('#gnss-nmea-rate', profilesPayload.nmea_rate_hz != null ? profilesPayload.nmea_rate_hz : '');
+            setInputValue('#gnss-rtk-timeout', profilesPayload.rtk_timeout != null ? profilesPayload.rtk_timeout : '');
+            setInputValue('#gnss-dgps-timeout', profilesPayload.dgps_timeout != null ? profilesPayload.dgps_timeout : '');
+            setInputValue('#gnss-constellation-mask', profilesPayload.constellation_mask != null ? profilesPayload.constellation_mask : '');
+            setInputValue('#gnss-signal-mask', profilesPayload.signal_mask != null ? profilesPayload.signal_mask : '');
 
-            $('#base-start-survey').on('click', function() {
-                const button = $(this);
-                button.prop('disabled', true);
-                $.ajax({
-                    url: '/api/gnss/base/start-survey',
-                    method: 'POST',
-                    contentType: 'application/json',
-                    data: JSON.stringify({
-                        duration_s: parseInt($('#base-survey-duration').val() || '300', 10),
-                        accuracy_mm: parseInt($('#base-survey-accuracy').val() || '5000', 10),
-                        rtcm_output: $('#base-rtcm-output').is(':checked')
-                    })
-                }).done(function() {
-                    self.refreshViews();
-                    self.loadProfiles();
-                }).always(function() {
-                    button.prop('disabled', false);
-                });
-            });
+            const rtcmOutput = util.q('#gnss-rtcm-output', root);
+            if (rtcmOutput) rtcmOutput.checked = !!profilesPayload.rtcm_output;
+            const agnssEnable = util.q('#gnss-agnss-enable', root);
+            if (agnssEnable) agnssEnable.checked = !!profilesPayload.agnss_enable;
+        },
 
-            $('#base-stop-survey').on('click', function() {
-                const button = $(this);
-                button.prop('disabled', true);
-                $.post('/api/gnss/base/stop-survey').done(function() {
-                    self.refreshViews();
-                    self.loadProfiles();
-                }).always(function() {
-                    button.prop('disabled', false);
-                });
-            });
+        populateBaseForm: function(root, profilesPayload, baseStatus) {
+            if (!root) {
+                return;
+            }
 
-            $('#base-apply-fixed').on('click', function() {
-                const button = $(this);
-                button.prop('disabled', true);
-                $.ajax({
-                    url: '/api/gnss/base/apply-fixed',
-                    method: 'POST',
-                    contentType: 'application/json',
-                    data: JSON.stringify({
-                        latitude: parseFloat($('#base-latitude').val() || '0'),
-                        longitude: parseFloat($('#base-longitude').val() || '0'),
-                        altitude_mm: parseInt($('#base-altitude-mm').val() || '0', 10),
-                        rtcm_output: $('#base-rtcm-output').is(':checked')
-                    })
-                }).done(function() {
-                    self.refreshViews();
-                    self.loadProfiles();
-                }).always(function() {
-                    button.prop('disabled', false);
-                });
-            });
+            const latitudeE7 = baseStatus && baseStatus.latitude_e7 != null ? baseStatus.latitude_e7 : profilesPayload.base_latitude_e7;
+            const longitudeE7 = baseStatus && baseStatus.longitude_e7 != null ? baseStatus.longitude_e7 : profilesPayload.base_longitude_e7;
+            const altitudeMm = baseStatus && baseStatus.altitude_mm != null ? baseStatus.altitude_mm : profilesPayload.base_altitude_mm;
+            const surveyDuration = baseStatus && baseStatus.survey_duration_target_s != null ? baseStatus.survey_duration_target_s : profilesPayload.base_survey_duration_s;
+            const surveyAccuracy = baseStatus && baseStatus.survey_accuracy_target_mm != null ? baseStatus.survey_accuracy_target_mm : profilesPayload.base_survey_accuracy_mm;
+            const rtcmOutput = baseStatus && typeof baseStatus.rtcm_output === 'boolean' ? baseStatus.rtcm_output : profilesPayload.base_rtcm_output;
 
-            $('#base-clear').on('click', function() {
-                const button = $(this);
-                button.prop('disabled', true);
-                $.post('/api/gnss/base/clear').done(function() {
-                    self.refreshViews();
-                    self.loadProfiles();
-                }).always(function() {
-                    button.prop('disabled', false);
-                });
-            });
+            setInputValue('#base-latitude', latitudeFromE7(latitudeE7 || 0));
+            setInputValue('#base-longitude', longitudeFromE7(longitudeE7 || 0));
+            setInputValue('#base-altitude-mm', altitudeMm != null ? altitudeMm : '');
+            setInputValue('#base-survey-duration', surveyDuration != null ? surveyDuration : '');
+            setInputValue('#base-survey-accuracy', surveyAccuracy != null ? surveyAccuracy : '');
+            const checkbox = util.q('#base-rtcm-output', root);
+            if (checkbox) checkbox.checked = !!rtcmOutput;
+            const modeNote = util.q('#base-mode-note', root);
+            if (modeNote) {
+                util.setText(modeNote, 'Current mode: ' + ((baseStatus && baseStatus.configured_mode) || profilesPayload.base_mode || 'disabled'));
+            }
+        },
+
+        renderRawConsole: function(target, data) {
+            if (!target) {
+                return;
+            }
+            if (!data || !data.success) {
+                target.value = 'Raw console unavailable.';
+                return;
+            }
+            target.value = data.raw || '';
         }
     };
 })(window);

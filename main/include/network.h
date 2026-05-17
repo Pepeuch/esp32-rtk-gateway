@@ -4,6 +4,7 @@
 #include <esp_netif.h>
 //#include <esp_netif_types.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 esp_netif_t *network_init();
@@ -21,5 +22,6 @@ bool network_wait_for_ethernet_ready(uint32_t timeout_ms);
 int64_t network_get_ethernet_link_up_time_us(void);
 int64_t network_get_ethernet_ip_time_us(void);
 int64_t network_get_ethernet_ip_latency_us(void);
+bool network_get_ethernet_ip4_string(char *buffer, size_t buffer_size);
 
 #endif // ESP32_XBEE_NETWORK_H

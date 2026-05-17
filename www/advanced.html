@@ -1,188 +1,120 @@
-<html>
+<!doctype html>
+<html lang="en">
 <head>
+    <meta charset="utf-8">
     <title>ESP32 RTK Gateway Advanced</title>
-    <script src="app-lite.js"></script>
-    <link rel="stylesheet" href="app-lite.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/app-lite.css">
     <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
-    <style>
-        body {
-            background: #f7f9fb;
-        }
-
-        .capability-pill {
-            display: inline-block;
-            margin: 0 8px 8px 0;
-            padding: 4px 10px;
-            border-radius: 999px;
-            background: #eef3f7;
-            font-size: 0.875rem;
-        }
-
-        textarea {
-            font-family: monospace;
-        }
-    </style>
 </head>
-<body class="bg-light" data-page="advanced">
-    <div class="container py-4">
-        <div class="d-flex justify-content-between align-items-center flex-wrap mb-4">
+<body class="bg-light">
+    <div class="page-shell">
+        <header class="page-header">
             <div>
-                <h2 class="mb-1">ESP32 RTK Gateway</h2>
-                <div class="text-muted">Developer and debug tools</div>
+                <h1 class="page-title">ESP32 RTK Gateway</h1>
+                <p class="lead mb-0">Developer and debug tools only. No persistent config lives on this page.</p>
             </div>
             <div id="top-nav"></div>
-        </div>
+        </header>
 
-        <div class="card mb-3">
-            <div class="card-header">Deep Diagnostics</div>
-            <div class="card-body">
-                <div class="advanced-runtime-summary small text-muted">Loading runtime diagnostics...</div>
-                <div class="gnss-profile-status small text-muted mt-2"></div>
-            </div>
-        </div>
-
-        <div class="card mb-3">
-            <div class="card-header">Developer Tools</div>
-            <div class="card-body">
-                <div class="form-row mb-3">
-                    <div class="col-md-3">
-                        <label>Fake RTCM rate (Hz)</label>
-                        <input type="number" class="form-control" id="fake-rtcm-rate" value="5" min="1" max="100">
-                    </div>
-                    <div class="col-md-3">
-                        <label>Fake RTCM packet size</label>
-                        <input type="number" class="form-control" id="fake-rtcm-size" value="180" min="24" max="512">
-                    </div>
-                    <div class="col-md-3 d-flex align-items-end">
-                        <button type="button" class="btn btn-outline-secondary w-100" id="fake-rtcm-start">Start Fake RTCM</button>
-                    </div>
-                    <div class="col-md-3 d-flex align-items-end">
-                        <button type="button" class="btn btn-outline-secondary w-100" id="fake-rtcm-stop">Stop Fake RTCM</button>
-                    </div>
+        <main class="page-main stack">
+            <section class="card">
+                <div class="card-header">Deep Diagnostics</div>
+                <div class="card-body">
+                    <div id="advanced-summary" class="small text-muted">Loading diagnostics...</div>
                 </div>
-                <div class="mb-2">
-                    <button type="button" class="btn btn-sm btn-primary" id="selftest-start">Start Self-Test</button>
-                    <button type="button" class="btn btn-sm btn-outline-secondary" id="selftest-refresh">Refresh Result</button>
-                </div>
-                <pre class="small text-muted selftest-status mb-0">Loading self-test status...</pre>
-            </div>
-        </div>
+            </section>
 
-        <div class="card mb-3">
-            <div class="card-header">Receiver Raw Console</div>
-            <div class="card-body">
-                <textarea class="form-control" id="gnss-raw-console" rows="10" readonly></textarea>
+            <div class="panel-grid">
+                <section class="card">
+                    <div class="card-header">Fake RTCM</div>
+                    <div class="card-body stack">
+                        <div class="field-grid">
+                            <label class="field-stack">
+                                <span class="small text-muted">Rate (Hz)</span>
+                                <input type="number" id="advanced-fake-rate" class="form-control" value="5" min="1" max="100">
+                            </label>
+                            <label class="field-stack">
+                                <span class="small text-muted">Packet size</span>
+                                <input type="number" id="advanced-fake-size" class="form-control" value="180" min="24" max="512">
+                            </label>
+                        </div>
+                        <div class="toolbar">
+                            <button type="button" class="btn btn-outline-secondary" id="advanced-fake-start">Start Fake RTCM</button>
+                            <button type="button" class="btn btn-outline-secondary" id="advanced-fake-stop">Stop Fake RTCM</button>
+                        </div>
+                        <div id="advanced-fake-status" class="small text-muted">Fake RTCM controls use `/api/dev/fake-rtcm/*`.</div>
+                    </div>
+                </section>
+
+                <section class="card">
+                    <div class="card-header">NTRIP Mock Tools</div>
+                    <div class="card-body stack">
+                        <div class="field-grid">
+                            <label class="field-stack">
+                                <span class="small text-muted">Slot</span>
+                                <select id="advanced-mock-slot" class="custom-select"></select>
+                            </label>
+                            <label class="field-stack">
+                                <span class="small text-muted">Mode</span>
+                                <select id="advanced-mock-mode" class="custom-select"></select>
+                            </label>
+                            <label class="field-stack">
+                                <span class="small text-muted">Value</span>
+                                <input type="number" id="advanced-mock-value" class="form-control" value="0" min="0">
+                            </label>
+                        </div>
+                        <div class="toolbar">
+                            <button type="button" class="btn btn-outline-secondary" id="advanced-mock-apply">Apply Mock Mode</button>
+                        </div>
+                        <div id="advanced-mock-status" class="small text-muted">Mock mode uses `/api/dev/ntrip/mock`.</div>
+                    </div>
+                </section>
+
+                <section class="card">
+                    <div class="card-header">Heap / Core Dump</div>
+                    <div class="card-body stack">
+                        <div class="toolbar">
+                            <button type="button" class="btn btn-outline-secondary" id="advanced-heap-refresh">Refresh Heap Info</button>
+                            <a class="btn btn-outline-secondary" href="/core_dump">Download Core Dump</a>
+                        </div>
+                        <pre id="advanced-heap-info" class="pre-scroll mono small text-muted">Heap info not loaded yet.</pre>
+                    </div>
+                </section>
             </div>
-        </div>
+
+            <section class="card">
+                <div class="card-header">NTRIP Self-Test</div>
+                <div class="card-body stack">
+                    <div class="toolbar">
+                        <button type="button" class="btn btn-primary" id="advanced-selftest-start">Start Self-Test</button>
+                        <button type="button" class="btn btn-outline-secondary" id="advanced-selftest-refresh">Refresh Result</button>
+                    </div>
+                    <div id="advanced-selftest-status" class="small text-muted">Waiting for self-test state...</div>
+                    <pre id="advanced-selftest-result" class="pre-scroll mono small text-muted">{}</pre>
+                </div>
+            </section>
+
+            <section class="card">
+                <div class="card-header">Receiver Raw Console</div>
+                <div class="card-body stack">
+                    <div id="advanced-raw-status" class="small text-muted">Waiting for raw console...</div>
+                    <textarea id="advanced-raw-console" class="form-control mono" rows="14" readonly></textarea>
+                </div>
+            </section>
+        </main>
     </div>
 
-    <script src="c/runtime.js"></script>
-    <script src="c/gnss.js"></script>
-    <script src="c/nav.js"></script>
+    <script src="/c/api.js"></script>
+    <script src="/c/nav.js"></script>
+    <script src="/c/runtime.js"></script>
+    <script src="/c/gnss.js"></script>
+    <script src="/c/ntrip.js"></script>
+    <script src="/c/advanced.js"></script>
     <script>
-        $(function() {
-            const app = window.WebUI || window.ConfigPage || {};
-            const runtimeSummary = $('.advanced-runtime-summary');
-            const selftestStatus = $('.selftest-status');
-
-            const fetchJson = async function(url, options) {
-                const response = await fetch(url, Object.assign({ cache: 'no-store' }, options || {}));
-                if (!response.ok) throw new Error('HTTP ' + response.status + ' for ' + url);
-                return response.json();
-            };
-
-            const renderRuntime = function(status, runtime) {
-                runtimeSummary.empty();
-                if (status && status.qos) {
-                    runtimeSummary
-                        .append($('<span>', { class: 'capability-pill', text: 'QoS ' + (status.qos.state || 'normal') }))
-                        .append($('<span>', { class: 'capability-pill', text: status.qos.reason || 'normal' }))
-                        .append($('<span>', { class: 'capability-pill', text: (status.qos.active_socket_count || 0) + '/' + (status.qos.max_socket_count || 0) + ' sockets' }));
-                }
-                if (status && status.heap) {
-                    runtimeSummary
-                        .append($('<span>', { class: 'capability-pill', text: 'Heap ' + Math.round((status.heap.free || 0) / Math.max(status.heap.total || 1, 1) * 100) + '% free' }))
-                        .append($('<span>', { class: 'capability-pill', text: 'Uptime ' + app.utils.secondsToHHMMSS(status.uptime || 0) }));
-                }
-                if (status && status.buffers && status.buffers.gnss_raw) {
-                    runtimeSummary.append($('<span>', {
-                        class: 'capability-pill',
-                        text: 'Raw ' + app.utils.humanDataSize(status.buffers.gnss_raw.used || 0) + '/' + app.utils.humanDataSize(status.buffers.gnss_raw.size || 0)
-                    }));
-                }
-                if (runtime && runtime.runtime) {
-                    runtimeSummary
-                        .append($('<span>', { class: 'capability-pill', text: runtime.runtime.fake_rtcm_enabled ? 'Fake RTCM on' : 'Fake RTCM off' }))
-                        .append($('<span>', { class: 'capability-pill', text: app.utils.humanDataSize(runtime.runtime.total_ringbuffer_used || 0) + '/' + app.utils.humanDataSize(runtime.runtime.total_ringbuffer_capacity || 0) + ' buffer' }))
-                        .append($('<span>', { class: 'capability-pill', text: (runtime.runtime.total_dropped_rtcm_packets || 0) + ' dropped packets' }));
-                }
-            };
-
-            const refreshRuntime = async function() {
-                try {
-                    const status = await fetchJson('/status');
-                    const runtime = await fetchJson('/api/ntrip/runtime');
-                    if (status && status.qos && status.qos.state) {
-                        app.state.currentQosState = status.qos.state;
-                    }
-                    renderRuntime(status, runtime);
-                } catch (error) {
-                    runtimeSummary.text('Runtime diagnostics unavailable');
-                } finally {
-                    setTimeout(refreshRuntime, app.utils.pollDelayForQos(app.state.currentQosState, 3000, 6000, 10000));
-                }
-            };
-
-            const refreshRawConsole = async function() {
-                if (!(app.gnss && typeof app.gnss.refreshRawConsole === 'function')) return;
-                try {
-                    app.gnss.refreshRawConsole();
-                } finally {
-                    setTimeout(refreshRawConsole, app.utils.pollDelayForQos(app.state.currentQosState, 3000, 6000, 10000));
-                }
-            };
-
-            const refreshSelftest = async function() {
-                try {
-                    const data = await fetchJson('/api/dev/ntrip/selftest/result');
-                    selftestStatus.text(JSON.stringify(data || {}, null, 2));
-                } catch (error) {
-                    selftestStatus.text('Self-test result unavailable');
-                }
-            };
-
-            if (typeof window.renderNav === 'function') window.renderNav('advanced');
-            if (app.gnss && typeof app.gnss.init === 'function') app.gnss.init();
-
-            $('#fake-rtcm-start').on('click', function() {
-                const button = $(this);
-                button.prop('disabled', true);
-                $.ajax({
-                    url: '/api/dev/fake-rtcm/start',
-                    method: 'POST',
-                    contentType: 'application/json',
-                    data: JSON.stringify({
-                        rate_hz: parseInt($('#fake-rtcm-rate').val() || '5', 10),
-                        packet_size: parseInt($('#fake-rtcm-size').val() || '180', 10)
-                    })
-                }).always(function() { button.prop('disabled', false); });
-            });
-
-            $('#fake-rtcm-stop').on('click', function() {
-                const button = $(this);
-                button.prop('disabled', true);
-                $.post('/api/dev/fake-rtcm/stop').always(function() { button.prop('disabled', false); });
-            });
-
-            $('#selftest-start').on('click', function() {
-                $.post('/api/dev/ntrip/selftest/start').done(refreshSelftest);
-            });
-
-            $('#selftest-refresh').on('click', refreshSelftest);
-
-            selftestStatus.text('Click refresh to query the latest self-test result.');
-            refreshRuntime();
-            refreshRawConsole();
+        window.addEventListener('DOMContentLoaded', function() {
+            window.WebUI.nav.render('advanced');
+            window.WebUI.advanced.init();
         });
     </script>
 </body>

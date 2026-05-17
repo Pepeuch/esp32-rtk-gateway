@@ -42,9 +42,7 @@ def normalize_asset_path(ref: str, page: Path) -> Path | None:
 def normalize_endpoint(path: str) -> str:
     if path.startswith(('http://', 'https://')):
         return path
-    if not path.startswith('/'):
-        return '/' + path
-    return path
+    return path if path.startswith('/') else '/' + path
 
 
 def endpoint_matches(endpoint: str, registered: list[str]) -> bool:
@@ -56,40 +54,61 @@ def endpoint_matches(endpoint: str, registered: list[str]) -> bool:
     return False
 
 
+required_files = [
+    WWW / 'index.html',
+    WWW / 'dashboard.html',
+    WWW / 'config.html',
+    WWW / 'advanced.html',
+    WWW / 'log.html',
+    WWW / 'app-lite.css',
+    WWW / 'app-lite.js',
+    WWW / 'c' / 'api.js',
+    WWW / 'c' / 'nav.js',
+    WWW / 'c' / 'runtime.js',
+    WWW / 'c' / 'dashboard.js',
+    WWW / 'c' / 'config.js',
+    WWW / 'c' / 'gnss.js',
+    WWW / 'c' / 'ntrip.js',
+    WWW / 'c' / 'lora.js',
+    WWW / 'c' / 'log.js',
+    WWW / 'c' / 'advanced.js',
+]
+
+for required in required_files:
+    if not required.exists():
+        errors.append(f'missing required WebUI file: {required}')
+
 pages = {
     'dashboard': WWW / 'dashboard.html',
     'config': WWW / 'config.html',
     'advanced': WWW / 'advanced.html',
-    'log': WWW / 'log.html',
+    'logs': WWW / 'log.html',
 }
 
 for page_name, page in pages.items():
     text = page.read_text(errors='ignore')
     if 'id="top-nav"' not in text:
         errors.append(f'{page}: missing #top-nav container')
-    if 'c/nav.js' not in text:
-        errors.append(f'{page}: missing c/nav.js include')
-    render_nav_single = f"renderNav('{page_name}')"
-    render_nav_double = f'renderNav("{page_name}")'
-    if render_nav_single not in text and render_nav_double not in text:
-        errors.append(f'{page}: missing renderNav({page_name}) call')
+    if 'class="page-header"' not in text:
+        errors.append(f'{page}: missing shared page-header structure')
+    render_single = f"WebUI.nav.render('{page_name}')"
+    render_double = f'WebUI.nav.render("{page_name}")'
+    if render_single not in text and render_double not in text:
+        errors.append(f'{page}: missing WebUI.nav.render({page_name}) call')
 
+page_count = 0
+asset_count = 0
 for page in sorted(WWW.glob('*.html')):
+    page_count += 1
     parser = AssetParser()
     parser.feed(page.read_text(errors='ignore'))
     for ref in parser.scripts + parser.styles:
+        asset_count += 1
         resolved = normalize_asset_path(ref, page)
         if resolved is None:
             continue
         if not resolved.exists():
             errors.append(f'{page}: missing asset reference {ref} -> {resolved}')
-
-endpoint_patterns = [
-    re.compile(r"\$\.getJSON\(\s*['\"]([^'\"]+)['\"]"),
-    re.compile(r"\$\.post\(\s*['\"]([^'\"]+)['\"]"),
-    re.compile(r"url:\s*['\"]([^'\"]+)['\"]"),
-    re.compile(r"fetch\(\s*['\"]([^'\"]+)['\"]"),
-]
 
 registered = [
     match.group(1)
@@ -99,11 +118,33 @@ registered = [
     )
 ]
 
-endpoint_sources = sorted(list(WWW.glob('*.html')) + list((WWW / 'c').glob('*.js')))
+endpoint_patterns = [
+    re.compile(r'WebUI\.api\.(?:get|post)\(\s*["\']([^"\']+)["\']'),
+    re.compile(r'(?<![A-Za-z0-9_])api\.(?:get|post)\(\s*["\']([^"\']+)["\']'),
+    re.compile(r'fetch\(\s*["\']([^"\']+)["\']'),
+]
+
+relative_api_patterns = [
+    re.compile(r'WebUI\.api\.(?:get|post)\(\s*["\']((?!/|https?:|data:)[^"\']+)["\']'),
+    re.compile(r'(?<![A-Za-z0-9_])api\.(?:get|post)\(\s*["\']((?!/|https?:|data:)[^"\']+)["\']'),
+    re.compile(r'fetch\(\s*["\']((?!/|https?:|data:)[^"\']+)["\']'),
+]
+
+endpoint_sources = sorted(
+    list(WWW.glob('*.html')) +
+    [WWW / 'app-lite.js'] +
+    list((WWW / 'c').glob('*.js'))
+)
+
+endpoint_count = 0
 for source in endpoint_sources:
     text = source.read_text(errors='ignore')
+    for pattern in relative_api_patterns:
+        for raw_endpoint in pattern.findall(text):
+            errors.append(f'{source}: relative API path is forbidden: {raw_endpoint}')
     for pattern in endpoint_patterns:
         for raw_endpoint in pattern.findall(text):
+            endpoint_count += 1
             endpoint = normalize_endpoint(raw_endpoint)
             if endpoint.startswith(('http://', 'https://')):
                 continue
@@ -111,18 +152,23 @@ for source in endpoint_sources:
                 errors.append(f'{source}: unknown endpoint {raw_endpoint} -> {endpoint}')
 
 legacy_patterns = [
+    'ConfigPage',
+    'autoTab',
     'incarvr6',
     'esp32-ntrip',
-    'releases_api_url',
-    'releases_html_url',
-    'ConfigPage.initNav',
+    'legacy-ntrip-card',
+    'legacy-config-card',
+    'NTRIP server A',
+    'NTRIP server B',
 ]
 
-for source in sorted(list(WWW.glob('*.html')) + list((WWW / 'c').glob('*.js')) + list(WWW.glob('*.css'))):
+legacy_checks = 0
+for source in sorted(list(WWW.glob('*.html')) + list(WWW.glob('*.js')) + list((WWW / 'c').glob('*.js')) + list(WWW.glob('*.css'))):
     text = source.read_text(errors='ignore')
     for pattern in legacy_patterns:
+        legacy_checks += 1
         if pattern in text:
-            errors.append(f'{source}: legacy reference found: {pattern}')
+            errors.append(f'{source}: forbidden legacy reference found: {pattern}')
 
 if errors:
     print('WebUI asset check failed:', file=sys.stderr)
@@ -131,4 +177,8 @@ if errors:
     sys.exit(1)
 
 print('WebUI asset check passed.')
+print(f'Pages checked: {page_count}')
+print(f'Assets checked: {asset_count}')
+print(f'Endpoints checked: {endpoint_count}')
+print(f'Legacy string checks: {legacy_checks}')
 PY

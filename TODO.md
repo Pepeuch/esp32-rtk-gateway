@@ -1,5 +1,12 @@
 ## TODO stabilité firmware
 
+Note:
+- mise à jour selon l'état du repo au 2026-05-17
+- seules les tâches prouvées dans le code sont cochées
+- les tests matériel restent volontairement ouverts
+- l'init LoRa ne provoque plus de boucle WDT si le radio init échoue; le boot continue sans LoRa
+- des `BOOT_STEP(...)` existent déjà dans `main.c`, mais pas encore de diagnostic persistant complet
+
 - [ ] Ajouter mode "safe boot"
   - désactiver LoRa si crash précédent
   - désactiver WebUI avancée si heap critique
@@ -21,19 +28,19 @@
 
 ## TODO WebUI/API audit
 
-- [ ] Générer docs/webui_audit.md
-- [ ] Cartographier :
+- [x] Générer docs/webui_audit.md
+- [x] Cartographier :
   - pages HTML
   - JS utilisés
   - endpoints API
   - endpoints réellement implémentés
-- [ ] Identifier :
+- [x] Identifier :
   - legacy incarvr6
   - code mort
   - endpoints manquants
   - limites hardcodées
   - blocs dupliqués
-- [ ] Ajouter validation automatique assets/API
+- [x] Ajouter validation automatique assets/API
 
 ## TODO — LoRa RTK roles
 
@@ -82,7 +89,7 @@
 - [ ] Tester sur un autre switch/port
 - [ ] Vérifier vitesse/négociation du lien
 - [ ] Garder DHCP timeout à 30 s pour le moment
-- [ ] Vérifier les fichiers WebUI manquants (/c/*.js)
+- [x] Vérifier les fichiers WebUI manquants (/c/*.js)
 - [ ] Vérifier génération SPIFFS complète
 - [ ] Audit mémoire WebUI/config.html
 - [ ] MQTT runtime control
@@ -111,7 +118,7 @@
 ## TODO Mammotion migration workflow
 
 ### Detection / onboarding
-- [ ] Ajouter profil board `mammotion_esp32s3_rtk`
+- [x] Ajouter profil board `mammotion_esp32s3_rtk`
 - [ ] Détection automatique Mammotion via logs / UART / signatures
 - [ ] Assistant WebUI “Mammotion migration”
 - [ ] Étape obligatoire avant flash :

@@ -1,139 +1,124 @@
-<html>
+<!doctype html>
+<html lang="en">
 <head>
+    <meta charset="utf-8">
     <title>ESP32 RTK Gateway Dashboard</title>
-    <script src="app-lite.js"></script>
-    <link rel="stylesheet" href="app-lite.css">
-    <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        body {
-            background: #f7f9fb;
-        }
-
-        .capability-pill {
-            display: inline-block;
-            margin: 0 8px 8px 0;
-            padding: 4px 10px;
-            border-radius: 999px;
-            background: #eef3f7;
-            font-size: 0.875rem;
-        }
-
-        .dashboard-table tbody {
-            font-size: 0.92rem;
-        }
-    </style>
+    <link rel="stylesheet" href="/app-lite.css">
+    <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
 </head>
-<body class="bg-light" data-page="dashboard">
-    <div class="container py-4">
-        <div class="d-flex justify-content-between align-items-center flex-wrap mb-4">
+<body class="bg-light">
+    <div class="page-shell">
+        <header class="page-header">
             <div>
-                <h2 class="mb-1">ESP32 RTK Gateway</h2>
-                <div class="text-muted">Complete runtime dashboard</div>
+                <h1 class="page-title">ESP32 RTK Gateway</h1>
+                <p class="lead mb-0">Complete runtime dashboard served directly by the device.</p>
             </div>
             <div id="top-nav"></div>
-        </div>
+        </header>
 
-        <div class="card mb-3">
-            <div class="card-header">Platform</div>
-            <div class="card-body py-3">
-                <div class="capabilities-summary small text-muted">Loading platform profile...</div>
-            </div>
-        </div>
+        <main class="page-main stack">
+            <section class="card">
+                <div class="card-header">Platform</div>
+                <div class="card-body">
+                    <div id="dashboard-platform" class="small text-muted">Loading platform state...</div>
+                </div>
+            </section>
 
-        <div class="row">
-            <div class="col-xl-6">
-                <div class="card mb-3">
-                    <div class="card-header">Network Status</div>
-                    <div class="card-body py-3 dashboard-network-summary small text-muted">Loading network status...</div>
-                </div>
-            </div>
-            <div class="col-xl-6">
-                <div class="card mb-3">
-                    <div class="card-header">LoRa Status</div>
-                    <div class="card-body py-3 lora-runtime-summary small text-muted">Loading LoRa status...</div>
-                </div>
-            </div>
-            <div class="col-xl-6">
-                <div class="card mb-3">
-                    <div class="card-header">GNSS Overview</div>
-                    <div class="card-body py-3 gnss-summary small text-muted">Loading GNSS status...</div>
-                </div>
-            </div>
-            <div class="col-xl-6">
-                <div class="card mb-3">
-                    <div class="card-header">Base Station Status</div>
-                    <div class="card-body py-3">
-                        <div class="gnss-base-summary small text-muted">Loading base station status...</div>
-                        <div class="gnss-base-status small text-muted mt-2"></div>
+            <div class="panel-grid">
+                <section class="card">
+                    <div class="card-header">Network</div>
+                    <div class="card-body">
+                        <div id="dashboard-network" class="small text-muted">Loading network state...</div>
                     </div>
+                </section>
+
+                <section class="card">
+                    <div class="card-header">GNSS Overview</div>
+                    <div class="card-body">
+                        <div id="dashboard-gnss-overview" class="small text-muted">Loading GNSS overview...</div>
+                    </div>
+                </section>
+
+                <section class="card">
+                    <div class="card-header">Base Station</div>
+                    <div class="card-body">
+                        <div id="dashboard-base" class="small text-muted">Loading base station state...</div>
+                    </div>
+                </section>
+
+                <section class="card">
+                    <div class="card-header">LoRa</div>
+                    <div class="card-body">
+                        <div id="dashboard-lora" class="small text-muted">Loading LoRa state...</div>
+                    </div>
+                </section>
+            </div>
+
+            <section class="card">
+                <div class="card-header">GNSS Diagnostics</div>
+                <div class="card-body">
+                    <div id="dashboard-gnss-diagnostics" class="small text-muted">Loading GNSS diagnostics...</div>
                 </div>
-            </div>
-        </div>
+            </section>
 
-        <div class="card mb-3">
-            <div class="card-header">GNSS Diagnostics</div>
-            <div class="card-body py-3 gnss-diagnostics-summary small text-muted">Loading GNSS diagnostics...</div>
-        </div>
-
-        <div class="card mb-3">
-            <div class="card-header">Satellites / Constellations</div>
-            <div class="card-body py-3">
-                <div class="gnss-constellation-summary small text-muted mb-2">Loading constellation summary...</div>
-                <div class="table-responsive">
-                    <table class="table table-sm table-striped mb-0 dashboard-table gnss-satellite-table">
-                        <thead>
-                            <tr>
-                                <th>Constellation</th>
-                                <th>PRN</th>
-                                <th>El</th>
-                                <th>Az</th>
-                                <th>CN0</th>
-                                <th>Sig</th>
-                                <th>Used</th>
-                                <th>Age</th>
-                            </tr>
-                        </thead>
-                        <tbody></tbody>
-                    </table>
+            <section class="card">
+                <div class="card-header">Satellites / Constellations</div>
+                <div class="card-body stack">
+                    <div id="dashboard-gnss-constellations" class="small text-muted">Loading satellite summary...</div>
+                    <div id="dashboard-gnss-satellite-wrap" class="table-responsive">
+                        <table class="table table-sm table-striped">
+                            <thead>
+                                <tr>
+                                    <th>Constellation</th>
+                                    <th>PRN</th>
+                                    <th>El</th>
+                                    <th>Az</th>
+                                    <th>CN0</th>
+                                    <th>Sig</th>
+                                    <th>Used</th>
+                                    <th>Age</th>
+                                </tr>
+                            </thead>
+                            <tbody id="dashboard-gnss-satellites"></tbody>
+                        </table>
+                    </div>
+                    <div id="dashboard-gnss-satellite-status" class="small text-muted">Waiting for satellite data...</div>
                 </div>
-                <div class="gnss-satellite-status small text-muted mt-2">Waiting for GNSS data...</div>
-            </div>
-        </div>
+            </section>
 
-        <div class="card mb-3">
-            <div class="card-header">NTRIP Runtime Status</div>
-            <div class="card-body py-3">
-                <div class="dashboard-ntrip-runtime-summary small text-muted mb-3">Loading NTRIP runtime...</div>
-                <div class="dashboard-ntrip-slot-list small text-muted">Loading slot status...</div>
-            </div>
-        </div>
+            <section class="card">
+                <div class="card-header">NTRIP Runtime</div>
+                <div class="card-body stack">
+                    <div id="dashboard-ntrip-summary" class="small text-muted">Loading NTRIP runtime...</div>
+                    <div id="dashboard-ntrip-slots" class="panel-grid"></div>
+                </div>
+            </section>
 
-        <div class="card mb-4">
-            <div class="card-header">Memory / QoS / Uptime</div>
-            <div class="card-body py-3 system-summary small text-muted">Loading system status...</div>
-        </div>
+            <section class="card">
+                <div class="card-header">Memory / QoS</div>
+                <div class="card-body">
+                    <div id="dashboard-memory" class="small text-muted">Loading memory and QoS...</div>
+                </div>
+            </section>
+        </main>
+
+        <footer class="page-footer small text-muted">
+            <span id="dashboard-footer">Waiting for runtime...</span>
+        </footer>
     </div>
-    <footer id="footer" class="bg-dark">
-        <div class="container">
-            <div class="text-center text-light">
-                <small>Uptime <span class="uptime">loading...</span> - Heap <span class="heap">loading...</span></small>
-            </div>
-        </div>
-    </footer>
 
-    <script src="c/runtime.js"></script>
-    <script src="c/gnss.js"></script>
-    <script src="c/ntrip.js"></script>
-    <script src="c/lora.js"></script>
-    <script src="c/nav.js"></script>
+    <script src="/c/api.js"></script>
+    <script src="/c/nav.js"></script>
+    <script src="/c/runtime.js"></script>
+    <script src="/c/gnss.js"></script>
+    <script src="/c/ntrip.js"></script>
+    <script src="/c/lora.js"></script>
+    <script src="/c/dashboard.js"></script>
     <script>
-        $(function() {
-            const app = window.WebUI || window.ConfigPage || {};
-            if (typeof window.renderNav === 'function') window.renderNav('dashboard');
-            if (app.runtimeStatus && typeof app.runtimeStatus.initDashboard === 'function') {
-                app.runtimeStatus.initDashboard();
-            }
+        window.addEventListener('DOMContentLoaded', function() {
+            window.WebUI.nav.render('dashboard');
+            window.WebUI.dashboard.init();
         });
     </script>
 </body>

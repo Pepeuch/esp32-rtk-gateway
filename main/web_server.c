@@ -33,15 +33,22 @@
 #include <stream_stats.h>
 #include <lwip/sockets.h>
 #include <esp_timer.h>
+#include "config/board_config.h"
 #include "web_server.h"
 #include "errno.h"
 #include "esp_task_wdt.h"
 #include "captive_portal.h"
 #include "capabilities.h"
 #include "memory_policy.h"
+#include "network.h"
 #include "ntrip_runtime.h"
 #include "ntrip_slots.h"
 #include "receiver.h"
+#include "lora_radio.h"
+
+#ifndef CONFIG_LORA_FEATURE_ENABLED
+#define CONFIG_LORA_FEATURE_ENABLED 0
+#endif
 
 #if CONFIG_IDF_TARGET_ESP32
 #include <esp32/rom/crc.h>
@@ -368,7 +375,20 @@ static void capabilities_json_fill(cJSON *cap)
 {
     platform_capabilities_t capabilities;
     capabilities_get(&capabilities);
+    const esp_app_desc_t *app_desc = esp_app_get_description();
+    bool lora_ready = false;
+    const char *lora_driver = "none";
 
+#if BOARD_HAS_LORA_RADIO && CONFIG_LORA_FEATURE_ENABLED
+    lora_ready = lora_radio_is_ready();
+#endif
+
+#if BOARD_LORA_DRIVER_SX126X
+    lora_driver = "sx126x";
+#endif
+
+    cJSON_AddStringToObject(cap, "board_name", BOARD_NAME);
+    cJSON_AddStringToObject(cap, "firmware_version", app_desc->version);
     cJSON_AddStringToObject(cap, "chip_family", capabilities.chip_family);
     cJSON_AddStringToObject(cap, "network_profile", capabilities.network_profile);
     cJSON_AddBoolToObject(cap, "is_esp32", capabilities.is_esp32);
@@ -381,13 +401,17 @@ static void capabilities_json_fill(cJSON *cap)
     cJSON_AddBoolToObject(cap, "safe_mode", capabilities.safe_mode);
     cJSON_AddBoolToObject(cap, "has_lora_radio", capabilities.has_lora_radio);
     cJSON_AddBoolToObject(cap, "lora_tx_enabled", capabilities.lora_tx_enabled);
+    cJSON_AddBoolToObject(cap, "lora_ready", lora_ready);
+    cJSON_AddStringToObject(cap, "lora_driver", lora_driver);
     cJSON_AddNumberToObject(cap, "max_ntrip_slots", capabilities.max_ntrip_slots);
     cJSON_AddNumberToObject(cap, "configured_ntrip_slots", capabilities.configured_ntrip_slots);
     cJSON_AddStringToObject(cap, "device_role", capabilities.device_role);
 
     cJSON *lora = cJSON_AddObjectToObject(cap, "lora");
     cJSON_AddBoolToObject(lora, "supported", capabilities.has_lora_radio);
+    cJSON_AddBoolToObject(lora, "ready", lora_ready);
     cJSON_AddBoolToObject(lora, "tx_enabled", capabilities.lora_tx_enabled);
+    cJSON_AddStringToObject(lora, "driver", lora_driver);
     cJSON_AddStringToObject(lora, "region", capabilities.lora_region);
     cJSON_AddStringToObject(lora, "chip_family", capabilities.lora_chip_family);
     cJSON_AddStringToObject(lora, "radio_profile", capabilities.lora_radio_profile);
@@ -1563,6 +1587,17 @@ static esp_err_t status_get_handler(httpd_req_t *req) {
     cJSON_AddNumberToObject(root, "active_socket_count", active_socket_count);
     cJSON_AddNumberToObject(root, "max_socket_count", CONFIG_LWIP_MAX_SOCKETS);
     qos_json_fill(root, &runtime_info);
+
+    cJSON *ethernet = cJSON_AddObjectToObject(root, "ethernet");
+    cJSON_AddBoolToObject(ethernet, "supported", BOARD_SUPPORTS_ETHERNET);
+    cJSON_AddBoolToObject(ethernet, "started", network_is_ethernet_started());
+    cJSON_AddBoolToObject(ethernet, "link_up", network_is_ethernet_link_up());
+    cJSON_AddBoolToObject(ethernet, "has_ip", network_is_ethernet_has_ip());
+    cJSON_AddBoolToObject(ethernet, "ready", network_is_ethernet_ready());
+    char ethernet_ip4[40] = "";
+    if (network_get_ethernet_ip4_string(ethernet_ip4, sizeof(ethernet_ip4))) {
+        cJSON_AddStringToObject(ethernet, "ip4", ethernet_ip4);
+    }
 
     capabilities_json_fill(cJSON_AddObjectToObject(root, "capabilities"));
     ntrip_slots_json_fill(cJSON_AddObjectToObject(root, "ntrip"));

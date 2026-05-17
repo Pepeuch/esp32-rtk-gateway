@@ -5,6 +5,7 @@
 #define BOARD_NAME "Waveshare ESP32-S3-ETH"
 
 #define BOARD_HAS_LORA_RADIO       1
+#define BOARD_LORA_DRIVER_SX126X   1
 
 #define BOARD_W5500_MOSI           GPIO_NUM_11
 #define BOARD_W5500_MISO           GPIO_NUM_12
