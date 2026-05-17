@@ -30,7 +30,7 @@
                 <h2 class="mb-1">ESP32 RTK Gateway</h2>
                 <div class="text-muted">Developer and debug tools</div>
             </div>
-            <div class="shared-nav"></div>
+            <div id="top-nav"></div>
         </div>
 
         <div class="card mb-3">
@@ -151,7 +151,7 @@
                 }
             };
 
-            if (typeof app.initNav === 'function') app.initNav({ page: 'advanced' });
+            if (typeof window.renderNav === 'function') window.renderNav('advanced');
             if (app.gnss && typeof app.gnss.init === 'function') app.gnss.init();
 
             $('#fake-rtcm-start').on('click', function() {

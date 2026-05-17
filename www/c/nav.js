@@ -10,23 +10,23 @@
         { href: '/log.html', label: 'Logs', id: 'log' }
     ];
 
-    app.initNav = function(options) {
-        const page = (options && options.page) || $('body').data('page') || '';
-        const roots = $('.shared-nav');
+    function renderNav(page, targetSelector) {
+        const target = $(targetSelector || '#top-nav');
+        if (!target.length) return;
 
-        roots.each(function() {
-            const root = $(this);
-            root.empty();
+        target.empty();
 
-            links.forEach(function(link) {
-                const active = link.id === page;
-                root.append($('<a>', {
-                    href: link.href,
-                    class: 'btn btn-sm ' + (active ? 'btn-primary' : 'btn-outline-secondary') + ' mr-2 mb-2',
-                    text: link.label,
-                    'aria-current': active ? 'page' : null
-                }));
-            });
+        links.forEach(function(link) {
+            const active = link.id === page;
+            target.append($('<a>', {
+                href: link.href,
+                class: 'btn btn-sm ' + (active ? 'btn-primary' : 'btn-outline-secondary') + ' mr-2 mb-2',
+                text: link.label,
+                'aria-current': active ? 'page' : null
+            }));
         });
-    };
+    }
+
+    app.renderNav = renderNav;
+    global.renderNav = renderNav;
 })(window);

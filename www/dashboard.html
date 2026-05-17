@@ -31,7 +31,7 @@
                 <h2 class="mb-1">ESP32 RTK Gateway</h2>
                 <div class="text-muted">Complete runtime dashboard</div>
             </div>
-            <div class="shared-nav"></div>
+            <div id="top-nav"></div>
         </div>
 
         <div class="card mb-3">
@@ -130,7 +130,7 @@
     <script>
         $(function() {
             const app = window.WebUI || window.ConfigPage || {};
-            if (typeof app.initNav === 'function') app.initNav({ page: 'dashboard' });
+            if (typeof window.renderNav === 'function') window.renderNav('dashboard');
             if (app.runtimeStatus && typeof app.runtimeStatus.initDashboard === 'function') {
                 app.runtimeStatus.initDashboard();
             }

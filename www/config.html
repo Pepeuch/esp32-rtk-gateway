@@ -94,10 +94,10 @@
     <div class="container">
         <div class="d-flex justify-content-between align-items-center flex-wrap pt-4 mb-4">
             <div>
-                <h2 class="mb-1">ESP32 RTK Gateway <a id="project-version" href="https://github.com/Pepeuch/esp32-rtk-gateway" class="text-muted small"></a> <a id="prerelease-available" class="text-info small" style="display: none">(beta available)</a></h2>
+                <h2 class="mb-1">ESP32 RTK Gateway <a id="project-version" href="https://github.com/Pepeuch/esp32-rtk-gateway" class="text-muted small"></a></h2>
                 <p class="lead mb-0">Adjust the settings below and then click on "Submit". The device will restart with the new settings applied. If you have adjusted WiFi settings the device may be moved onto a new IP address, or require you to reconnect to its access point.</p>
             </div>
-            <div class="shared-nav"></div>
+            <div id="top-nav"></div>
         </div>
         <div class="card mb-3">
             <div class="card-header">Platform Capabilities</div>
@@ -1025,7 +1025,7 @@
     <footer id="footer" class="bg-dark">
         <div class="container">
             <div class="text-center text-light">
-                <small>&copy; </a> 2024 - <a href="https://github.com/incarvr6" class="text-white">GitHub</a> - <a href="https://github.com/incarvr6/esp32-ntrip" class="text-white">Project</a> - Uptime <span class="uptime">loading...</span> - Heap <span class="heap">loading...</span></small>
+                <small>&copy; 2024 - <a href="https://github.com/Pepeuch/esp32-rtk-gateway" class="text-white">Project</a> - Uptime <span class="uptime">loading...</span> - Heap <span class="heap">loading...</span></small>
             </div>
         </div>
     </footer>
@@ -1054,9 +1054,6 @@
     <script src="c/nav.js"></script>
 
     <script>
-        const releases_api_url = 'https://github.com/incarvr6/esp32-ntrip/releases/tag/0.0.1';
-        const releases_html_url = 'https://github.com/incarvr6/esp32-ntrip/releases/tag/0.0.1';
-
         window.autoTab = function(target) {
             if (window.ConfigPage && typeof window.ConfigPage.autoTab === 'function') {
                 window.ConfigPage.autoTab(target);
@@ -1067,12 +1064,9 @@
             const app = window.ConfigPage || {};
 
             if (typeof app.initForm === 'function') {
-                app.initForm({
-                    releasesApiUrl: releases_api_url,
-                    releasesHtmlUrl: releases_html_url
-                });
+                app.initForm();
             }
-            if (typeof app.initNav === 'function') app.initNav({ page: 'config' });
+            if (typeof window.renderNav === 'function') window.renderNav('config');
             if (app.gnss && typeof app.gnss.init === 'function') app.gnss.init();
             if (app.ntrip && typeof app.ntrip.init === 'function') app.ntrip.init();
             if (app.lora && typeof app.lora.init === 'function') app.lora.init();

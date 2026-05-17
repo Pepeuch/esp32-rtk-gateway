@@ -15,8 +15,8 @@
         const LOG_PAGE_INDEX_KEY = 'log_page_index';
 
         $(function() {
-            if (window.WebUI && typeof window.WebUI.initNav === 'function') {
-                window.WebUI.initNav({ page: 'log' });
+            if (typeof window.renderNav === 'function') {
+                window.renderNav('log');
             }
 
             var log_page_index = localStorage.getItem(LOG_PAGE_INDEX_KEY) || 0;
@@ -107,7 +107,7 @@
                 <h2 class="mb-1">ESP32 RTK Gateway Log</h2>
                 <p class="lead mb-0">The device log reloads automatically. Keep only one log page open at a time.</p>
             </div>
-            <div class="shared-nav"></div>
+            <div id="top-nav"></div>
         </div>
         <div class="row">
             <table id="table" class="table table-sm">
