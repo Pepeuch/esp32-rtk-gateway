@@ -248,7 +248,7 @@
                 <select id="board">
                   <option value="generic_esp32_eth">ESP32 ETH</option>
                   <option value="waveshare_esp32s3_eth" selected>ESP32-S3 ETH / Waveshare</option>
-                  <option value="mammotion_esp32s3">ESP32-S3 Mammotion</option>
+                  <option value="mammotion_esp32s3_rtk">ESP32-S3 Mammotion RTK</option>
                 </select>
               </div>
 
@@ -302,7 +302,9 @@
                 <label for="lora">LoRa</label>
                 <select id="lora">
                   <option value="none">Aucun</option>
-                  <option value="sx126x" selected>SX126x</option>
+                  <option value="sx1262" selected>SX1262</option>
+                  <option value="sx1268">SX1268</option>
+                  <option value="llcc68">LLCC68</option>
                 </select>
               </div>
 
@@ -400,17 +402,20 @@
         defaultFlash: '16mb',
         supportsLora: true,
       },
-      mammotion_esp32s3: {
+      mammotion_esp32s3_rtk: {
         chip: 'esp32s3',
         defaultEthernet: 'none',
-        defaultPsram: '8mb',
-        defaultFlash: '16mb',
+        defaultPsram: 'none',
+        defaultFlash: '8mb',
         supportsLora: true,
+        defaultLora: 'llcc68',
       },
     };
 
     function currentProfile() {
-      return Object.fromEntries(Object.entries(fields).map(([key, field]) => [key, field.value]));
+      const profile = Object.fromEntries(Object.entries(fields).map(([key, field]) => [key, field.value]));
+      profile.lora_driver = profile.lora === 'none' ? 'none' : 'sx126x';
+      return profile;
     }
 
     function firmwareId(profile) {
@@ -469,7 +474,7 @@
       if (!rule.supportsLora) {
         fields.lora.value = 'none';
       } else if (!fields.lora.dataset.userTouched && fields.lora.value === 'none') {
-        fields.lora.value = 'sx126x';
+        fields.lora.value = rule.defaultLora || 'sx1262';
       }
     }
 
@@ -514,7 +519,7 @@
       if (profile.board === 'generic_esp32_eth' && profile.ethernet !== 'lan8720') {
         messages.push('Generic ESP32 ETH attend Ethernet LAN8720.');
       }
-      if (profile.board === 'mammotion_esp32s3' && profile.ethernet !== 'none') {
+      if (profile.board === 'mammotion_esp32s3_rtk' && profile.ethernet !== 'none') {
         messages.push('Mammotion ESP32-S3 fonctionne ici sans Ethernet.');
       }
       if (profile.board === 'waveshare_esp32s3_eth' && profile.role !== 'rover' && profile.ethernet !== 'w5500') {
@@ -526,7 +531,13 @@
       if (!rule.supportsLora && profile.lora !== 'none') {
         messages.push('Cette board ne supporte pas LoRa dans le profil courant.');
       }
-      if (profile.lora === 'sx126x' && profile.region === 'CUSTOM') {
+      if (profile.lora !== 'none' && profile.lora_driver !== 'sx126x') {
+        messages.push('Les radios SX1262/SX1268/LLCC68 doivent utiliser le driver sx126x.');
+      }
+      if (profile.lora === 'none' && profile.lora_driver !== 'none') {
+        messages.push('LoRa none doit aussi désactiver le driver LoRa.');
+      }
+      if (profile.lora !== 'none' && profile.region === 'CUSTOM') {
         messages.push('Région CUSTOM sélectionnée: un build/manifeste spécifique sera nécessaire.');
       }
 
@@ -553,6 +564,7 @@
       appendSummary('Ethernet', profile.ethernet);
       appendSummary('GNSS', profile.gnss);
       appendSummary('LoRa', profile.lora);
+      appendSummary('Driver LoRa', profile.lora_driver);
       appendSummary('Région', profile.region);
       appendSummary('Firmware ID', id);
 

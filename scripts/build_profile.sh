@@ -31,7 +31,7 @@ if not profile_path.is_file():
     raise SystemExit(f"profile file not found: {profile_path}")
 
 profile = json.loads(profile_path.read_text(encoding="utf-8"))
-required = ["chip", "board", "role", "flash", "psram", "ethernet", "gnss", "lora", "region"]
+required = ["chip", "board", "role", "flash", "psram", "ethernet", "gnss", "lora", "lora_driver", "region"]
 missing = [key for key in required if key not in profile or profile[key] in ("", None)]
 if missing:
     raise SystemExit("profile missing required fields: " + ", ".join(missing))
@@ -44,12 +44,28 @@ psram = str(profile["psram"]).lower()
 ethernet = str(profile["ethernet"]).lower()
 gnss = str(profile["gnss"]).lower()
 lora = str(profile["lora"]).lower()
+lora_driver = str(profile["lora_driver"]).lower()
 region = str(profile["region"]).upper()
 
 board_rules = {
-    "waveshare_esp32s3_eth": {"chip": "esp32s3", "default_ethernet": "w5500", "supports_lora": True},
-    "mammotion_esp32s3": {"chip": "esp32s3", "default_ethernet": "none", "supports_lora": True},
-    "generic_esp32_eth": {"chip": "esp32", "default_ethernet": "lan8720", "supports_lora": False},
+    "waveshare_esp32s3_eth": {
+        "chip": "esp32s3",
+        "default_ethernet": "w5500",
+        "lora_variants": {"none", "sx1262"},
+        "lora_driver": "sx126x",
+    },
+    "mammotion_esp32s3_rtk": {
+        "chip": "esp32s3",
+        "default_ethernet": "none",
+        "lora_variants": {"none", "llcc68"},
+        "lora_driver": "sx126x",
+    },
+    "generic_esp32_eth": {
+        "chip": "esp32",
+        "default_ethernet": "lan8720",
+        "lora_variants": {"none"},
+        "lora_driver": "none",
+    },
 }
 
 if board not in board_rules:
@@ -67,10 +83,17 @@ if ethernet not in {"none", "w5500", "lan8720"}:
     raise SystemExit(f"unsupported ethernet profile: {ethernet}")
 if gnss not in {"ublox", "nmea", "unicore", "septentrio"}:
     raise SystemExit(f"unsupported gnss profile: {gnss}")
-if lora not in {"none", "sx126x"}:
+if lora not in {"none", "sx1262", "sx1268", "llcc68"}:
     raise SystemExit(f"unsupported lora profile: {lora}")
+if lora_driver not in {"none", "sx126x"}:
+    raise SystemExit(f"unsupported lora driver: {lora_driver}")
 if region not in {"EU868", "US915", "AU915", "AS923", "CUSTOM"}:
     raise SystemExit(f"unsupported region: {region}")
+
+if lora == "none" and lora_driver != "none":
+    raise SystemExit("lora=none requires lora_driver=none")
+if lora in {"sx1262", "sx1268", "llcc68"} and lora_driver != "sx126x":
+    raise SystemExit(f"lora={lora} requires lora_driver=sx126x")
 
 if role == "rover" and ethernet != "none":
     raise SystemExit("rover role requires ethernet=none")
@@ -78,9 +101,9 @@ if board == "generic_esp32_eth" and ethernet != "lan8720":
     raise SystemExit("generic_esp32_eth requires ethernet=lan8720")
 if board == "waveshare_esp32s3_eth" and role != "rover" and ethernet != "w5500":
     raise SystemExit("waveshare_esp32s3_eth base/dual_debug profiles require ethernet=w5500")
-if board == "mammotion_esp32s3" and ethernet != "none":
-    raise SystemExit("mammotion_esp32s3 requires ethernet=none")
-if not board_rules[board]["supports_lora"] and lora != "none":
+if board == "mammotion_esp32s3_rtk" and ethernet != "none":
+    raise SystemExit("mammotion_esp32s3_rtk requires ethernet=none")
+if lora not in board_rules[board]["lora_variants"]:
     raise SystemExit(f"board {board} does not support lora={lora}")
 if chip != "esp32s3" and psram == "8mb":
     raise SystemExit(f"chip {chip} does not support psram={psram} in this profile builder")
@@ -103,6 +126,7 @@ with env_path.open("w", encoding="utf-8") as fh:
         ("PROFILE_ETHERNET", ethernet),
         ("PROFILE_GNSS", gnss),
         ("PROFILE_LORA", lora),
+        ("PROFILE_LORA_DRIVER", lora_driver),
         ("PROFILE_REGION", region),
         ("FIRMWARE_ID", firmware_id),
         ("PARTITION_SOURCE", partition_source),
@@ -196,6 +220,7 @@ append_template "sdkconfig.role_${PROFILE_ROLE}.defaults"
 append_template "sdkconfig.eth_${PROFILE_ETHERNET}.defaults"
 append_template "sdkconfig.gnss_${PROFILE_GNSS}.defaults"
 append_template "sdkconfig.lora_${PROFILE_LORA}.defaults"
+append_template "sdkconfig.lora_driver_${PROFILE_LORA_DRIVER}.defaults"
 append_template "sdkconfig.region_$(printf '%s' "${PROFILE_REGION}" | tr '[:upper:]' '[:lower:]').defaults"
 
 {

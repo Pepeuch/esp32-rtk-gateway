@@ -3,7 +3,11 @@
 #include "../board_caps.h"
 #include "board_pins.h"
 
-#define BOARD_NAME "Waveshare ESP32-S3-ETH"
+#define BOARD_NAME "Mammotion ESP32-S3 RTK"
+
+#define BOARD_HAS_LORA_RADIO       1
+#define BOARD_LORA_CHIP_LLCC68     1
+#define BOARD_LORA_DRIVER_SX126X   1
 
 #define DEFAULT_DEBUG_UART_NUM     BOARD_GNSS_DEBUG_UART_NUM
 #define DEFAULT_DEBUG_UART_TX_PIN  BOARD_GNSS_DEBUG_UART_TX_PIN
@@ -40,7 +44,7 @@
 #define BOARD_HAS_WIFI       1
 #define BOARD_HAS_BLUETOOTH  1
 #define BOARD_HAS_SD         0
-#define BOARD_HAS_LORA_UART  1
+#define BOARD_HAS_LORA_UART  0
 #define BOARD_HAS_GNSS_UART  1
 
 #define BOARD_NTRIP_MAX_SLOTS_NO_PSRAM 3

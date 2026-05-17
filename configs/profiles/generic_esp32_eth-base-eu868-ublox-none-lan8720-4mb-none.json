@@ -7,5 +7,6 @@
   "ethernet": "lan8720",
   "gnss": "ublox",
   "lora": "none",
+  "lora_driver": "none",
   "region": "EU868"
 }

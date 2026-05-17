@@ -1,11 +1,12 @@
 {
   "chip": "esp32s3",
-  "board": "mammotion_esp32s3",
-  "role": "base",
+  "board": "waveshare_esp32s3_eth",
+  "role": "rover",
   "flash": "16mb",
   "psram": "8mb",
   "ethernet": "none",
   "gnss": "unicore",
-  "lora": "sx126x",
+  "lora": "sx1262",
+  "lora_driver": "sx126x",
   "region": "EU868"
 }

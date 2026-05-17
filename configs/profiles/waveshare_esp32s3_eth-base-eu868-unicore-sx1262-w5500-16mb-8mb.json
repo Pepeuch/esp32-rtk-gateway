@@ -6,6 +6,7 @@
   "psram": "8mb",
   "ethernet": "w5500",
   "gnss": "unicore",
-  "lora": "sx126x",
+  "lora": "sx1262",
+  "lora_driver": "sx126x",
   "region": "EU868"
 }
