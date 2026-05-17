@@ -21,6 +21,9 @@ env/
 sdkconfig
 sdkconfig.old
 partition_table/*.bin
+configs/sdkconfig.*
+configs/skconfig.*
+build/generated/
 
 # Ignore logs and temporary files
 *.log

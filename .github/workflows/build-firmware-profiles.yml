@@ -89,6 +89,12 @@ jobs:
           echo "Selected profile input:"
           cat build/profile.json
 
+      - name: Validate profile build inputs
+        shell: bash
+        run: |
+          chmod +x scripts/check_profile_build_inputs.sh
+          ./scripts/check_profile_build_inputs.sh
+
       - name: Build firmware from profile
         shell: bash
         run: |

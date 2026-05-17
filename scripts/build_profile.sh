@@ -16,6 +16,7 @@ mkdir -p "${GENERATED_DIR}"
 PROFILE_ENV="${GENERATED_DIR}/profile.env"
 GENERATED_DEFAULTS="${GENERATED_DIR}/sdkconfig.defaults"
 GENERATED_PARTITIONS="${GENERATED_DIR}/partitions.csv"
+GENERATED_SDKCONFIG_SUBSET="${GENERATED_DIR}/sdkconfig-effective-subset.txt"
 
 python3 - "${PROFILE_PATH}" "${PROFILE_ENV}" <<'PY'
 import json
@@ -165,10 +166,13 @@ if [ -f "${ROOT_DIR}/sdkconfig.old" ]; then
 fi
 
 mkdir -p "${BUILD_DIR}" "${FIRMWARE_DIR}" "$(dirname "${MANIFEST_PATH}")"
+rm -rf "${BUILD_DIR}"
+mkdir -p "${BUILD_DIR}"
 cp "${ROOT_DIR}/${PARTITION_SOURCE}" "${GENERATED_PARTITIONS}"
 cp "${GENERATED_PARTITIONS}" "${ROOT_DIR}/partitions.csv"
 cp "${PROFILE_PATH}" "${PROFILE_COPY_PATH}"
 
+rm -f "${GENERATED_DEFAULTS}" "${GENERATED_SDKCONFIG_SUBSET}"
 cat /dev/null > "${GENERATED_DEFAULTS}"
 
 append_template() {
@@ -203,10 +207,12 @@ append_template "sdkconfig.region_$(printf '%s' "${PROFILE_REGION}" | tr '[:uppe
 echo "Generated profile: ${FIRMWARE_ID}"
 echo "Generated defaults: ${SDKCONFIG_DEFAULTS_PATH}"
 echo "Target: ${IDF_TARGET_NAME}"
+printf '\n--- generated sdkconfig.defaults ---\n'
+cat "${SDKCONFIG_DEFAULTS_PATH}"
 printf '\n--- partitions.csv ---\n'
 cat "${ROOT_DIR}/partitions.csv"
-printf '\n--- sdkconfig.defaults PARTITION_TABLE/FLASHSIZE ---\n'
-grep -E 'CONFIG_(PARTITION_TABLE|ESPTOOLPY_FLASHSIZE)' "${SDKCONFIG_DEFAULTS_PATH}" || true
+printf '\n--- sdkconfig.defaults key subset ---\n'
+grep -E 'CONFIG_(PARTITION_TABLE|ESPTOOLPY_FLASHSIZE|SPIRAM|BOARD_|RTK_DEVICE_ROLE_|GNSS_RECEIVER_DEFAULT_|LORA_|ETHERNET_DHCP_TIMEOUT_MS|SPIFFS_)' "${SDKCONFIG_DEFAULTS_PATH}" || true
 
 idf.py \
     -B "${BUILD_DIR}" \
@@ -219,7 +225,8 @@ idf.py \
     reconfigure
 
 echo "=== effective sdkconfig partition config ==="
-grep -E "CONFIG_PARTITION_TABLE|CONFIG_ESPTOOLPY_FLASHSIZE" "${BUILD_DIR}/sdkconfig" || true
+grep -E "CONFIG_(PARTITION_TABLE|ESPTOOLPY_FLASHSIZE|SPIRAM|BOARD_|RTK_DEVICE_ROLE_|GNSS_RECEIVER_DEFAULT_|LORA_|ETHERNET_DHCP_TIMEOUT_MS|SPIFFS_)" "${BUILD_DIR}/sdkconfig" | tee "${GENERATED_SDKCONFIG_SUBSET}" || true
+echo "Saved effective subset: ${GENERATED_SDKCONFIG_SUBSET}"
 
 idf.py \
     -B "${BUILD_DIR}" \

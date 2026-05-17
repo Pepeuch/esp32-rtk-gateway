@@ -104,11 +104,10 @@
         }
     };
 
-    app.initForm = function(options) {
+    app.initForm = function() {
         const form = $('#form');
         const projectVersionText = $('#project-version');
 
-        app.options = options || {};
         app.form = form;
 
         $('[data-toggle="tooltip"]').tooltip({
@@ -195,50 +194,10 @@
 
         if (projectVersionText.length) {
             $.getJSON('config').done(function(data) {
-                let currentVersion = 0;
-
                 projectVersionText.text(data.version);
-
-                if (data.version && data.version.includes('-')) {
-                    data.version = data.version.substring(0, data.version.indexOf('-'));
-                }
-                currentVersion = parseFloat('0.' + String(data.version || '').replace(/[^\d]/g, ''));
-
-                $.getJSON(app.options.releasesApiUrl, function(releases) {
-                    let latestVersion = 0;
-                    let releaseUrl = null;
-                    let latestVersionPrerelease = 0;
-                    let prereleaseUrl = null;
-
-                    if (!(releases instanceof Array)) return;
-
-                    releases.forEach(function(release) {
-                        const version = parseFloat('0.' + String(release.tag_name || '').replace(/[^\d]/g, ''));
-                        if (release.prerelease && latestVersionPrerelease === 0) {
-                            latestVersionPrerelease = version;
-                            prereleaseUrl = release.html_url;
-                            return;
-                        }
-                        if (latestVersion === 0) {
-                            latestVersion = version;
-                            releaseUrl = release.html_url;
-                        }
-                    });
-
-                    projectVersionText.attr('href', releaseUrl || app.options.releasesHtmlUrl).removeClass('text-muted');
-
-                    if (latestVersion === currentVersion) {
-                        projectVersionText.addClass('text-success').appendText(' (latest)');
-                    } else if (latestVersion > currentVersion) {
-                        projectVersionText.addClass('text-warning').appendText(' (old)');
-                    } else if (latestVersion < currentVersion) {
-                        projectVersionText.attr('href', app.options.releasesHtmlUrl).addClass('text-primary').appendText(' (dev)');
-                    }
-
-                    if (latestVersionPrerelease > Math.max(latestVersion, currentVersion)) {
-                        $('#prerelease-available').attr('href', prereleaseUrl).show();
-                    }
-                });
+                projectVersionText.attr('href', 'https://github.com/Pepeuch/esp32-rtk-gateway')
+                    .removeClass('text-muted')
+                    .addClass('text-primary');
 
                 app.loadConfig(data);
             });
