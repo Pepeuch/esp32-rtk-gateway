@@ -34,6 +34,14 @@
 #error "No board selected in menuconfig"
 #endif
 
+#ifndef BOARD_NTRIP_MAX_SLOTS_NO_PSRAM
+#define BOARD_NTRIP_MAX_SLOTS_NO_PSRAM 2
+#endif
+
+#ifndef BOARD_NTRIP_MAX_SLOTS_PSRAM
+#define BOARD_NTRIP_MAX_SLOTS_PSRAM 3
+#endif
+
 #define BOARD_STRING BOARD_NAME
 
 #if TARGET_UART_COUNT < 1

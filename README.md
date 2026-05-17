@@ -260,6 +260,20 @@ Longer-term exploration:
   - [ ] rtk/base/tx/status
 - [ ] Préparer futur protocole rover → base LoRa
 
+## TODO OTA / update manager
+
+- [ ] Ajouter canal firmware : stable / beta / nightly
+- [ ] Publier manifests OTA par profil
+- [ ] WebUI : vérifier mise à jour disponible
+- [ ] Comparer version actuelle / version distante
+- [ ] Vérifier compatibilité board/chip/flash/psram
+- [ ] Télécharger OTA app depuis GitHub Pages/Releases
+- [ ] Vérifier SHA256 avant flash
+- [ ] Mettre à jour aussi la partition WebUI/SPIFFS
+- [ ] Ajouter rollback si boot échoue
+- [ ] Ajouter bouton “update now” dans WebUI
+- [ ] Ne jamais activer auto-update sans confirmation utilisateur
+
 ## Legacy Notes
 
 This project has evolved through several phases:

@@ -15,17 +15,9 @@
 #define RTK_LORA_TX_ENABLED_BUILD 0
 #endif
 
-static size_t capabilities_max_ntrip_slots(bool ethernet_active, bool psram_available)
+static size_t capabilities_max_ntrip_slots(bool psram_available)
 {
-    if (ethernet_active) {
-        return psram_available ? 5 : 4;
-    }
-
-#if CONFIG_IDF_TARGET_ESP32S3
-    return 3;
-#else
-    return 2;
-#endif
+    return psram_available ? BOARD_NTRIP_MAX_SLOTS_PSRAM : BOARD_NTRIP_MAX_SLOTS_NO_PSRAM;
 }
 
 static const char *capabilities_device_role_name(void)
@@ -68,10 +60,7 @@ void capabilities_get(platform_capabilities_t *capabilities)
     capabilities->has_lora_radio = BOARD_HAS_LORA_RADIO && CONFIG_LORA_FEATURE_ENABLED;
     capabilities->lora_tx_enabled = capabilities->has_lora_radio && RTK_LORA_TX_ENABLED_BUILD;
     capabilities->configured_ntrip_slots = 5;
-    capabilities->max_ntrip_slots = capabilities_max_ntrip_slots(
-        capabilities->ethernet_active,
-        capabilities->psram_available
-    );
+    capabilities->max_ntrip_slots = capabilities_max_ntrip_slots(capabilities->psram_available);
 
     if (capabilities->ethernet_active && capabilities->psram_available) {
         snprintf(capabilities->network_profile, sizeof(capabilities->network_profile), "ethernet+psram");

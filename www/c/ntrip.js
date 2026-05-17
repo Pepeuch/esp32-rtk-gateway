@@ -1,5 +1,9 @@
 (function(global) {
-    const app = global.ConfigPage || (global.ConfigPage = {});
+    const app = global.WebUI || global.ConfigPage || {};
+    global.WebUI = app;
+    global.ConfigPage = app;
+
+    const SLOT_LABELS = ['A', 'B', 'C', 'D', 'E'];
 
     function slotBadgeClass(status) {
         if (status === 'streaming') return 'ok';
@@ -14,22 +18,97 @@
             this.runtimeSummary = $('.ntrip-runtime-summary');
             this.editor = $('#ntrip-slot-editor');
             this.saveButton = $('#save-ntrip-slots');
+            this.dashboardRuntimeSummary = $('.dashboard-ntrip-runtime-summary');
+            this.dashboardSlotList = $('.dashboard-ntrip-slot-list');
+            this.lastPayload = null;
             this.bindEvents();
         },
 
-        renderRuntimeSummary: function(runtime) {
-            if (!runtime || !this.runtimeSummary.length) return;
-            this.runtimeSummary.empty()
+        defaultSlotName: function(index) {
+            return 'NTRIP Server ' + (SLOT_LABELS[index] || String.fromCharCode(65 + index));
+        },
+
+        fallbackMaxSlots: function(payload) {
+            const stateCapabilities = app.state && app.state.capabilities ? app.state.capabilities : null;
+            const payloadCapabilities = payload && payload.capabilities ? payload.capabilities : null;
+
+            if (stateCapabilities && stateCapabilities.max_ntrip_slots) return parseInt(stateCapabilities.max_ntrip_slots, 10);
+            if (payloadCapabilities && payloadCapabilities.max_ntrip_slots) return parseInt(payloadCapabilities.max_ntrip_slots, 10);
+            if ((stateCapabilities && stateCapabilities.is_esp32s3) || (payloadCapabilities && payloadCapabilities.is_esp32s3)) return 5;
+            return 5;
+        },
+
+        buildFallbackSlots: function(count) {
+            const slots = [];
+            for (let index = 0; index < count; index++) {
+                slots.push({
+                    index: index,
+                    enabled: false,
+                    name: this.defaultSlotName(index),
+                    host: '',
+                    port: 2101,
+                    mountpoint: '',
+                    username: '',
+                    password: '',
+                    has_password: false,
+                    ntrip_version: '2.0',
+                    use_tls: false,
+                    status: 'idle',
+                    bytes_sent: 0,
+                    bytes_per_sec: 0,
+                    reconnect_count: 0,
+                    uptime_seconds: 0,
+                    last_http_code: 0,
+                    dropped_rtcm_packets: 0,
+                    ringbuffer_high_water: 0,
+                    mock_mode: 'none',
+                    last_error: '',
+                    disabled_reason: '',
+                    stale: false
+                });
+            }
+            return slots;
+        },
+
+        completeSlots: function(payload) {
+            const maxSlots = this.fallbackMaxSlots(payload);
+            const sourceSlots = Array.isArray(payload && payload.slots) ? payload.slots : [];
+            const completed = this.buildFallbackSlots(maxSlots);
+
+            sourceSlots.forEach(function(slot) {
+                if (!slot || typeof slot.index !== 'number' || slot.index < 0 || slot.index >= completed.length) return;
+                completed[slot.index] = Object.assign({}, completed[slot.index], slot, {
+                    name: slot.name || completed[slot.index].name
+                });
+            });
+
+            return completed;
+        },
+
+        visibleSlotCount: function(payload) {
+            return this.completeSlots(payload).length;
+        },
+
+        renderRuntimeSummaryInto: function(container, runtime) {
+            if (!runtime || !container.length) return;
+            container.empty()
                 .append($('<span>', { class: 'capability-pill', text: runtime.active_slot_count + ' active slot(s)' }))
                 .append($('<span>', { class: 'capability-pill', text: app.utils.humanDataSize(runtime.free_heap_bytes || 0) + ' free heap' }))
                 .append($('<span>', { class: 'capability-pill', text: app.utils.humanDataSize(runtime.min_free_heap_bytes || 0) + ' min heap' }))
                 .append($('<span>', { class: 'capability-pill', text: runtime.fake_rtcm_enabled ? ('Fake RTCM ' + (runtime.fake_rtcm_rate_hz || 0) + 'Hz') : 'Fake RTCM off' }))
                 .append($('<span>', { class: 'capability-pill', text: runtime.safe_mode ? 'Safe mode' : 'Normal mode' }))
-                .append($('<span>', { class: 'capability-pill', text: 'QoS ' + (runtime.qos_state || 'normal') }));
+                .append($('<span>', { class: 'capability-pill', text: 'QoS ' + (runtime.qos_state || 'normal') }))
+                .append($('<span>', { class: 'capability-pill', text: (runtime.active_socket_count || 0) + '/' + (runtime.max_socket_count || 0) + ' sockets' }))
+                .append($('<span>', { class: 'capability-pill', text: app.utils.humanDataSize(runtime.total_ringbuffer_used || 0) + '/' + app.utils.humanDataSize(runtime.total_ringbuffer_capacity || 0) + ' buffer' }))
+                .append($('<span>', { class: 'capability-pill', text: (runtime.total_dropped_rtcm_packets || 0) + ' dropped packets' }));
 
             if (runtime.qos_reason && runtime.qos_reason !== 'normal') {
-                this.runtimeSummary.append($('<span>', { class: 'capability-pill', text: runtime.qos_reason }));
+                container.append($('<span>', { class: 'capability-pill', text: runtime.qos_reason }));
             }
+        },
+
+        renderRuntimeSummary: function(runtime) {
+            this.renderRuntimeSummaryInto(this.runtimeSummary, runtime);
         },
 
         updateSlotRuntime: function(slots) {
@@ -58,10 +137,12 @@
 
         renderSlots: function(payload) {
             const self = this;
-            if (!payload || !Array.isArray(payload.slots)) return;
+            if (!payload) return;
 
+            const slots = this.completeSlots(payload);
+            this.lastPayload = Object.assign({}, payload, { slots: slots });
             this.editor.empty();
-            payload.slots.forEach(function(slot) {
+            slots.forEach(function(slot) {
                 const card = $('<div>', {
                     class: 'card mb-3 ntrip-slot-card',
                     'data-slot-index': slot.index,
@@ -122,6 +203,25 @@
             });
         },
 
+        renderDashboardSlots: function(slots) {
+            const container = this.dashboardSlotList;
+            if (!container.length) return;
+            container.empty();
+
+            const normalized = this.completeSlots({ slots: slots });
+            if (!normalized.length) {
+                container.text('NTRIP runtime unavailable');
+                return;
+            }
+
+            normalized.forEach(function(slot) {
+                let text = (slot.index + 1) + '. ' + (slot.name || 'slot') + ' - ' + (slot.stale && slot.status === 'streaming' ? 'stale' : (slot.status || 'unknown'));
+                if (slot.disabled_reason) text += ' (' + slot.disabled_reason + ')';
+                text += ' - ' + app.utils.humanDataSize(slot.bytes_per_sec || 0) + '/s';
+                container.append($('<div>', { class: 'small mb-1', text: text }));
+            });
+        },
+
         loadSlots: function() {
             const self = this;
             $.getJSON('api/ntrip/runtime').done(function(data) {
@@ -133,7 +233,10 @@
         refreshRuntime: function() {
             const self = this;
             $.getJSON('api/ntrip/runtime').done(function(data) {
-                if (data && data.slots) self.updateSlotRuntime(data.slots);
+                if (data && data.slots) {
+                    self.lastPayload = Object.assign({}, data, { slots: self.completeSlots(data) });
+                    self.updateSlotRuntime(self.lastPayload.slots);
+                }
                 if (data && data.runtime) {
                     app.state.currentQosState = data.runtime.qos_state || app.state.currentQosState;
                     self.renderRuntimeSummary(data.runtime);
@@ -145,11 +248,29 @@
             });
         },
 
+        refreshDashboardRuntime: function() {
+            const self = this;
+            $.getJSON('api/ntrip/runtime').done(function(data) {
+                self.lastPayload = Object.assign({}, data, { slots: self.completeSlots(data) });
+                if (data && data.runtime) {
+                    app.state.currentQosState = data.runtime.qos_state || app.state.currentQosState;
+                    self.renderRuntimeSummaryInto(self.dashboardRuntimeSummary, data.runtime);
+                }
+                if (self.lastPayload && self.lastPayload.slots) {
+                    self.renderDashboardSlots(self.lastPayload.slots);
+                }
+            }).always(function() {
+                setTimeout(function() {
+                    self.refreshDashboardRuntime();
+                }, app.utils.pollDelayForQos(app.state.currentQosState, 2500, 5000, 9000));
+            });
+        },
+
         renderCompactSummary: function(slots) {
             if (!Array.isArray(slots) || !this.summary.length) return;
             this.summary.empty().append($('<div>', { class: 'small font-weight-bold mb-2', text: 'NTRIP slots' }));
 
-            slots.forEach(function(slot) {
+            this.completeSlots({ slots: slots }).forEach(function(slot) {
                 let text = (slot.index + 1) + '. ' + slot.name + ' - ' + slot.status;
                 let color = 'text-muted';
 
@@ -165,41 +286,74 @@
         bindEvents: function() {
             const self = this;
 
-            this.saveButton.on('click', function() {
-                const slots = [];
-                self.editor.find('.ntrip-slot-card').each(function() {
-                    const card = $(this);
-                    const hasPassword = card.attr('data-has-password') === '1';
-                    let password = card.find('.slot-password').val();
+            if (this.saveButton.length) {
+                this.saveButton.on('click', function() {
+                    const preserved = Array.isArray(self.lastPayload && self.lastPayload.slots)
+                        ? self.lastPayload.slots.map(function(slot) {
+                            return {
+                                index: slot.index,
+                                enabled: slot.enabled,
+                                name: slot.name || self.defaultSlotName(slot.index),
+                                host: slot.host,
+                                port: slot.port || 2101,
+                                mountpoint: slot.mountpoint,
+                                username: slot.username,
+                                password: '\x1a\x1a\x1a\x1a\x1a\x1a\x1a\x1a',
+                                ntrip_version: slot.ntrip_version || '2.0',
+                                use_tls: !!slot.use_tls
+                            };
+                        })
+                        : self.buildFallbackSlots(5).map(function(slot) {
+                            return {
+                                index: slot.index,
+                                enabled: slot.enabled,
+                                name: slot.name,
+                                host: slot.host,
+                            port: slot.port,
+                            mountpoint: slot.mountpoint,
+                            username: slot.username,
+                                password: '\x1a\x1a\x1a\x1a\x1a\x1a\x1a\x1a',
+                                ntrip_version: slot.ntrip_version,
+                                use_tls: !!slot.use_tls
+                            };
+                        });
 
-                    if (!password && hasPassword) password = '\x1a\x1a\x1a\x1a\x1a\x1a\x1a\x1a';
+                    self.editor.find('.ntrip-slot-card').each(function() {
+                        const card = $(this);
+                        const hasPassword = card.attr('data-has-password') === '1';
+                        let password = card.find('.slot-password').val();
 
-                    slots.push({
-                        index: parseInt(card.attr('data-slot-index'), 10),
-                        enabled: card.find('.slot-enabled').is(':checked'),
-                        name: card.find('.slot-name-input').val(),
-                        host: card.find('.slot-host').val(),
-                        port: parseInt(card.find('.slot-port').val() || '0', 10),
-                        mountpoint: card.find('.slot-mountpoint').val(),
-                        username: card.find('.slot-username').val(),
-                        password: password || '',
-                        ntrip_version: card.find('.slot-version').val(),
-                        use_tls: card.find('.slot-use-tls').is(':checked')
+                        if (!password && hasPassword) password = '\x1a\x1a\x1a\x1a\x1a\x1a\x1a\x1a';
+
+                        const slotData = {
+                            index: parseInt(card.attr('data-slot-index'), 10),
+                            enabled: card.find('.slot-enabled').is(':checked'),
+                            name: card.find('.slot-name-input').val(),
+                            host: card.find('.slot-host').val(),
+                            port: parseInt(card.find('.slot-port').val() || '0', 10),
+                            mountpoint: card.find('.slot-mountpoint').val(),
+                            username: card.find('.slot-username').val(),
+                            password: password || '',
+                            ntrip_version: card.find('.slot-version').val(),
+                            use_tls: card.find('.slot-use-tls').is(':checked')
+                        };
+
+                        preserved[slotData.index] = slotData;
+                    });
+
+                    self.saveButton.prop('disabled', true);
+                    $.ajax({
+                        url: 'api/ntrip',
+                        method: 'POST',
+                        contentType: 'application/json',
+                        data: JSON.stringify({ slots: preserved })
+                    }).done(function() {
+                        self.loadSlots();
+                    }).always(function() {
+                        self.saveButton.prop('disabled', false);
                     });
                 });
-
-                self.saveButton.prop('disabled', true);
-                $.ajax({
-                    url: 'api/ntrip',
-                    method: 'POST',
-                    contentType: 'application/json',
-                    data: JSON.stringify({ slots: slots })
-                }).done(function() {
-                    self.loadSlots();
-                }).always(function() {
-                    self.saveButton.prop('disabled', false);
-                });
-            });
+            }
 
             $('#restart-ntrip-runtime').on('click', function() {
                 const button = $(this);
