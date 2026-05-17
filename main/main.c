@@ -78,15 +78,15 @@ static const char *TAG = "MAIN";
 
 static char *reset_reason_name(esp_reset_reason_t reason);
 static const char *device_role_name(void);
+
+#if CONFIG_LORA_FEATURE_ENABLED
 static void lora_cb(lora_radio_event_t event, const uint8_t *data, size_t len, void *ctx);
 static void lora_transport_rtcm_rx_hook(const uint8_t *data, size_t len);
 static esp_err_t lora_build_default_config(lora_radio_config_t *config);
 #if CONFIG_RTK_DEVICE_ROLE_BASE || CONFIG_RTK_DEVICE_ROLE_DUAL_DEBUG
 static rtcm_profile_id_t rtcm_profile_id_from_lora_profile(lora_rtcm_profile_t profile);
-#endif
-
-#if CONFIG_RTK_DEVICE_ROLE_BASE || CONFIG_RTK_DEVICE_ROLE_DUAL_DEBUG
 static void rtk_lora_uart_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data);
+#endif
 #endif
 
 #define BOOT_STEP(step) ESP_LOGI(TAG, "boot step: %s", step)
@@ -120,6 +120,7 @@ static const char *device_role_name(void)
 #endif
 }
 
+#if CONFIG_LORA_FEATURE_ENABLED
 static void lora_cb(lora_radio_event_t event, const uint8_t *data, size_t len, void *ctx)
 {
     (void)ctx;
@@ -242,6 +243,7 @@ static rtcm_profile_id_t rtcm_profile_id_from_lora_profile(lora_rtcm_profile_t p
             return RTCM_PROFILE_RTK_MINIMAL;
     }
 }
+#endif
 #endif
 
 void app_main(void)

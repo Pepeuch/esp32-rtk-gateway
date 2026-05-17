@@ -9,6 +9,10 @@
 #include "memory_policy.h"
 #include "network.h"
 
+#ifndef CONFIG_LORA_FEATURE_ENABLED
+#define CONFIG_LORA_FEATURE_ENABLED 0
+#endif
+
 #ifdef CONFIG_RTK_LORA_TX_ENABLED
 #define RTK_LORA_TX_ENABLED_BUILD 1
 #else
