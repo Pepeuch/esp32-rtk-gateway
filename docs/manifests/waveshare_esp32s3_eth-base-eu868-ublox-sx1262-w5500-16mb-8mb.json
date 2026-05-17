@@ -1,0 +1,32 @@
+{
+  "name": "ESP32 RTK Gateway - waveshare_esp32s3_eth-base-eu868-ublox-sx1262-w5500-16mb-8mb",
+  "version": "waveshare_esp32s3_eth-base-eu868-ublox-sx1262-w5500-16mb-8mb",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [
+        {
+          "path": "../firmware/waveshare_esp32s3_eth-base-eu868-ublox-sx1262-w5500-16mb-8mb/bootloader.bin",
+          "offset": 0
+        },
+        {
+          "path": "../firmware/waveshare_esp32s3_eth-base-eu868-ublox-sx1262-w5500-16mb-8mb/partition-table.bin",
+          "offset": 32768
+        },
+        {
+          "path": "../firmware/waveshare_esp32s3_eth-base-eu868-ublox-sx1262-w5500-16mb-8mb/ota_data_initial.bin",
+          "offset": 61440
+        },
+        {
+          "path": "../firmware/waveshare_esp32s3_eth-base-eu868-ublox-sx1262-w5500-16mb-8mb/esp32-rtk-gateway.bin",
+          "offset": 131072
+        },
+        {
+          "path": "../firmware/waveshare_esp32s3_eth-base-eu868-ublox-sx1262-w5500-16mb-8mb/www.bin",
+          "offset": 6422528
+        }
+      ]
+    }
+  ]
+}
