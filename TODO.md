@@ -1,3 +1,40 @@
+## TODO stabilité firmware
+
+- [ ] Ajouter mode "safe boot"
+  - désactiver LoRa si crash précédent
+  - désactiver WebUI avancée si heap critique
+  - démarrage minimal Ethernet + dashboard
+
+- [ ] Ajouter watchdog diagnostics
+  - dernière étape boot
+  - dernier module initialisé
+  - raison reset persistante
+  - compteur crash boot
+
+- [ ] Ajouter "factory minimal profile"
+  - Ethernet
+  - dashboard
+  - GNSS simple
+  - sans LoRa
+  - sans MQTT
+  - sans OTA
+
+## TODO WebUI/API audit
+
+- [ ] Générer docs/webui_audit.md
+- [ ] Cartographier :
+  - pages HTML
+  - JS utilisés
+  - endpoints API
+  - endpoints réellement implémentés
+- [ ] Identifier :
+  - legacy incarvr6
+  - code mort
+  - endpoints manquants
+  - limites hardcodées
+  - blocs dupliqués
+- [ ] Ajouter validation automatique assets/API
+
 ## TODO — LoRa RTK roles
 
 ### Base mode
@@ -133,3 +170,134 @@
 - [ ] Détection manifest OTA
 - [ ] Journal OTA local
 - [ ] Export analyse OTA
+
+# TODO — Mesures qualité GNSS
+
+## 1. Logs bruts GNSS
+
+- [ ] Ajouter un mode `GNSS_RAW_LOG_ENABLE`
+- [ ] Logger les trames brutes du récepteur GNSS :
+  - UBX RXM-RAWX / RXM-SFRBX pour u-blox
+  - logs RAWOBS / RANGEB / équivalent pour Unicore
+- [ ] Sauvegarder les logs sur :
+  - carte SD
+  - ou SPIFFS/LittleFS
+  - ou stream TCP/MQTT vers Raspberry Pi
+- [ ] Ajouter rotation automatique des fichiers :
+  - `gnss_raw_YYYYMMDD_HHMMSS.bin`
+  - limite taille fichier
+  - limite espace disque
+
+## 2. Mesure cycle slip
+
+- [ ] Lire les indicateurs disponibles par satellite/fréquence :
+  - `locktime`
+  - `LLI`
+  - `half-cycle valid`
+  - `cycle slip flag`
+  - `carrier phase valid`
+- [ ] Compter les pertes de lock par :
+  - constellation
+  - satellite
+  - fréquence
+- [ ] Calculer :
+  - `slips_total`
+  - `slips_per_sat_hour`
+  - `slips_per_frequency_hour`
+- [ ] Publier un résumé toutes les 10 à 60 s.
+
+## 3. Mesure latence
+
+- [ ] Timestamp ESP32 à la réception UART/SPI du GNSS
+- [ ] Lire le timestamp GNSS dans les messages NAV/PVT
+- [ ] Calculer :
+  - `latency_ms = esp_rx_time - gnss_fix_time`
+- [ ] Mesurer séparément :
+  - latence GNSS → ESP32
+  - latence ESP32 → ROS/MQTT
+  - âge RTCM/NTRIP
+- [ ] Publier :
+  - `latency_avg_ms`
+  - `latency_max_ms`
+  - `rtcm_age_ms`
+
+## 4. Phase RMS / Code RMS
+
+- [ ] Vérifier si le récepteur expose déjà les résidus :
+  - phase residual RMS
+  - code residual RMS
+  - RTK residuals
+- [ ] Si disponible, parser ces valeurs directement.
+- [ ] Sinon :
+  - logger les observations brutes
+  - calculer RMS hors ESP32 en post-traitement avec RTKLIB/Python
+- [ ] Ne pas surcharger l’ESP32 avec un vrai solveur RTK complet.
+
+## 5. Métriques qualité à exposer
+
+- [ ] `fix_type`
+- [ ] `carrier_solution`
+- [ ] `num_satellites`
+- [ ] `cn0_avg`
+- [ ] `cn0_min`
+- [ ] `rtk_fix_ratio`
+- [ ] `rtk_float_ratio`
+- [ ] `single_ratio`
+- [ ] `cycle_slip_rate`
+- [ ] `latency_ms`
+- [ ] `rtcm_age`
+- [ ] `hdop/vdop/pdop`
+- [ ] `hacc/vacc`
+- [ ] `phase_rms`
+- [ ] `code_rms`
+
+## 6. Export des données
+
+- [ ] Ajouter sortie JSON diagnostic :
+  - série USB
+  - TCP
+  - MQTT
+  - micro-ROS
+- [ ] Ajouter topic ROS 2 futur :
+  - `/gnss/quality`
+  - `/gnss/raw_status`
+- [ ] Ajouter fichier CSV léger :
+  - timestamp
+  - fix_type
+  - sats
+  - cn0
+  - slips
+  - latency
+  - rtk_age
+  - hacc
+  - vacc
+
+## 7. Dashboard WebUI
+
+- [ ] Ajouter page “GNSS Quality”
+- [ ] Afficher :
+  - état RTK
+  - satellites par constellation
+  - C/N0 moyen
+  - cycle slip rate
+  - latence
+  - âge RTCM
+  - historique fix/float/single
+- [ ] Ajouter bouton :
+  - démarrer log brut
+  - arrêter log
+  - télécharger log
+  - reset compteurs
+
+## 8. Tests terrain
+
+- [ ] Test antenne fixe 30 min
+- [ ] Test antenne fixe 24 h
+- [ ] Test dynamique sur tondeuse
+- [ ] Comparer plusieurs antennes au même emplacement
+- [ ] Générer un rapport par antenne :
+  - fix ratio
+  - slip rate
+  - CN0 moyen
+  - latence moyenne/max
+  - stabilité position ENU
