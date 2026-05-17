@@ -1,11 +1,1 @@
-{
-  "chip": "esp32s3",
-  "board": "waveshare_esp32s3_eth",
-  "role": "base",
-  "flash": "16mb",
-  "psram": "8mb",
-  "ethernet": "w5500",
-  "gnss": "unicore",
-  "lora": "none",
-  "region": "EU868"
-}
+{ "chip": "esp32s3", "board": "waveshare_esp32s3_eth", "role": "base", "flash": "16mb", "psram": "8mb", "ethernet": "w5500", "gnss": "unicore", "lora": "none", "region": "EU868", "lora_driver": "none" }
