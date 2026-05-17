@@ -1,201 +1,140 @@
 <html>
 <head>
     <title>ESP32 RTK Gateway Dashboard</title>
+    <script src="app-lite.js"></script>
+    <link rel="stylesheet" href="app-lite.css">
     <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
-        :root { color-scheme: light; }
-        * { box-sizing: border-box; }
-        body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f7f9fb; color: #24303c; }
-        .wrap { max-width: 1100px; margin: 0 auto; padding: 20px; }
-        .topbar { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 20px; flex-wrap: wrap; }
-        .title { margin: 0; font-size: 1.9rem; }
-        .subtitle { color: #6b7785; margin-top: 4px; }
-        .nav { display: flex; gap: 8px; flex-wrap: wrap; }
-        .nav a { text-decoration: none; color: #1d4f6a; border: 1px solid #c8d7e1; background: #fff; padding: 8px 12px; border-radius: 999px; font-size: 0.95rem; }
-        .nav a.active { background: #1d4f6a; color: #fff; border-color: #1d4f6a; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
-        .card { background: #fff; border: 1px solid #e3e8ee; border-radius: 14px; box-shadow: 0 4px 18px rgba(30, 55, 90, 0.05); }
-        .card h3 { margin: 0; padding: 14px 16px; font-size: 1rem; border-bottom: 1px solid #eef2f5; }
-        .card .body { padding: 16px; min-height: 88px; }
-        .pills { display: flex; flex-wrap: wrap; gap: 8px; }
-        .pill { display: inline-block; padding: 6px 10px; border-radius: 999px; background: #eef3f7; font-size: 0.88rem; }
-        .small-list { display: grid; gap: 8px; font-size: 0.92rem; color: #425160; }
-        .muted { color: #6b7785; }
-        footer { margin-top: 20px; color: #6b7785; font-size: 0.9rem; }
-        .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+        body {
+            background: #f7f9fb;
+        }
+
+        .capability-pill {
+            display: inline-block;
+            margin: 0 8px 8px 0;
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: #eef3f7;
+            font-size: 0.875rem;
+        }
+
+        .dashboard-table tbody {
+            font-size: 0.92rem;
+        }
     </style>
 </head>
-<body>
-    <div class="wrap">
-        <div class="topbar">
+<body class="bg-light" data-page="dashboard">
+    <div class="container py-4">
+        <div class="d-flex justify-content-between align-items-center flex-wrap mb-4">
             <div>
-                <h1 class="title">ESP32 RTK Gateway</h1>
-                <div class="subtitle">Lightweight live dashboard</div>
+                <h2 class="mb-1">ESP32 RTK Gateway</h2>
+                <div class="text-muted">Complete runtime dashboard</div>
             </div>
-            <nav class="nav">
-                <a class="active" href="/dashboard.html">Dashboard</a>
-                <a href="/config.html">Config</a>
-                <a href="/advanced.html">Advanced</a>
-                <a href="/log.html">Logs</a>
-            </nav>
+            <div class="shared-nav"></div>
         </div>
-        <div class="grid">
-            <section class="card">
-                <h3>Platform</h3>
-                <div class="body"><div class="pills capabilities-summary"><span class="muted">Loading platform profile...</span></div></div>
-            </section>
-            <section class="card">
-                <h3>Network</h3>
-                <div class="body"><div class="pills wifi-summary"><span class="muted">Loading network status...</span></div></div>
-            </section>
-            <section class="card">
-                <h3>GNSS</h3>
-                <div class="body"><div class="pills gnss-summary"><span class="muted">Loading GNSS status...</span></div></div>
-            </section>
-            <section class="card">
-                <h3>Base Station</h3>
-                <div class="body"><div class="pills base-summary"><span class="muted">Loading base status...</span></div></div>
-            </section>
-            <section class="card" style="grid-column: 1 / -1;">
-                <h3>NTRIP</h3>
-                <div class="body"><div class="small-list ntrip-summary"><span class="muted">Loading NTRIP runtime...</span></div></div>
-            </section>
+
+        <div class="card mb-3">
+            <div class="card-header">Platform</div>
+            <div class="card-body py-3">
+                <div class="capabilities-summary small text-muted">Loading platform profile...</div>
+            </div>
         </div>
-        <footer>
-            Uptime: <span class="footer-uptime mono">00:00:00</span>
-            <span> | </span>
-            Heap: <span class="footer-heap mono">n/a</span>
-        </footer>
+
+        <div class="row">
+            <div class="col-xl-6">
+                <div class="card mb-3">
+                    <div class="card-header">Network Status</div>
+                    <div class="card-body py-3 dashboard-network-summary small text-muted">Loading network status...</div>
+                </div>
+            </div>
+            <div class="col-xl-6">
+                <div class="card mb-3">
+                    <div class="card-header">LoRa Status</div>
+                    <div class="card-body py-3 lora-runtime-summary small text-muted">Loading LoRa status...</div>
+                </div>
+            </div>
+            <div class="col-xl-6">
+                <div class="card mb-3">
+                    <div class="card-header">GNSS Overview</div>
+                    <div class="card-body py-3 gnss-summary small text-muted">Loading GNSS status...</div>
+                </div>
+            </div>
+            <div class="col-xl-6">
+                <div class="card mb-3">
+                    <div class="card-header">Base Station Status</div>
+                    <div class="card-body py-3">
+                        <div class="gnss-base-summary small text-muted">Loading base station status...</div>
+                        <div class="gnss-base-status small text-muted mt-2"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header">GNSS Diagnostics</div>
+            <div class="card-body py-3 gnss-diagnostics-summary small text-muted">Loading GNSS diagnostics...</div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header">Satellites / Constellations</div>
+            <div class="card-body py-3">
+                <div class="gnss-constellation-summary small text-muted mb-2">Loading constellation summary...</div>
+                <div class="table-responsive">
+                    <table class="table table-sm table-striped mb-0 dashboard-table gnss-satellite-table">
+                        <thead>
+                            <tr>
+                                <th>Constellation</th>
+                                <th>PRN</th>
+                                <th>El</th>
+                                <th>Az</th>
+                                <th>CN0</th>
+                                <th>Sig</th>
+                                <th>Used</th>
+                                <th>Age</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div class="gnss-satellite-status small text-muted mt-2">Waiting for GNSS data...</div>
+            </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header">NTRIP Runtime Status</div>
+            <div class="card-body py-3">
+                <div class="dashboard-ntrip-runtime-summary small text-muted mb-3">Loading NTRIP runtime...</div>
+                <div class="dashboard-ntrip-slot-list small text-muted">Loading slot status...</div>
+            </div>
+        </div>
+
+        <div class="card mb-4">
+            <div class="card-header">Memory / QoS / Uptime</div>
+            <div class="card-body py-3 system-summary small text-muted">Loading system status...</div>
+        </div>
     </div>
+    <footer id="footer" class="bg-dark">
+        <div class="container">
+            <div class="text-center text-light">
+                <small>Uptime <span class="uptime">loading...</span> - Heap <span class="heap">loading...</span></small>
+            </div>
+        </div>
+    </footer>
+
+    <script src="c/runtime.js"></script>
+    <script src="c/gnss.js"></script>
+    <script src="c/ntrip.js"></script>
+    <script src="c/lora.js"></script>
+    <script src="c/nav.js"></script>
     <script>
-        const el = (selector) => document.querySelector(selector);
-        const capabilitiesSummary = el('.capabilities-summary');
-        const wifiSummary = el('.wifi-summary');
-        const gnssSummary = el('.gnss-summary');
-        const baseSummary = el('.base-summary');
-        const ntripSummary = el('.ntrip-summary');
-        const footerUptime = el('.footer-uptime');
-        const footerHeap = el('.footer-heap');
-
-        const secondsToHHMMSS = (seconds) => {
-            seconds = parseInt(seconds || 0, 10);
-            const hours = Math.floor(seconds / 3600);
-            const minutes = Math.floor(seconds / 60) % 60;
-            const secs = seconds % 60;
-            return [hours, minutes, secs].map((v) => v < 10 ? '0' + v : '' + v).join(':');
-        };
-
-        const clearNode = (node) => { while (node.firstChild) node.removeChild(node.firstChild); };
-        const appendPill = (container, text) => {
-            const span = document.createElement('span');
-            span.className = 'pill';
-            span.textContent = text;
-            container.appendChild(span);
-        };
-        const setMutedText = (container, text) => {
-            clearNode(container);
-            const span = document.createElement('span');
-            span.className = 'muted';
-            span.textContent = text;
-            container.appendChild(span);
-        };
-
-        const renderWifi = (wifi) => {
-            clearNode(wifiSummary);
-            if (!wifi) return setMutedText(wifiSummary, 'No network status available');
-            if (wifi.ap && wifi.ap.active) {
-                appendPill(wifiSummary, 'AP ' + (wifi.ap.ssid || 'unnamed'));
-                appendPill(wifiSummary, wifi.ap.ip4 || 'no AP IP');
-                appendPill(wifiSummary, (wifi.ap.devices || 0) + ' AP client(s)');
-            } else appendPill(wifiSummary, 'AP disabled');
-            if (wifi.sta && wifi.sta.active) {
-                appendPill(wifiSummary, wifi.sta.connected ? 'STA connected' : 'STA not connected');
-                appendPill(wifiSummary, wifi.sta.ssid || 'no SSID');
-                if (wifi.sta.ip4) appendPill(wifiSummary, wifi.sta.ip4);
-                if (typeof wifi.sta.rssi === 'number') appendPill(wifiSummary, wifi.sta.rssi + ' dBm');
-            } else appendPill(wifiSummary, 'STA disabled');
-        };
-
-        const renderGnss = (gnss) => {
-            clearNode(gnssSummary);
-            if (!gnss || !gnss.detected) return setMutedText(gnssSummary, 'No GNSS data');
-            appendPill(gnssSummary, gnss.receiver_type || 'unknown');
-            appendPill(gnssSummary, gnss.model || 'unknown model');
-            appendPill(gnssSummary, gnss.fix_type || 'unknown fix');
-            appendPill(gnssSummary, 'RTK ' + (gnss.rtk_status || 'unknown'));
-            appendPill(gnssSummary, (gnss.satellites_used || 0) + ' used / ' + (gnss.satellites_visible || 0) + ' visible');
-            appendPill(gnssSummary, 'CN0 ' + (gnss.cn0_mean || 0) + '/' + (gnss.cn0_max || 0));
-            appendPill(gnssSummary, gnss.rtcm_alive && !gnss.rtcm_stale ? 'RTCM alive' : (gnss.rtcm_stale ? 'RTCM stale' : 'RTCM idle'));
-        };
-
-        const pollDelayForQos = (state) => state === 'critical' ? 10000 : (state === 'degraded' ? 6000 : 3000);
-
-        const renderCapabilities = (cap, qos) => {
-            clearNode(capabilitiesSummary);
-            if (!cap) return setMutedText(capabilitiesSummary, 'Capabilities unavailable');
-            appendPill(capabilitiesSummary, cap.chip_family || 'unknown');
-            appendPill(capabilitiesSummary, cap.network_profile || 'unknown network');
-            appendPill(capabilitiesSummary, (cap.max_ntrip_slots || 0) + ' NTRIP slots');
-            appendPill(capabilitiesSummary, cap.psram_available ? 'PSRAM' : 'No PSRAM');
-            appendPill(capabilitiesSummary, cap.ethernet_active ? 'Ethernet active' : 'Wi-Fi only');
-            if (qos && qos.state) {
-                appendPill(capabilitiesSummary, 'QoS ' + qos.state + (qos.reason && qos.reason !== 'normal' ? ' (' + qos.reason + ')' : ''));
+        $(function() {
+            const app = window.WebUI || window.ConfigPage || {};
+            if (typeof app.initNav === 'function') app.initNav({ page: 'dashboard' });
+            if (app.runtimeStatus && typeof app.runtimeStatus.initDashboard === 'function') {
+                app.runtimeStatus.initDashboard();
             }
-        };
-
-        const renderBase = (base) => {
-            clearNode(baseSummary);
-            if (!base || !base.detected) return setMutedText(baseSummary, 'No base station data');
-            appendPill(baseSummary, 'Mode ' + (base.configured_mode || 'rover'));
-            appendPill(baseSummary, 'Profile ' + (base.active_profile || 'none'));
-            appendPill(baseSummary, 'RTCM ' + (base.rtcm_output ? 'on' : 'off'));
-            appendPill(baseSummary, base.survey_running ? ('Survey ' + (base.survey_progress_percent || 0) + '%') : 'Survey idle');
-            if (base.has_fixed_position) {
-                appendPill(baseSummary, 'Lat ' + ((base.latitude_e7 || 0) / 10000000).toFixed(7));
-                appendPill(baseSummary, 'Lon ' + ((base.longitude_e7 || 0) / 10000000).toFixed(7));
-            }
-        };
-
-        const renderNtrip = (ntrip) => {
-            clearNode(ntripSummary);
-            if (!ntrip || !Array.isArray(ntrip.slots)) return setMutedText(ntripSummary, 'NTRIP runtime unavailable');
-            ntrip.slots.forEach((slot) => {
-                const row = document.createElement('div');
-                let text = (slot.index + 1) + '. ' + (slot.name || 'slot') + ' - ' + (slot.status || 'unknown');
-                if (slot.disabled_reason) text += ' (' + slot.disabled_reason + ')';
-                row.textContent = text;
-                ntripSummary.appendChild(row);
-            });
-        };
-
-        const poll = async () => {
-            let qosState = 'normal';
-            try {
-                const response = await fetch('/status');
-                const data = await response.json();
-                qosState = data && data.qos && data.qos.state ? data.qos.state : 'normal';
-                footerUptime.textContent = secondsToHHMMSS(data.uptime || 0);
-                if (data.heap && data.heap.total) footerHeap.textContent = Math.round((data.heap.free || 0) / data.heap.total * 100) + '% free';
-                else footerHeap.textContent = 'n/a';
-                renderCapabilities(data.capabilities, data.qos);
-                renderWifi(data.wifi);
-                renderGnss(data.gnss);
-                renderNtrip(data.ntrip);
-            } catch (error) {
-                setMutedText(capabilitiesSummary, 'Status unavailable');
-            }
-            try {
-                const response = await fetch('/api/gnss/base/status');
-                renderBase(await response.json());
-            } catch (error) {
-                setMutedText(baseSummary, 'Base status unavailable');
-            } finally {
-                setTimeout(poll, pollDelayForQos(qosState));
-            }
-        };
-
-        poll();
+        });
     </script>
 </body>
 </html>

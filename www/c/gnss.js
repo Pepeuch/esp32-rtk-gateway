@@ -1,5 +1,7 @@
 (function(global) {
-    const app = global.ConfigPage || (global.ConfigPage = {});
+    const app = global.WebUI || global.ConfigPage || {};
+    global.WebUI = app;
+    global.ConfigPage = app;
 
     app.gnss = {
         init: function() {
@@ -168,9 +170,35 @@
 
         refreshViews: function() {
             const self = this;
+            self.refreshDiagnostics();
+            self.refreshSatellites();
+            self.refreshBaseStatus();
+            self.refreshRawConsole();
+        },
+
+        refreshDashboardViews: function() {
+            this.refreshDiagnostics();
+            this.refreshSatellites();
+            this.refreshBaseStatus();
+        },
+
+        refreshDiagnostics: function() {
+            const self = this;
             $.getJSON('api/gnss/diagnostics').done((data) => self.renderDiagnostics(data));
+        },
+
+        refreshSatellites: function() {
+            const self = this;
             $.getJSON('api/gnss/satellites').done((data) => self.renderSatellites(data));
+        },
+
+        refreshBaseStatus: function() {
+            const self = this;
             $.getJSON('api/gnss/base/status').done((data) => self.renderBaseStatus(data));
+        },
+
+        refreshRawConsole: function() {
+            const self = this;
             $.getJSON('api/gnss/receiver/raw').done(function(data) {
                 if (!data) return;
                 if (self.rawConsole.length) {

@@ -1,13 +1,32 @@
 (function(global) {
-    const app = global.ConfigPage || (global.ConfigPage = {});
+    const app = global.WebUI || global.ConfigPage || {};
+    global.WebUI = app;
+    global.ConfigPage = app;
 
-    app.initNav = function() {
-        $('.config-page-nav a').each(function() {
-            const href = $(this).attr('href');
-            const active = href && window.location.pathname.endsWith(href.replace(/^\//, ''));
-            $(this).toggleClass('btn-primary', !!active)
-                .toggleClass('btn-outline-secondary', !active && $(this).hasClass('btn-outline-secondary'))
-                .attr('aria-current', active ? 'page' : null);
+    const links = [
+        { href: '/dashboard.html', label: 'Dashboard', id: 'dashboard' },
+        { href: '/config.html', label: 'Config', id: 'config' },
+        { href: '/advanced.html', label: 'Advanced', id: 'advanced' },
+        { href: '/log.html', label: 'Logs', id: 'log' }
+    ];
+
+    app.initNav = function(options) {
+        const page = (options && options.page) || $('body').data('page') || '';
+        const roots = $('.shared-nav');
+
+        roots.each(function() {
+            const root = $(this);
+            root.empty();
+
+            links.forEach(function(link) {
+                const active = link.id === page;
+                root.append($('<a>', {
+                    href: link.href,
+                    class: 'btn btn-sm ' + (active ? 'btn-primary' : 'btn-outline-secondary') + ' mr-2 mb-2',
+                    text: link.label,
+                    'aria-current': active ? 'page' : null
+                }));
+            });
         });
     };
 })(window);

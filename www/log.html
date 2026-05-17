@@ -10,10 +10,15 @@
             white-space: pre;
         }
     </style>
+    <script src="c/nav.js"></script>
     <script>
         const LOG_PAGE_INDEX_KEY = 'log_page_index';
 
         $(function() {
+            if (window.WebUI && typeof window.WebUI.initNav === 'function') {
+                window.WebUI.initNav({ page: 'log' });
+            }
+
             var log_page_index = localStorage.getItem(LOG_PAGE_INDEX_KEY) || 0;
             log_page_index++;
             localStorage.setItem(LOG_PAGE_INDEX_KEY, log_page_index);
@@ -26,9 +31,7 @@
             var index = 1;
 
             var update = function() {
-                // Don't reload if another page is open
                 if (localStorage.getItem(LOG_PAGE_INDEX_KEY) > log_page_index) {
-                    console.log("Disabling due to other page");
                     $('#reload-modal').modal({backdrop: 'static', keyboard: false});
                     return;
                 }
@@ -38,7 +41,6 @@
                     timeout: 2000
                 }).done(function(data) {
                     var lines = data.split("\n");
-                    window.lines = lines;
 
                     for (var line of lines) {
                         if (line === "@@@@") {
@@ -50,7 +52,6 @@
 
                         var match = line.match(regex);
                         if (match === null) {
-                            console.log("Discarded: " + line);
                             continue;
                         }
 
@@ -99,11 +100,14 @@
         })
     </script>
 </head>
-<body class="bg-light">
-    <div class="container-fluid">
-        <div class="pt-5 text-center">
-            <h2>ESP32 RTK Gateway Log</h2>
-            <p class="lead">The device log will be loaded automatically below. Make sure that you have at most one log page open at a time. </p>
+<body class="bg-light" data-page="log">
+    <div class="container-fluid py-4">
+        <div class="d-flex justify-content-between align-items-center flex-wrap mb-4">
+            <div>
+                <h2 class="mb-1">ESP32 RTK Gateway Log</h2>
+                <p class="lead mb-0">The device log reloads automatically. Keep only one log page open at a time.</p>
+            </div>
+            <div class="shared-nav"></div>
         </div>
         <div class="row">
             <table id="table" class="table table-sm">

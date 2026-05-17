@@ -1,5 +1,7 @@
 (function(global) {
-    const app = global.ConfigPage || (global.ConfigPage = {});
+    const app = global.WebUI || global.ConfigPage || {};
+    global.WebUI = app;
+    global.ConfigPage = app;
 
     const regionMeta = {
         EU868: { duty_cycle_policy: 'duty_cycle', duty_cycle_window_s: 3600, max_airtime_per_window_ms: 360000 },
@@ -114,6 +116,37 @@
 
             this.updatePolicyInfo();
             this.updateValidation();
+        },
+
+        renderStatusSummary: function(capabilities, qos) {
+            const summary = $('.lora-runtime-summary');
+            const lora = capabilities && capabilities.lora ? capabilities.lora : {};
+
+            if (!summary.length) return;
+            summary.empty();
+
+            if (!capabilities || !capabilities.has_lora_radio) {
+                summary.text('LoRa radio not available on this firmware profile');
+                return;
+            }
+
+            summary
+                .append($('<span>', { class: 'capability-pill', text: 'Role ' + (capabilities.device_role || 'unknown') }))
+                .append($('<span>', { class: 'capability-pill', text: 'Region ' + (lora.region || '-') }))
+                .append($('<span>', { class: 'capability-pill', text: 'Chip ' + (lora.chip_family || '-') }))
+                .append($('<span>', { class: 'capability-pill', text: 'Radio ' + (lora.radio_profile || '-') }))
+                .append($('<span>', { class: 'capability-pill', text: 'RTCM ' + (lora.rtcm_profile || '-') }))
+                .append($('<span>', { class: 'capability-pill', text: lora.tx_enabled ? 'LoRa TX enabled' : 'LoRa TX disabled' }))
+                .append($('<span>', { class: 'capability-pill', text: (lora.frequency_hz || 0) > 0 ? (lora.frequency_hz + ' Hz') : 'Auto frequency' }))
+                .append($('<span>', { class: 'capability-pill', text: (lora.tx_power_dbm || 0) + ' dBm' }));
+
+            if (lora.duty_cycle_policy) {
+                summary.append($('<span>', { class: 'capability-pill', text: 'Policy ' + lora.duty_cycle_policy }));
+            }
+
+            if (qos && qos.state) {
+                summary.append($('<span>', { class: 'capability-pill', text: 'QoS ' + qos.state }));
+            }
         },
 
         updatePolicyInfo: function() {

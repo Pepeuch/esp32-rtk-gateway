@@ -22,237 +22,23 @@
             font-family: monospace;
         }
     </style>
-    <script>
-        $(function() {
-            var gnssDiagnostics = $('.gnss-diagnostics');
-            var gnssSatellites = $('.gnss-satellites tbody');
-            var gnssSatelliteStatus = $('.gnss-satellite-status');
-            var rawConsole = $('#gnss-raw-console');
-            var ntripRuntime = $('.ntrip-runtime');
-            var selftestStatus = $('.selftest-status');
-            var currentQosState = 'normal';
-
-            var fetchJson = async function(url, options) {
-                var response = await fetch(url, Object.assign({cache: 'no-store'}, options || {}));
-                if (!response.ok) throw new Error('HTTP ' + response.status + ' for ' + url);
-                return response.json();
-            };
-
-            var pollDelayForQos = function(state) {
-                if (state === 'critical') return 12000;
-                if (state === 'degraded') return 8000;
-                return 4000;
-            };
-
-            var appendPill = function(container, text) {
-                container.append($('<span>', {class: 'capability-pill', text: text}));
-            };
-
-            var humanDataSize = function(bytes) {
-                var value = parseInt(bytes || 0, 10);
-                if (Math.abs(value) < 1000) return value + 'B';
-                var units = ['kB','MB','GB'];
-                var index = -1;
-                do {
-                    value /= 1000;
-                    index++;
-                } while (Math.abs(value) >= 1000 && index < units.length - 1);
-                return value.toFixed(1) + units[index];
-            };
-
-            var renderDiagnostics = function(data) {
-                gnssDiagnostics.empty();
-                if (!data || !data.detected) {
-                    gnssDiagnostics.text('No GNSS data');
-                    return;
-                }
-
-                appendPill(gnssDiagnostics, data.receiver_type || 'unknown');
-                appendPill(gnssDiagnostics, 'Fix ' + (data.fix_type || 'unknown'));
-                appendPill(gnssDiagnostics, 'RTK ' + (data.rtk_status || 'unknown'));
-                appendPill(gnssDiagnostics, 'RTCM ' + (data.rtcm_state || 'idle'));
-                appendPill(gnssDiagnostics, 'Diff age ' + (data.diff_age || 0));
-                appendPill(gnssDiagnostics, 'AGC main ' + (data.agc_main != null ? data.agc_main : 'n/a'));
-                appendPill(gnssDiagnostics, 'AGC aux ' + (data.agc_aux != null ? data.agc_aux : 'n/a'));
-                appendPill(gnssDiagnostics, 'Antenna ' + (data.antenna_status || 'unknown'));
-                appendPill(gnssDiagnostics, 'Jamming ' + (data.jamming_status || 'unknown'));
-                appendPill(gnssDiagnostics, 'HW ' + (data.hardware_status || 'unknown'));
-                appendPill(gnssDiagnostics, 'Parser ' + (data.parser_errors || 0));
-            };
-
-            var renderSatellites = function(data) {
-                gnssSatellites.empty();
-                if (!data || !data.detected) {
-                    gnssSatelliteStatus.text('No GNSS data');
-                    return;
-                }
-
-                var satellites = Array.isArray(data.satellites) ? data.satellites.slice() : [];
-                gnssSatelliteStatus.text((data.total_visible || satellites.length) + ' visible, ' + (data.total_used || 0) + ' used');
-                satellites.sort(function(a, b) {
-                    return (b.cn0 || 0) - (a.cn0 || 0);
-                });
-
-                satellites.forEach(function(sat) {
-                    gnssSatellites.append($('<tr>')
-                        .append($('<td>', {text: sat.constellation || 'unknown'}))
-                        .append($('<td>', {text: sat.prn || sat.svid || 0}))
-                        .append($('<td>', {text: sat.cn0 || 0}))
-                        .append($('<td>', {text: sat.used ? 'yes' : 'no'}))
-                        .append($('<td>', {text: (sat.last_seen_ms || 0) + 'ms'}))
-                    );
-                });
-            };
-
-            var renderRuntime = function(data) {
-                ntripRuntime.empty();
-                if (!data || !Array.isArray(data.slots)) {
-                    ntripRuntime.text('NTRIP runtime unavailable');
-                    return;
-                }
-
-                if (data.runtime) {
-                    appendPill(ntripRuntime, (data.runtime.active_slot_count || 0) + ' active slots');
-                    appendPill(ntripRuntime, humanDataSize(data.runtime.free_heap_bytes || 0) + ' free heap');
-                    appendPill(ntripRuntime, data.runtime.fake_rtcm_enabled ? 'Fake RTCM on' : 'Fake RTCM off');
-                    appendPill(ntripRuntime, 'QoS ' + (data.runtime.qos_state || 'normal'));
-                    if (data.runtime.qos_reason && data.runtime.qos_reason !== 'normal') {
-                        appendPill(ntripRuntime, data.runtime.qos_reason);
-                    }
-                }
-
-                data.slots.forEach(function(slot) {
-                    ntripRuntime.append($('<div>', {
-                        class: 'small mb-1',
-                        text: (slot.index + 1) + '. ' + (slot.name || 'slot') + ' - ' + (slot.status || 'unknown') + ' - ' + humanDataSize(slot.bytes_sent || 0)
-                    }));
-                });
-            };
-
-            var refreshAdvanced = async function() {
-                try {
-                    var runtime = await fetchJson('api/ntrip/runtime');
-                    if (runtime && runtime.runtime && runtime.runtime.qos_state) {
-                        currentQosState = runtime.runtime.qos_state;
-                    }
-                    renderRuntime(runtime);
-
-                    try {
-                        renderDiagnostics(await fetchJson('api/gnss/diagnostics'));
-                    } catch (error) {
-                        gnssDiagnostics.text('GNSS diagnostics unavailable');
-                    }
-
-                    try {
-                        renderSatellites(await fetchJson('api/gnss/satellites'));
-                    } catch (error) {
-                        gnssSatelliteStatus.text('Satellites unavailable');
-                        gnssSatellites.empty();
-                    }
-
-                    if (currentQosState === 'critical') {
-                        rawConsole.val('Raw console disabled while QoS is critical');
-                        $('#fake-rtcm-start, #selftest-start').prop('disabled', true);
-                    } else {
-                        $('#fake-rtcm-start, #selftest-start').prop('disabled', false);
-                        try {
-                            var rawData = await fetchJson('api/gnss/receiver/raw');
-                            rawConsole.val(rawData && rawData.raw ? rawData.raw : '');
-                        } catch (error) {
-                            rawConsole.val('Raw console unavailable');
-                        }
-                    }
-                } catch (error) {
-                    ntripRuntime.text('NTRIP runtime unavailable');
-                } finally {
-                    setTimeout(refreshAdvanced, pollDelayForQos(currentQosState));
-                }
-            };
-
-            var refreshSelftest = async function() {
-                if (currentQosState === 'critical') {
-                    selftestStatus.text('Self-test result polling paused while QoS is critical');
-                    return;
-                }
-                try {
-                    var data = await fetchJson('api/dev/ntrip/selftest/result');
-                    selftestStatus.text(JSON.stringify(data || {}, null, 2));
-                } catch (error) {
-                    selftestStatus.text('Self-test result unavailable');
-                }
-            };
-
-            $('#fake-rtcm-start').on('click', function() {
-                $.ajax({
-                    url: 'api/dev/fake-rtcm/start',
-                    method: 'POST',
-                    contentType: 'application/json',
-                    data: JSON.stringify({
-                        rate_hz: parseInt($('#fake-rtcm-rate').val() || '5', 10),
-                        packet_size: parseInt($('#fake-rtcm-size').val() || '180', 10)
-                    })
-                }).done(refreshAdvanced);
-            });
-
-            $('#fake-rtcm-stop').on('click', function() {
-                $.post('api/dev/fake-rtcm/stop').done(refreshAdvanced);
-            });
-
-            $('#selftest-start').on('click', function() {
-                $.post('api/dev/ntrip/selftest/start').done(refreshSelftest);
-            });
-
-            $('#selftest-refresh').on('click', refreshSelftest);
-
-            selftestStatus.text('Click refresh to query the latest self-test result.');
-            refreshAdvanced();
-        });
-    </script>
 </head>
-<body>
+<body class="bg-light" data-page="advanced">
     <div class="container py-4">
-        <div class="d-flex justify-content-between align-items-center mb-4">
+        <div class="d-flex justify-content-between align-items-center flex-wrap mb-4">
             <div>
                 <h2 class="mb-1">ESP32 RTK Gateway</h2>
-                <div class="text-muted">Advanced diagnostics and developer tools</div>
+                <div class="text-muted">Developer and debug tools</div>
             </div>
-            <div>
-                <a class="btn btn-outline-secondary btn-sm" href="/dashboard.html">Dashboard</a>
-                <a class="btn btn-outline-primary btn-sm" href="/config.html">Config</a>
-                <a class="btn btn-outline-dark btn-sm" href="/advanced.html">Advanced</a>
-                <a class="btn btn-outline-secondary btn-sm" href="/log.html">Logs</a>
-            </div>
+            <div class="shared-nav"></div>
         </div>
 
         <div class="card mb-3">
-            <div class="card-header">GNSS Diagnostics</div>
-            <div class="card-body gnss-diagnostics small text-muted">Loading GNSS diagnostics...</div>
-        </div>
-
-        <div class="card mb-3">
-            <div class="card-header">Satellites</div>
+            <div class="card-header">Deep Diagnostics</div>
             <div class="card-body">
-                <div class="gnss-satellite-status small text-muted mb-2">Loading satellites...</div>
-                <div class="table-responsive">
-                    <table class="table table-sm table-striped gnss-satellites">
-                        <thead>
-                            <tr>
-                                <th>Constellation</th>
-                                <th>PRN</th>
-                                <th>CN0</th>
-                                <th>Used</th>
-                                <th>Age</th>
-                            </tr>
-                        </thead>
-                        <tbody></tbody>
-                    </table>
-                </div>
+                <div class="advanced-runtime-summary small text-muted">Loading runtime diagnostics...</div>
+                <div class="gnss-profile-status small text-muted mt-2"></div>
             </div>
-        </div>
-
-        <div class="card mb-3">
-            <div class="card-header">NTRIP Runtime</div>
-            <div class="card-body ntrip-runtime small text-muted">Loading NTRIP runtime...</div>
         </div>
 
         <div class="card mb-3">
@@ -289,5 +75,115 @@
             </div>
         </div>
     </div>
+
+    <script src="c/runtime.js"></script>
+    <script src="c/gnss.js"></script>
+    <script src="c/nav.js"></script>
+    <script>
+        $(function() {
+            const app = window.WebUI || window.ConfigPage || {};
+            const runtimeSummary = $('.advanced-runtime-summary');
+            const selftestStatus = $('.selftest-status');
+
+            const fetchJson = async function(url, options) {
+                const response = await fetch(url, Object.assign({ cache: 'no-store' }, options || {}));
+                if (!response.ok) throw new Error('HTTP ' + response.status + ' for ' + url);
+                return response.json();
+            };
+
+            const renderRuntime = function(status, runtime) {
+                runtimeSummary.empty();
+                if (status && status.qos) {
+                    runtimeSummary
+                        .append($('<span>', { class: 'capability-pill', text: 'QoS ' + (status.qos.state || 'normal') }))
+                        .append($('<span>', { class: 'capability-pill', text: status.qos.reason || 'normal' }))
+                        .append($('<span>', { class: 'capability-pill', text: (status.qos.active_socket_count || 0) + '/' + (status.qos.max_socket_count || 0) + ' sockets' }));
+                }
+                if (status && status.heap) {
+                    runtimeSummary
+                        .append($('<span>', { class: 'capability-pill', text: 'Heap ' + Math.round((status.heap.free || 0) / Math.max(status.heap.total || 1, 1) * 100) + '% free' }))
+                        .append($('<span>', { class: 'capability-pill', text: 'Uptime ' + app.utils.secondsToHHMMSS(status.uptime || 0) }));
+                }
+                if (status && status.buffers && status.buffers.gnss_raw) {
+                    runtimeSummary.append($('<span>', {
+                        class: 'capability-pill',
+                        text: 'Raw ' + app.utils.humanDataSize(status.buffers.gnss_raw.used || 0) + '/' + app.utils.humanDataSize(status.buffers.gnss_raw.size || 0)
+                    }));
+                }
+                if (runtime && runtime.runtime) {
+                    runtimeSummary
+                        .append($('<span>', { class: 'capability-pill', text: runtime.runtime.fake_rtcm_enabled ? 'Fake RTCM on' : 'Fake RTCM off' }))
+                        .append($('<span>', { class: 'capability-pill', text: app.utils.humanDataSize(runtime.runtime.total_ringbuffer_used || 0) + '/' + app.utils.humanDataSize(runtime.runtime.total_ringbuffer_capacity || 0) + ' buffer' }))
+                        .append($('<span>', { class: 'capability-pill', text: (runtime.runtime.total_dropped_rtcm_packets || 0) + ' dropped packets' }));
+                }
+            };
+
+            const refreshRuntime = async function() {
+                try {
+                    const status = await fetchJson('/status');
+                    const runtime = await fetchJson('/api/ntrip/runtime');
+                    if (status && status.qos && status.qos.state) {
+                        app.state.currentQosState = status.qos.state;
+                    }
+                    renderRuntime(status, runtime);
+                } catch (error) {
+                    runtimeSummary.text('Runtime diagnostics unavailable');
+                } finally {
+                    setTimeout(refreshRuntime, app.utils.pollDelayForQos(app.state.currentQosState, 3000, 6000, 10000));
+                }
+            };
+
+            const refreshRawConsole = async function() {
+                if (!(app.gnss && typeof app.gnss.refreshRawConsole === 'function')) return;
+                try {
+                    app.gnss.refreshRawConsole();
+                } finally {
+                    setTimeout(refreshRawConsole, app.utils.pollDelayForQos(app.state.currentQosState, 3000, 6000, 10000));
+                }
+            };
+
+            const refreshSelftest = async function() {
+                try {
+                    const data = await fetchJson('/api/dev/ntrip/selftest/result');
+                    selftestStatus.text(JSON.stringify(data || {}, null, 2));
+                } catch (error) {
+                    selftestStatus.text('Self-test result unavailable');
+                }
+            };
+
+            if (typeof app.initNav === 'function') app.initNav({ page: 'advanced' });
+            if (app.gnss && typeof app.gnss.init === 'function') app.gnss.init();
+
+            $('#fake-rtcm-start').on('click', function() {
+                const button = $(this);
+                button.prop('disabled', true);
+                $.ajax({
+                    url: '/api/dev/fake-rtcm/start',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({
+                        rate_hz: parseInt($('#fake-rtcm-rate').val() || '5', 10),
+                        packet_size: parseInt($('#fake-rtcm-size').val() || '180', 10)
+                    })
+                }).always(function() { button.prop('disabled', false); });
+            });
+
+            $('#fake-rtcm-stop').on('click', function() {
+                const button = $(this);
+                button.prop('disabled', true);
+                $.post('/api/dev/fake-rtcm/stop').always(function() { button.prop('disabled', false); });
+            });
+
+            $('#selftest-start').on('click', function() {
+                $.post('/api/dev/ntrip/selftest/start').done(refreshSelftest);
+            });
+
+            $('#selftest-refresh').on('click', refreshSelftest);
+
+            selftestStatus.text('Click refresh to query the latest self-test result.');
+            refreshRuntime();
+            refreshRawConsole();
+        });
+    </script>
 </body>
 </html>
