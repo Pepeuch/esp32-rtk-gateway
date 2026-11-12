@@ -27,6 +27,7 @@ set(app_requires
     esp_timer
     esp_wifi
     espcoredump
+    espnow_rtcm
     json
     log
     lora_radio
@@ -43,6 +44,15 @@ set(app_requires
     vfs
     w5500
 )
+
+if(CONFIG_ESPNOW_RTCM_ROVER)
+    message(FATAL_ERROR "Use the standalone firmware/espnow_rover project for the USB rover")
+endif()
+if(CONFIG_ESPNOW_RTCM_BASE)
+    if(NOT CONFIG_RTK_DEVICE_ROLE_BASE OR NOT CONFIG_BOARD_WAVESHARE_ESP32S3_ETH)
+        message(FATAL_ERROR "ESP-NOW BASE requires the Waveshare ESP32-S3 Ethernet BASE profile")
+    endif()
+endif()
 
 if(CONFIG_RTK_DEVICE_ROLE_BASE OR CONFIG_RTK_DEVICE_ROLE_DUAL_DEBUG)
     list(APPEND app_srcs

@@ -1,0 +1,3 @@
+CONFIG_ESPNOW_RTCM_BASE=y
+CONFIG_ESPNOW_RTCM_CHANNEL=6
+# Set CONFIG_ESPNOW_RTCM_PEER_MAC in a private, untracked defaults file.

@@ -30,6 +30,9 @@
 #include "config.h"
 #include "util.h"
 #include "uart.h"
+#if CONFIG_ESPNOW_RTCM_BASE
+#include "espnow_rtcm.h"
+#endif
 
 static const char *TAG = "NTRIP_CLIENT";
 
@@ -111,6 +114,9 @@ static void ntrip_client_task(void *ctx) {
 
     while (true) {
         retry_delay(delay_handle);
+#if CONFIG_ESPNOW_RTCM_BASE
+        espnow_rtcm_ntrip_reset();
+#endif
 
         wait_for_ip();
 
@@ -153,6 +159,12 @@ static void ntrip_client_task(void *ctx) {
                         (ntrip_response_sourcetable_ok(status) ? "Mountpoint not found" : status))
         free(status);
 
+#if CONFIG_ESPNOW_RTCM_BASE
+        espnow_rtcm_ntrip_response(strncmp(buffer, "ICY ", 4) == 0);
+        /* Include a body coalesced with the initial response read. */
+        espnow_rtcm_ntrip_bytes((const uint8_t *)buffer, (size_t)len);
+#endif
+
         ESP_LOGI(TAG, "Successfully connected to %s:%d/%s", host, port, mountpoint);
         uart_nmea("$PESP,NTRIP,CLI,CONNECTED,%s:%d,%s", host, port, mountpoint);
 
@@ -168,6 +180,9 @@ static void ntrip_client_task(void *ctx) {
 
         // Read from socket until disconnected
         while (sock != -1 && (len = read(sock, buffer, BUFFER_SIZE)) >= 0) {
+#if CONFIG_ESPNOW_RTCM_BASE
+            espnow_rtcm_ntrip_bytes((const uint8_t *)buffer, (size_t)len);
+#endif
             uart_write(buffer, len);
 
             stream_stats_increment(stream_stats, len, 0);
@@ -185,6 +200,9 @@ static void ntrip_client_task(void *ctx) {
         uart_nmea("$PESP,NTRIP,CLI,DISCONNECTED,%s:%d,%s", host, port, mountpoint);
 
         _error:
+#if CONFIG_ESPNOW_RTCM_BASE
+        espnow_rtcm_ntrip_reset();
+#endif
         destroy_socket(&sock);
 
         free(buffer);

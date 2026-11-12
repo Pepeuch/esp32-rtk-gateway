@@ -40,6 +40,9 @@
 #include "tasks.h"
 #include "config/board_config.h"
 #include "board_pins.h"
+#if CONFIG_ESPNOW_RTCM_BASE
+#include "espnow_rtcm.h"
+#endif
 
 #include "lora_radio.h"
 #include "lora_radio_config.h"
@@ -329,7 +332,9 @@ void app_main(void)
 
     esp_netif_t *netif = NULL;
     bool eth_ready = false;
+#if !CONFIG_ESPNOW_RTCM_BASE
     bool wifi_ready = false;
+#endif
 
     BOOT_STEP("network_init:start");
     netif = network_init();
@@ -461,6 +466,13 @@ void app_main(void)
         }
     }
 
+#if CONFIG_ESPNOW_RTCM_BASE
+    /* The Wi-Fi radio belongs exclusively to ESP-NOW in this test build. */
+    ESP_ERROR_CHECK(netif ? ESP_OK : ESP_FAIL);
+    while (!network_is_ethernet_ready()) vTaskDelay(pdMS_TO_TICKS(100));
+    eth_ready = true;
+    ESP_ERROR_CHECK(espnow_rtcm_start());
+#else
     if (!eth_ready) {
         ESP_LOGW(TAG, "Ethernet not ready, trying WiFi STA/AP...");
         wifi_init();
@@ -477,6 +489,7 @@ void app_main(void)
         }
     }
 
+#endif
     BOOT_STEP("wait_for_network:start");
     wait_for_network();
     BOOT_STEP("wait_for_network:done");
@@ -487,6 +500,10 @@ void app_main(void)
 
     BOOT_STEP("ntrip_slots_start_allowed:start");
     ntrip_slots_start_allowed();
+#if CONFIG_ESPNOW_RTCM_BASE
+    /* Existing receiving client is separate from the outbound SOURCE slots. */
+    ntrip_client_init();
+#endif
     BOOT_STEP("ntrip_slots_start_allowed:done");
     BOOT_STEP("socket_server_init:start");
     socket_server_init();

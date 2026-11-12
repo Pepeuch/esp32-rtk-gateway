@@ -255,6 +255,11 @@ Older release notes are preserved below for historical context, but the sections
 
 ## Project Status
 
+An opt-in Ethernet BASE → ESP-NOW → minimal C3 USB RTCM bridge is available for
+software testing. See [ESP-NOW 01](docs/espnow-rtcm-usb.md) for separate builds,
+peer/channel configuration, the Linux validator and pending two-board qualification.
+The existing LoRa transport remains the default; Universal GNSS is not ported.
+
 The project is still evolving quickly. APIs, configuration layouts, and receiver workflows may continue to change between development versions while the platform stabilizes.
 
 Testing, validation feedback, and hardware reports are very welcome.

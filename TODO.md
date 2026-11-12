@@ -1,3 +1,19 @@
+## ESP-NOW 01 — pont RTCM USB expérimental
+
+- [x] Identifier le client NTRIP receveur distinct des slots SOURCE.
+- [x] Ajouter une option BASE Ethernet désactivée par défaut et un ROVER C3 minimal séparé.
+- [x] Réutiliser le codec LoRa/RTCM sans modifier les composants historiques.
+- [x] Tester en logiciel fragmentation, CRC, ordre, pertes, expiration et files bornées.
+- [x] Ajouter le validateur série Linux et le scénario TCP synthétique → codec C → radio simulée → PTY.
+- [x] Compiler BASE S3, ROVER C3 et profils LoRa BASE/ROVER sans ESP-NOW avec IDF 5.5.3.
+- [ ] Qualifier deux ESP32 physiques, Ethernet/radio et réception USB réelle.
+- [ ] Vérifier l'absence de logs ROM/boot/crash sur le port USB de la carte C3 réelle.
+- [ ] Qualifier débit/pertes/saturation et reconnexion USB sur matériel.
+- [ ] Prévoir séparément l'adaptateur source série RTCM dans Universal GNSS.
+
+Voir [le périmètre, les commandes et les limites](docs/espnow-rtcm-usb.md).
+Ces cases logicielles ne qualifient pas un fonctionnement RTK ni les essais matériels LoRa.
+
 ## TODO stabilité firmware
 
 Note:
