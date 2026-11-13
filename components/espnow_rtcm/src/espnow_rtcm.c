@@ -7,6 +7,7 @@
 #include "espnow_rtcm_codec.h"
 #include "esp_wifi.h"
 #include "esp_now.h"
+#include "esp_log.h"
 #include "esp_random.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -147,21 +148,103 @@ esp_err_t espnow_rtcm_start(void)
     esp_err_t err;
 #endif
     wifi_init_config_t wifi = WIFI_INIT_CONFIG_DEFAULT();
-    if ((err = esp_wifi_init(&wifi)) != ESP_OK) return err;
-    if ((err = esp_wifi_set_storage(WIFI_STORAGE_RAM)) != ESP_OK) return err;
-    if ((err = esp_wifi_set_mode(WIFI_MODE_STA)) != ESP_OK) return err;
-    if ((err = esp_wifi_start()) != ESP_OK) return err;
-    if ((err = esp_wifi_set_ps(WIFI_PS_NONE)) != ESP_OK) return err;
-    if ((err = esp_wifi_set_channel(CONFIG_ESPNOW_RTCM_CHANNEL, WIFI_SECOND_CHAN_NONE)) != ESP_OK) return err;
-    if ((err = esp_now_init()) != ESP_OK) return err;
+    if ((err = esp_wifi_init(&wifi)) != ESP_OK) {
+#if CONFIG_ESPNOW_RTCM_BASE
+        ESP_LOGE("ESP_NOW_RTCM", "Setup failed at line %d: %s", __LINE__, esp_err_to_name(err));
+#endif
+        return err;
+    }
+    if ((err = esp_wifi_set_storage(WIFI_STORAGE_RAM)) != ESP_OK) {
+#if CONFIG_ESPNOW_RTCM_BASE
+        ESP_LOGE("ESP_NOW_RTCM", "Setup failed at line %d: %s", __LINE__, esp_err_to_name(err));
+#endif
+        return err;
+    }
+    if ((err = esp_wifi_set_mode(WIFI_MODE_STA)) != ESP_OK) {
+#if CONFIG_ESPNOW_RTCM_BASE
+        ESP_LOGE("ESP_NOW_RTCM", "Setup failed at line %d: %s", __LINE__, esp_err_to_name(err));
+#endif
+        return err;
+    }
+    if ((err = esp_wifi_start()) != ESP_OK) {
+#if CONFIG_ESPNOW_RTCM_BASE
+        ESP_LOGE("ESP_NOW_RTCM", "Setup failed at line %d: %s", __LINE__, esp_err_to_name(err));
+#endif
+        return err;
+    }
+    if ((err = esp_wifi_set_ps(WIFI_PS_NONE)) != ESP_OK) {
+#if CONFIG_ESPNOW_RTCM_BASE
+        ESP_LOGE("ESP_NOW_RTCM", "Setup failed at line %d: %s", __LINE__, esp_err_to_name(err));
+#endif
+        return err;
+    }
+    if ((err = esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT20)) != ESP_OK) {
+#if CONFIG_ESPNOW_RTCM_BASE
+        ESP_LOGE("ESP_NOW_RTCM", "Setup failed at line %d: %s", __LINE__, esp_err_to_name(err));
+#endif
+        return err;
+    }
+    if ((err = esp_wifi_set_channel(CONFIG_ESPNOW_RTCM_CHANNEL, WIFI_SECOND_CHAN_NONE)) != ESP_OK) {
+#if CONFIG_ESPNOW_RTCM_BASE
+        ESP_LOGE("ESP_NOW_RTCM", "Setup failed at line %d: %s", __LINE__, esp_err_to_name(err));
+#endif
+        return err;
+    }
+    uint8_t actual_channel = 0, sta_mac[6] = {0};
+    /* IDF 5.5.3 Wi-Fi blob stores only one byte through the secondary enum pointer. */
+    wifi_second_chan_t secondary_channel = WIFI_SECOND_CHAN_NONE;
+    if ((err = esp_wifi_get_channel(&actual_channel, &secondary_channel)) != ESP_OK) {
+#if CONFIG_ESPNOW_RTCM_BASE
+        ESP_LOGE("ESP_NOW_RTCM", "Setup failed at line %d: %s", __LINE__, esp_err_to_name(err));
+#endif
+        return err;
+    }
+#if CONFIG_ESPNOW_RTCM_BASE
+    ESP_LOGI("ESP_NOW_RTCM", "Channel requested %u, observed %u, secondary %u",
+             CONFIG_ESPNOW_RTCM_CHANNEL, actual_channel, secondary_channel);
+#endif
+    if (actual_channel != CONFIG_ESPNOW_RTCM_CHANNEL || secondary_channel != WIFI_SECOND_CHAN_NONE)
+        return ESP_ERR_INVALID_STATE;
+    if ((err = esp_wifi_get_mac(WIFI_IF_STA, sta_mac)) != ESP_OK) {
+#if CONFIG_ESPNOW_RTCM_BASE
+        ESP_LOGE("ESP_NOW_RTCM", "Setup failed at line %d: %s", __LINE__, esp_err_to_name(err));
+#endif
+        return err;
+    }
+#if CONFIG_ESPNOW_RTCM_BASE
+    /* BASE diagnostics only: the rover USB port remains a binary RTCM stream. */
+    ESP_LOGI("ESP_NOW_RTCM", "STA %02x:%02x:%02x:%02x:%02x:%02x, channel %u, HT20",
+             sta_mac[0], sta_mac[1], sta_mac[2], sta_mac[3], sta_mac[4], sta_mac[5], actual_channel);
+#endif
+    if ((err = esp_now_init()) != ESP_OK) {
+#if CONFIG_ESPNOW_RTCM_BASE
+        ESP_LOGE("ESP_NOW_RTCM", "Setup failed at line %d: %s", __LINE__, esp_err_to_name(err));
+#endif
+        return err;
+    }
     esp_now_peer_info_t peer = {.channel = CONFIG_ESPNOW_RTCM_CHANNEL, .ifidx = WIFI_IF_STA, .encrypt = false};
     memcpy(peer.peer_addr, s_peer, sizeof(s_peer));
-    if ((err = esp_now_add_peer(&peer)) != ESP_OK) return err;
+    if ((err = esp_now_add_peer(&peer)) != ESP_OK) {
+#if CONFIG_ESPNOW_RTCM_BASE
+        ESP_LOGE("ESP_NOW_RTCM", "Setup failed at line %d: %s", __LINE__, esp_err_to_name(err));
+#endif
+        return err;
+    }
     if (xTaskCreate(worker, "espnow_rtcm", 4096, NULL, 4, &s_worker) != pdPASS) return ESP_ERR_NO_MEM;
 #if CONFIG_ESPNOW_RTCM_BASE
-    if ((err = esp_now_register_send_cb(sent)) != ESP_OK) return err;
+    if ((err = esp_now_register_send_cb(sent)) != ESP_OK) {
+#if CONFIG_ESPNOW_RTCM_BASE
+        ESP_LOGE("ESP_NOW_RTCM", "Setup failed at line %d: %s", __LINE__, esp_err_to_name(err));
+#endif
+        return err;
+    }
 #else
-    if ((err = esp_now_register_recv_cb(received)) != ESP_OK) return err;
+    if ((err = esp_now_register_recv_cb(received)) != ESP_OK) {
+#if CONFIG_ESPNOW_RTCM_BASE
+        ESP_LOGE("ESP_NOW_RTCM", "Setup failed at line %d: %s", __LINE__, esp_err_to_name(err));
+#endif
+        return err;
+    }
 #endif
     s_started = true;
     return ESP_OK;

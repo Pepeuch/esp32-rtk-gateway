@@ -1,6 +1,6 @@
 # ESP-NOW 01 — RTCM vers USB (expérimental)
 
-Chemin visé : caster NTRIP → BASE ESP32-S3 Ethernet → ESP-NOW → ESP32-C3
+Chemin visé : caster NTRIP → BASE ESP32-S3 Ethernet → ESP-NOW → ESP32-C3/C6
 ROVER → USB Serial/JTAG natif → Linux. Universal GNSS n'est pas porté sur ESP32.
 Un seul couple, deux MAC STA explicitement configurées, un canal fixe commun.
 Pas de WebUI nouvelle, appairage automatique, relais, LR ou nouveau mode radio.
@@ -57,7 +57,7 @@ ESP-IDF **v5.5.3** est la référence de compilation. Employer des répertoires 
 build et SDKCONFIG séparés ; ne pas réutiliser le SDKCONFIG du firmware historique.
 Le ROVER minimal est un projet distinct dans `firmware/espnow_rover` : aucun
 `receiver`, Web, NTRIP, UART GNSS ou pilote radio LoRa applicatif n'y est lié.
-Il utilise le contrôleur USB Serial/JTAG **natif** du C3 ; une prise USB raccordée
+Il utilise le contrôleur USB Serial/JTAG **natif** du C3/C6 ; une prise USB raccordée
 uniquement à un pont UART externe ne transporte pas ce flux. Vérifier le câblage
 de la carte avant toute qualification matérielle.
 
@@ -66,13 +66,13 @@ Créer deux fichiers privés non versionnés, par exemple sous `build/espnow01/`
 ```text
 # peer-base.defaults : MAC Wi-Fi STA réelle du ROVER
 CONFIG_ESPNOW_RTCM_PEER_MAC="02:00:00:00:00:02"
-CONFIG_ESPNOW_RTCM_CHANNEL=6
+CONFIG_ESPNOW_RTCM_CHANNEL=1
 ```
 
 ```text
 # peer-rover.defaults : MAC Wi-Fi STA réelle de la BASE
 CONFIG_ESPNOW_RTCM_PEER_MAC="02:00:00:00:00:01"
-CONFIG_ESPNOW_RTCM_CHANNEL=6
+CONFIG_ESPNOW_RTCM_CHANNEL=1
 ```
 
 Les MAC ci-dessus sont fictives, uniquement pour compilation/tests logiciels.
@@ -130,7 +130,7 @@ Le script de tests compile le vrai codec et les sources LoRa/RTCM existantes ave
 ASan/UBSan. Il couvre les 1 024 tailles RTCM, l'ordre/reclassement de fragments,
 pertes, CRC16/CRC24Q, expiration, reset NTRIP, saturation sans écrasement,
 en-têtes HTTP/ICY fragmentés et corps coalescés, bouclage des séquences.
-Neuf tests Python vérifient le parseur et des pseudo-terminaux Linux. Deux relient
+Onze tests Python vérifient le parseur et des pseudo-terminaux Linux. Deux relient
 un caster TCP local synthétique au codec C réel, à une radio simulée et au lecteur
 PTY, avec et sans perte de fragment. Ni la tâche FreeRTOS NTRIP ni les pilotes
 radio/USB physiques ne sont exécutés par ce harnais hôte.
@@ -146,8 +146,9 @@ de débit externe ; le CRC seul ne démontre pas une livraison sans perte.
 ## Limites matérielles et prochaine qualification
 
 Les builds BASE S3, ROVER C3 et LoRa BASE/ROVER avec ESP-NOW désactivé sont des
-preuves logicielles. Le câblage Ethernet, les deux radios, portée, débit, USB réel,
-pollution au boot/crash et fonctionnement avec un caster réel restent non qualifiés.
+preuves logicielles. Les premiers lots physiques S3/C3 avec caster synthétique local sont documentés
+dans [la procédure matérielle](espnow-hardware-tests.md). La portée, les essais
+longue durée, le crash et un caster GNSS réel restent à qualifier.
 Console, logs applicatifs/bootloader et impression de panic sont désactivés côté
 ROVER. Les messages ROM antérieurs à l'application ne sont pas garantis absents
 sans essai sur la carte réelle ; aucun eFuse n'est modifié.
@@ -161,8 +162,8 @@ n'est promise. Les compteurs de pertes restent locaux au firmware, sans nouvelle
 Sur deux cartes, vérifier successivement : MAC/canal, Ethernet obligatoire,
 RTCM simple puis maximum fragmenté, capture USB et comparaison au flux source,
 perte/corruption radio, saturation, USB sans lecteur puis reprise, boot/reset/crash
-sans logs dans la capture, puis profils LoRa historiques. Aucun de ces essais
-physiques ni aucun flash n'est exécuté automatiquement dans ce lot.
+sans logs dans la capture, puis profils LoRa historiques. Les commandes de compilation ne flashent pas les cartes. Les flashs et essais
+physiques autorisés séparément sont consignés dans la procédure matérielle.
 
 ## Consommation par Universal GNSS
 
@@ -178,3 +179,12 @@ valider le RTCM, puis utiliser le topic RTCM/chemin d'injection existant vers le
 vrai récepteur GNSS. Le C3 ne doit pas être configuré comme récepteur de position.
 Il reste à définir ownership, fraîcheur, reconnexion et invalidation de cette
 source distincte. Aucun fichier Universal GNSS n'est modifié dans ce lot.
+
+La préparation S3/C3/C6, les contrôles de partitions et les captures Linux sont
+décrits dans [la procédure matérielle](espnow-hardware-tests.md). La cible rover
+est choisie par `-D IDF_TARGET=esp32c3` ou `esp32c6`, sans duplication du code.
+
+Pour la campagne S3/C3, utiliser les defaults privés canal 1 et la table OTA
+originale C3 en flash 4 Mo ; les anciens binaires fictifs 2 Mo ne conviennent pas.
+Le firmware S3 de cette campagne désactive LoRa par configuration et conserve
+Ethernet. Le contrôle du canal ne connecte pas le STA au point d'accès.

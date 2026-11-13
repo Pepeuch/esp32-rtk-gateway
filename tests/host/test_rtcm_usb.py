@@ -7,10 +7,12 @@ import subprocess
 import sys
 import tty
 import threading
+import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
 from check_rtcm_usb import RtcmReader, crc24q, read_port
+from check_rtcm_capture import compare, load_frames
 
 
 def frame(payload):
@@ -110,6 +112,9 @@ class UsbTests(unittest.TestCase):
             self.assertEqual(output.getvalue(), expected)
             self.assertEqual(result['frames'], 2)
             self.assertEqual(result['noise_bytes'], 0)
+            self.assertGreater(result['elapsed_seconds'], 0)
+            self.assertAlmostEqual(result['bytes_per_second'] * result['elapsed_seconds'], len(expected))
+            self.assertAlmostEqual(result['frames_per_second'] * result['elapsed_seconds'], 2)
         finally:
             os.close(master)
             os.close(slave)
@@ -124,6 +129,28 @@ class UsbTests(unittest.TestCase):
         finally:
             os.close(master)
             os.close(slave)
+
+    def test_capture_comparison_loss_duplicates_and_order(self):
+        a, b = frame(b'a'), frame(b'b')
+        self.assertTrue(compare([a, b], [a, b])['identical_order_and_bytes'])
+        result = compare([a, b], [a, a])
+        self.assertEqual(result['missing_frames'], 1)
+        self.assertEqual(result['unexpected_frames'], 1)
+        result = compare([a, b], [b, a])
+        self.assertFalse(result['identical_order_and_bytes'])
+        self.assertEqual(result['missing_frames'], 0)
+        self.assertEqual(result['unexpected_frames'], 0)
+
+    def test_offline_capture_rejects_corruption_truncation_noise_and_empty(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'capture.rtcm'
+            good = frame(b'abc')
+            path.write_bytes(good)
+            self.assertEqual(load_frames(path), [good])
+            for bad in (good[:-1], good[:-1] + bytes([good[-1] ^ 1]), b'log' + good, b''):
+                path.write_bytes(bad)
+                with self.assertRaises(ValueError):
+                    load_frames(path)
 
     def test_continuous_stream_partial_next_frame_is_not_corruption(self):
         master, slave = pty.openpty()

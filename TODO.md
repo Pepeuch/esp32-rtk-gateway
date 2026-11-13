@@ -6,13 +6,20 @@
 - [x] Tester en logiciel fragmentation, CRC, ordre, pertes, expiration et files bornées.
 - [x] Ajouter le validateur série Linux et le scénario TCP synthétique → codec C → radio simulée → PTY.
 - [x] Compiler BASE S3, ROVER C3 et profils LoRa BASE/ROVER sans ESP-NOW avec IDF 5.5.3.
-- [ ] Qualifier deux ESP32 physiques, Ethernet/radio et réception USB réelle.
-- [ ] Vérifier l'absence de logs ROM/boot/crash sur le port USB de la carte C3 réelle.
+- [x] Préparer le même ROVER pour C6, compiler C3/C6 et documenter les essais S3/C3/C6.
+- [x] Vérifier un premier passage physique S3 Ethernet → ESP-NOW canal 1 → C3 USB : 20 petites puis 100 grandes trames identiques.
+- [x] Vérifier 600 grandes trames sur environ 120 s et 20 grandes trames après rebranchement USB C3.
+- [x] Observer une surcharge contrôlée : 71/200 trames livrées, 129 abandons BASE mesurés par JTAG.
+- [ ] Étendre la qualification matérielle : longue durée, pertes radio provoquées et reprise en cours de flux.
+- [ ] Traiter la séparation boot/RTCM : 269 octets ROM observés au boot C3 ; C6 et crash non qualifiés.
 - [ ] Qualifier débit/pertes/saturation et reconnexion USB sur matériel.
+- [ ] Exporter séparément les compteurs fragments/CRC/file/âge, sans texte dans le flux USB RTCM.
+- [ ] Auditer séparément la reprise EOF du client NTRIP historique (`read >= 0`) ; les lots matériels utilisent un redémarrage BASE contrôlé.
 - [ ] Prévoir séparément l'adaptateur source série RTCM dans Universal GNSS.
 
 Voir [le périmètre, les commandes et les limites](docs/espnow-rtcm-usb.md).
-Ces cases logicielles ne qualifient pas un fonctionnement RTK ni les essais matériels LoRa.
+Ces essais de transport ne qualifient pas un fonctionnement RTK ni les essais matériels LoRa.
+Le build C6 de préparation précède le nouveau contrôle radio : recompiler et qualifier C6 séparément.
 
 ## TODO stabilité firmware
 

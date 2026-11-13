@@ -52,7 +52,8 @@ def read_port(path, *, frames=10, timeout=30.0, output=None):
         raise ValueError('frames and timeout must be positive')
     parser = RtcmReader()
     count = total = 0
-    deadline = time.monotonic() + timeout
+    started = time.monotonic()
+    deadline = started + timeout
     fd = os.open(path, os.O_RDONLY | os.O_NOCTTY | os.O_NONBLOCK)
     original = termios.tcgetattr(fd)
     try:
@@ -73,8 +74,11 @@ def read_port(path, *, frames=10, timeout=30.0, output=None):
                 if output is not None:
                     output.write(frame)
         # A continuous stream may begin its next frame in this last read.
+        elapsed = time.monotonic() - started
         return {'frames': count, 'bytes': total, 'crc24q': 'pass', 'noise_bytes': 0,
-                'pending_bytes': len(parser.pending)}
+                'pending_bytes': len(parser.pending), 'elapsed_seconds': elapsed,
+                'bytes_per_second': total / elapsed if elapsed else 0,
+                'frames_per_second': count / elapsed if elapsed else 0}
     finally:
         try:
             termios.tcsetattr(fd, termios.TCSANOW, original)
